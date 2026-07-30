@@ -1,0 +1,11 @@
+# Project specification documents. These are authored by hand and are the
+# source of truth; reformatting them churns the diff for no benefit.
+CLAUDE.md
+BUILD_PLAN.md
+
+node_modules/
+dist/
+coverage/
+target/
+pnpm-lock.yaml
+apps/desktop/src-tauri/gen/

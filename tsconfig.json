@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@marmotter/protocol": ["./packages/protocol/src/index.ts"],
+      "@marmotter/shared": ["./packages/shared/src/index.ts"],
+      "@marmotter/client": ["./packages/client/src/index.ts"],
+      "@marmotter/ui": ["./packages/ui/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "apps/*/src/**/*.ts",
+    "apps/*/src/**/*.tsx",
+    "apps/*/vite.config.ts",
+    "apps/*/vitest.config.ts",
+    "packages/*/vitest.config.ts",
+    "vitest.config.ts",
+    "vitest.alias.ts"
+  ]
+}

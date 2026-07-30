@@ -1,0 +1,124 @@
+/**
+ * Marmotter design tokens.
+ *
+ * Every value here comes from the Design section of CLAUDE.md, which pins the
+ * direction to modern iOS dark using Apple's actual system values.
+ *
+ * This file is the only place in packages/ui allowed to contain a raw colour.
+ * Components reference these custom properties, never literals.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- colour */
+  --bg-base: #000000;
+  --bg-elevated: #1c1c1e;
+  --bg-elevated-2: #2c2c2e;
+  --bg-elevated-3: #3a3a3c;
+
+  --fill-primary: rgba(120, 120, 128, 0.36);
+  --fill-secondary: rgba(120, 120, 128, 0.32);
+  --fill-tertiary: rgba(118, 118, 128, 0.24);
+  --fill-quaternary: rgba(116, 116, 128, 0.18);
+
+  --label-primary: #ffffff;
+  --label-secondary: rgba(235, 235, 245, 0.6);
+  --label-tertiary: rgba(235, 235, 245, 0.3);
+  --label-quaternary: rgba(235, 235, 245, 0.16);
+
+  --separator: rgba(84, 84, 88, 0.65);
+  --separator-opaque: #38383a;
+
+  --accent: #0a84ff;
+  --green: #30d158;
+  --red: #ff453a;
+  --orange: #ff9f0a;
+  --yellow: #ffd60a;
+  --purple: #bf5af2;
+  --pink: #ff375f;
+  --teal: #40c8e0;
+  --indigo: #5e5ce6;
+
+  /* ------------------------------------------------------------ typography */
+  /* Named outside Tailwind's --font-* / --radius-* namespaces so the @theme
+     mapping in styles.css is not self-referential. */
+  --font-ui-stack: -apple-system, 'SF Pro Text', 'Inter var', system-ui, sans-serif;
+  --font-mono-stack: 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  --text-large-title-size: 34px;
+  --text-large-title-line: 41px;
+  --text-large-title-weight: 700;
+
+  --text-title-1-size: 28px;
+  --text-title-1-line: 34px;
+  --text-title-1-weight: 700;
+
+  --text-title-2-size: 22px;
+  --text-title-2-line: 28px;
+  --text-title-2-weight: 700;
+
+  --text-title-3-size: 20px;
+  --text-title-3-line: 25px;
+  --text-title-3-weight: 600;
+
+  --text-headline-size: 17px;
+  --text-headline-line: 22px;
+  --text-headline-weight: 600;
+
+  --text-body-size: 17px;
+  --text-body-line: 22px;
+  --text-body-weight: 400;
+
+  --text-callout-size: 16px;
+  --text-callout-line: 21px;
+  --text-callout-weight: 400;
+
+  --text-subhead-size: 15px;
+  --text-subhead-line: 20px;
+  --text-subhead-weight: 400;
+
+  --text-footnote-size: 13px;
+  --text-footnote-line: 18px;
+  --text-footnote-weight: 400;
+
+  --text-caption-1-size: 12px;
+  --text-caption-1-line: 16px;
+  --text-caption-1-weight: 400;
+
+  --text-caption-2-size: 11px;
+  --text-caption-2-line: 13px;
+  --text-caption-2-weight: 400;
+
+  /* -------------------------------------------------- geometry and motion */
+  /* 4px spacing grid, 16px screen margins. */
+  --space-unit: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --screen-margin: 16px;
+
+  --corner-control: 10px;
+  --corner-card: 14px;
+  --corner-sheet: 20px;
+
+  --hairline: 0.5px;
+  --blur-vibrancy: blur(20px) saturate(180%);
+
+  --duration-sheet: 200ms;
+  --easing-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-press: 120ms;
+  --easing-press: ease-out;
+}
+
+/**
+ * Reduced motion: cut transforms, keep opacity changes only, per CLAUDE.md.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-sheet: 0ms;
+    --duration-press: 0ms;
+  }
+}
