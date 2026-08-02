@@ -13,14 +13,30 @@ rules. Read [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phase-by-phase plan.
 
 ## Status
 
-Phases 0 (scaffold) and 1 (protocol core) are complete. Phase 2 builds the
-transport layer.
+Phases 0 (scaffold), 1 (protocol core), and 2 (transport) are complete. Phase 3
+builds the client state layer.
 
 `packages/protocol` implements the line parser and serializer, IRCv3 capability
 negotiation, SASL (PLAIN, EXTERNAL, SCRAM-SHA-256), ISUPPORT, casemapping, the
 numeric map, the mode parser, CTCP, batch and labeled-response correlation, and
 standard replies. It passes the official `ircdocs/parser-tests` vectors, and
 SCRAM reproduces the RFC 7677 test vector.
+
+`crates/marmotter-transport` opens TCP and TLS sockets over tokio and rustls,
+with certificate verification full, off, or pinned to a SHA-256 fingerprint,
+client certificates for CertFP, SNI, and connection timeouts. It frames lines
+and nothing more. `packages/client` adds the `TauriTransport` and
+`WebSocketTransport` implementations plus reconnection with exponential backoff,
+jitter, and endpoint failover.
+
+The transport integration tests connect to a real ergo instance. Install one to
+run them; without it they skip rather than fail:
+
+```sh
+curl -sSL -o ergo.tar.gz \
+  https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
+tar xzf ergo.tar.gz && sudo install -m 755 ergo-*/ergo /usr/local/bin/ergo
+```
 
 ## Requirements
 

@@ -65,6 +65,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install ergo
+        # The transport integration tests connect to a real IRC server rather
+        # than a mock, so one has to exist.
+        run: |
+          curl -sSL -o ergo.tar.gz \
+            https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
+          tar xzf ergo.tar.gz
+          sudo install -m 755 ergo-2.15.0-linux-x86_64/ergo /usr/local/bin/ergo
+          ergo --version
+
       - name: Check formatting
         run: cargo fmt --all --check
 

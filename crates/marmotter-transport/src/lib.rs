@@ -5,21 +5,24 @@
 //! channel is. All protocol logic lives in `packages/protocol`, in TypeScript,
 //! so that desktop, web, and Android share one implementation.
 //!
-//! Phase 2 of BUILD_PLAN.md implements this over `tokio` and `rustls`, with
-//! certificate verification on, off, and fingerprint-pinned; client certificates
-//! for CertFP; SNI; and connection timeouts.
+//! The one thing it does interpret is the line terminator, because framing is a
+//! property of the byte stream rather than of the protocol above it.
 
 #![deny(missing_docs)]
 
 /// Bytes that terminate every IRC message on the wire.
 pub const CRLF: &[u8] = b"\r\n";
 
-#[cfg(test)]
-mod tests {
-    use super::CRLF;
+pub mod connection;
+pub mod error;
+pub mod lines;
+pub mod tls;
 
-    #[test]
-    fn crlf_is_two_bytes() {
-        assert_eq!(CRLF, b"\r\n");
-    }
-}
+pub use connection::{
+    connect, Close, ConnectOptions, Connection, Event, Security, DEFAULT_TIMEOUT,
+};
+pub use error::{Result, TransportError};
+pub use lines::{LineDecoder, MAX_LINE_BYTES};
+pub use tls::{
+    fingerprint, format_fingerprint, parse_fingerprint, ClientCertificate, Verification,
+};
