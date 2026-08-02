@@ -60,6 +60,22 @@ export interface ISupport {
   readonly statusMsg: string;
   /** MONITOR list limit. Undefined value means unlimited; absent means unsupported. */
   readonly monitor: { readonly supported: boolean; readonly limit: number | undefined };
+  /**
+   * WATCH list limit, the older notify mechanism.
+   *
+   * UnrealIRCd and several other ircds offer WATCH where Libera offers MONITOR.
+   * The Friends panel prefers MONITOR and falls back to WATCH before it falls
+   * back to polling WHOIS.
+   */
+  readonly watch: { readonly supported: boolean; readonly limit: number | undefined };
+  /**
+   * Extended ban syntax, from `EXTBAN=<prefix>,<letters>`.
+   *
+   * Extbans are how a ban targets something other than a hostmask — an account,
+   * a realname, a country. The prefix differs by ircd (`~` on UnrealIRCd, `$`
+   * on solanum), so the ban builder must read it here rather than hardcode one.
+   */
+  readonly extban: { readonly prefix: string; readonly types: string } | undefined;
   readonly whox: boolean;
   readonly utf8Only: boolean;
   readonly maxNickLength: number | undefined;
@@ -96,6 +112,8 @@ export const DEFAULT_ISUPPORT: ISupport = {
   maxList: new Map(),
   statusMsg: '',
   monitor: { supported: false, limit: undefined },
+  watch: { supported: false, limit: undefined },
+  extban: undefined,
   whox: false,
   utf8Only: false,
   maxNickLength: undefined,
@@ -256,6 +274,27 @@ export function applyISupport(current: ISupport, tokens: readonly string[]): ISu
     current.maxList,
   );
 
+  const watch = pick(
+    'WATCH',
+    (value) => ({ supported: true, limit: parseInteger(value) }),
+    DEFAULT_ISUPPORT.watch,
+    current.watch,
+  );
+
+  const extban = pick(
+    'EXTBAN',
+    (value) => {
+      // `EXTBAN=~,abc`. The prefix may be empty, which means the letters are
+      // used without one.
+      const comma = value.indexOf(',');
+      return comma === -1
+        ? { prefix: '', types: value }
+        : { prefix: value.slice(0, comma), types: value.slice(comma + 1) };
+    },
+    DEFAULT_ISUPPORT.extban,
+    current.extban,
+  );
+
   const monitor = pick(
     'MONITOR',
     (value) => ({ supported: true, limit: parseInteger(value) }),
@@ -287,6 +326,8 @@ export function applyISupport(current: ISupport, tokens: readonly string[]): ISu
     maxList,
     statusMsg: pick('STATUSMSG', (value) => value, DEFAULT_ISUPPORT.statusMsg, current.statusMsg),
     monitor,
+    watch,
+    extban,
     whox: pick('WHOX', () => true, false, current.whox),
     utf8Only: pick('UTF8ONLY', () => true, false, current.utf8Only),
     maxNickLength: pick('NICKLEN', parseInteger, undefined, current.maxNickLength),
@@ -326,6 +367,29 @@ export function modeForPrefix(prefix: string, support: ISupport): string | undef
 export function prefixRank(prefix: string, support: ISupport): number {
   const index = support.prefixes.findIndex((entry) => entry.prefix === prefix);
   return index === -1 ? -1 : support.prefixes.length - 1 - index;
+}
+
+/**
+ * Whether the server supports a given extended ban type.
+ *
+ * The ban builder offers the account and realname scopes only where the network
+ * can actually enforce them.
+ */
+export function supportsExtban(type: string, support: ISupport): boolean {
+  return support.extban !== undefined && support.extban.types.includes(type);
+}
+
+/**
+ * Builds an extended ban mask, e.g. `~a:account` or `$a:account`.
+ *
+ * Returns undefined when the network does not advertise the type, so a caller
+ * cannot accidentally send a mask this server will read as a literal nickname.
+ */
+export function buildExtban(type: string, value: string, support: ISupport): string | undefined {
+  if (support.extban === undefined || !support.extban.types.includes(type)) {
+    return undefined;
+  }
+  return `${support.extban.prefix}${type}:${value}`;
 }
 
 /** Strips any advertised status prefixes from the front of a nick. */

@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { BatchTracker, LabelTracker } from './batch.js';
 import { beginNegotiation, handleCapMessage, type CapState } from './caps.js';
 import { decodeAction, extractCtcp } from './ctcp.js';
-import { DEFAULT_ISUPPORT, type ISupport, applyISupport } from './isupport.js';
+import {
+  DEFAULT_ISUPPORT,
+  type ISupport,
+  applyISupport,
+  buildExtban,
+  supportsExtban,
+} from './isupport.js';
 import { NICK_UNAVAILABLE, interpretNumeric } from './numerics.js';
 import { parseMessage } from './parse.js';
 import { parseStandardReply } from './standard-replies.js';
@@ -53,6 +59,7 @@ interface Replay {
   readonly nickRefusals: string[];
   readonly actions: string[];
   readonly channels: Map<string, string[]>;
+  readonly listEntries: { list: string; mask: string }[];
 }
 
 /** Feeds a whole transcript through the stack the client will use. */
@@ -69,6 +76,7 @@ const replay = (lines: readonly Line[], options: { wantsSasl: boolean }): Replay
   const nickRefusals: string[] = [];
   const actions: string[] = [];
   const channels = new Map<string, string[]>();
+  const listEntries: { list: string; mask: string }[] = [];
 
   for (const line of lines) {
     const result = parseMessage(line.raw);
@@ -132,6 +140,8 @@ const replay = (lines: readonly Line[], options: { wantsSasl: boolean }): Replay
 
     if (numeric.kind === 'isupport') {
       support = applyISupport(support, numeric.tokens);
+    } else if (numeric.kind === 'list-entry') {
+      listEntries.push({ list: numeric.list, mask: numeric.mask });
     } else if (numeric.kind === 'names') {
       const existing = channels.get(numeric.channel) ?? [];
       channels.set(numeric.channel, [
@@ -151,6 +161,7 @@ const replay = (lines: readonly Line[], options: { wantsSasl: boolean }): Replay
     nickRefusals,
     actions,
     channels,
+    listEntries,
   };
 };
 
@@ -313,15 +324,77 @@ describe('ergo transcript', () => {
   });
 });
 
+describe('UnrealIRCd transcript', () => {
+  // The software running irc.dashkova.co.uk, so this network is a first-class
+  // target rather than something we hope works.
+  const lines = load('unrealircd');
+  const state = replay(lines, { wantsSasl: true });
+
+  it('reads the network and the five member roles', () => {
+    expect(state.support.network).toBe('Dashkova');
+    expect(state.support.prefixes.map((p) => p.prefix).join('')).toBe('~&@%+');
+    expect(state.support.caseMapping).toBe('ascii');
+    expect(state.support.maxNickLength).toBe(30);
+    expect(state.support.modesPerCommand).toBe(12);
+  });
+
+  it('reads the extended ban prefix, which differs from solanum', () => {
+    expect(state.support.extban).toEqual({ prefix: '~', types: 'BGNRSacfjmnqrtz' });
+  });
+
+  it('builds an account ban with this network’s prefix', () => {
+    // The same scope on Libera would be `$a:spammer`; hardcoding either one
+    // would produce a mask the other network reads as a literal nickname.
+    expect(buildExtban('a', 'spammer', state.support)).toBe('~a:spammer');
+    expect(supportsExtban('a', state.support)).toBe(true);
+    expect(supportsExtban('Z', state.support)).toBe(false);
+    expect(buildExtban('Z', 'x', state.support)).toBeUndefined();
+  });
+
+  it('reads WATCH rather than MONITOR for the notify list', () => {
+    expect(state.support.watch).toEqual({ supported: true, limit: 128 });
+    expect(state.support.monitor.supported).toBe(false);
+  });
+
+  it('reads an extended ban out of the ban list', () => {
+    // A ban on an account, not a hostmask — the case the ban builder exists for.
+    expect(state.listEntries).toContainEqual({ list: 'ban', mask: '~a:spammer' });
+    expect(state.listEntries).toContainEqual({ list: 'ban', mask: '*!*@bad.example' });
+  });
+
+  it('reads the member list with every role', () => {
+    expect(state.channels.get('#lounge')).toEqual([
+      '~d4shkova',
+      '&admin',
+      '@op',
+      '%halfop',
+      '+voiced',
+      'plain',
+    ]);
+  });
+
+  it('reads the standard reply', () => {
+    expect(state.standardReplies).toEqual(['fail:CHANNEL_FULL']);
+  });
+
+  it('leaves no numeric unhandled except ones outside the map', () => {
+    // 604 (RPL_NOWON, from WATCH) is not in the numeric table yet; it is
+    // reported as `unhandled` rather than leaking as a raw line, which is the
+    // contract. Phase 6 adds the WATCH numerics with the Friends panel.
+    const unexpected = state.numericKinds.filter((kind) => kind === 'unhandled');
+    expect(unexpected).toHaveLength(1);
+  });
+});
+
 describe('every transcript', () => {
-  it.each(['libera', 'oftc', 'ergo'])('%s parses with no failures at all', (name) => {
+  it.each(['libera', 'oftc', 'ergo', 'unrealircd'])('%s parses with no failures at all', (name) => {
     for (const line of load(name)) {
       const result = parseMessage(line.raw);
       expect(result.ok, `line ${line.number}: ${line.raw}`).toBe(true);
     }
   });
 
-  it.each(['libera', 'oftc', 'ergo'])('%s closes every batch it opens', (name) => {
+  it.each(['libera', 'oftc', 'ergo', 'unrealircd'])('%s closes every batch it opens', (name) => {
     const tracker = new BatchTracker();
     for (const line of load(name)) {
       if (line.direction !== 'in') {

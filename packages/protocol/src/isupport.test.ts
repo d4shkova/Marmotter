@@ -7,6 +7,8 @@ import {
   parseChanModes,
   parsePrefix,
   prefixForMode,
+  buildExtban,
+  supportsExtban,
   prefixRank,
   splitPrefixes,
   unescapeISupportValue,
@@ -184,6 +186,50 @@ describe('applyISupport', () => {
 
   it('skips empty tokens', () => {
     expect(apply('', 'NETWORK=Test').network).toBe('Test');
+  });
+});
+
+describe('EXTBAN and WATCH', () => {
+  it('splits the extban prefix from its types', () => {
+    expect(apply('EXTBAN=~,BGNRSacfjmnqrtz').extban).toEqual({
+      prefix: '~',
+      types: 'BGNRSacfjmnqrtz',
+    });
+    expect(apply('EXTBAN=$,ajrxz').extban).toEqual({ prefix: '$', types: 'ajrxz' });
+  });
+
+  it('accepts an empty extban prefix', () => {
+    expect(apply('EXTBAN=,abc').extban).toEqual({ prefix: '', types: 'abc' });
+  });
+
+  it('accepts a value with no comma at all', () => {
+    expect(apply('EXTBAN=abc').extban).toEqual({ prefix: '', types: 'abc' });
+  });
+
+  it('builds a mask with whichever prefix this network uses', () => {
+    const unreal = apply('EXTBAN=~,acjmnqrtz');
+    const solanum = apply('EXTBAN=$,ajrxz');
+
+    expect(buildExtban('a', 'spammer', unreal)).toBe('~a:spammer');
+    expect(buildExtban('a', 'spammer', solanum)).toBe('$a:spammer');
+  });
+
+  it('refuses to build a mask for a type the network cannot enforce', () => {
+    // Sending `$z:x` to a server without that type gets read as a nickname.
+    expect(buildExtban('z', 'x', apply('EXTBAN=$,aj'))).toBeUndefined();
+    expect(buildExtban('a', 'x', DEFAULT_ISUPPORT)).toBeUndefined();
+    expect(supportsExtban('a', DEFAULT_ISUPPORT)).toBe(false);
+  });
+
+  it('reads the WATCH limit, which UnrealIRCd offers instead of MONITOR', () => {
+    const support = apply('WATCH=128');
+    expect(support.watch).toEqual({ supported: true, limit: 128 });
+    expect(support.monitor.supported).toBe(false);
+  });
+
+  it('leaves both notify mechanisms unsupported when neither is advertised', () => {
+    expect(DEFAULT_ISUPPORT.watch).toEqual({ supported: false, limit: undefined });
+    expect(DEFAULT_ISUPPORT.extban).toBeUndefined();
   });
 });
 

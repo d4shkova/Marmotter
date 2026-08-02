@@ -137,8 +137,11 @@ either consumed into state or mapped to a human-readable UI event. Reference
 - **Registration** (001–005, 251–255, 265–266): consumed into connection state.
   RPL_ISUPPORT (005) must be parsed thoroughly — `PREFIX`, `CHANMODES`,
   `CHANTYPES`, `CASEMAPPING`, `TARGMAX`, `NETWORK`, `CHANLIMIT`, `MAXLIST`,
-  `MODES`, `STATUSMSG`, `MONITOR`, `WHOX`, `UTF8ONLY`. Behaviour must adapt to
-  it rather than hardcoding assumptions.
+  `MODES`, `STATUSMSG`, `MONITOR`, `WATCH`, `EXTBAN`, `WHOX`, `UTF8ONLY`.
+  Behaviour must adapt to it rather than hardcoding assumptions. `EXTBAN`
+  matters more than it looks: the prefix differs by ircd (`~` on UnrealIRCd,
+  `$` on solanum), so the ban builder reads it rather than assuming, and a
+  network that cannot enforce a ban type is never offered it.
 - **Names/topic** (332, 333, 353, 366): consumed into channel state.
 - **MOTD** (372, 375, 376, 422): collapsed into one expandable server-notice item.
 - **WHOIS/WHOWAS** (311–319, 330, 338, 671): assembled into a user profile card.
