@@ -77,24 +77,32 @@ above 90%. Zero dependencies in its `package.json`. Zero React or I/O imports.
 
 ## Phase 2 — Transport
 
+> **Sequencing decision, 2026-07-30.** The relay and `RelayTransport` move to
+> Phase 8, where the web app is built. Desktop uses `TauriTransport` and never
+> touches the relay, so nothing in Phases 1–7 needs it; deferring avoids running
+> an internet-facing proxy for months before a client can exercise it. The
+> `Transport` interface and the `relay/` directory stay in place so the move
+> costs no restructuring. Items marked *(deferred)* below are Phase 8 work.
+
 - The `Transport` interface exactly as specified in `CLAUDE.md`.
 - **`crates/marmotter-transport`**: Rust TCP + TLS via `tokio` and `rustls`. Exposed
   as Tauri commands with a line-oriented event channel to the front end. Supports
   certificate verification on, off, and fingerprint-pinned; client certificates
   for CertFP; SNI; connection timeouts. It does not parse IRC.
 - **`TauriTransport`**, **`WebSocketTransport`** implementations.
-- **`relay/`**: the Go stateless WSS↔TCP relay, honouring every constraint in
-  `CLAUDE.md`. Include a Dockerfile, a systemd unit, and a README covering
-  deployment behind nginx on dashkova.co.uk with per-IP limits and the
-  host allowlist policy.
-- **`RelayTransport`** implementation.
+- *(deferred to Phase 8)* **`relay/`**: the Go stateless WSS↔TCP relay,
+  honouring every constraint in `CLAUDE.md`. Include a Dockerfile, a systemd
+  unit, and a README covering deployment behind nginx on dashkova.co.uk with
+  per-IP limits and the host allowlist policy.
+- *(deferred to Phase 8)* **`RelayTransport`** implementation.
 - Reconnection with exponential backoff and jitter, endpoint failover through the
   profile's server list, and correct teardown so no socket or listener leaks.
 
 **Acceptance:** An integration test connects to a locally-spawned ergo over
-plaintext, over TLS with a self-signed cert plus pinned fingerprint, and via the
-relay, completing registration and joining a channel in all three cases. Killing
-the server mid-session triggers backoff reconnection without leaking handles.
+plaintext and over TLS with a self-signed cert plus pinned fingerprint,
+completing registration and joining a channel in both cases. Killing the server
+mid-session triggers backoff reconnection without leaking handles. The relay
+path is covered by Phase 8's acceptance instead.
 
 ---
 
