@@ -1,0 +1,328 @@
+import type { Message } from '@marmotter/client';
+import { type ReactNode, useState } from 'react';
+import { Decoder } from '../decoder/Decoder.js';
+import { cn } from '../lib/cn.js';
+import { nickColorVar } from '../lib/nick-color.js';
+import { IconButton } from '../primitives/IconButton.js';
+import type { Row } from './rows.js';
+import { type TextSegment, fitNick, formatDay, formatTime, segment } from './format.js';
+
+export interface MessageRowProps {
+  readonly row: Row;
+  readonly nickWidth: number;
+  readonly alignNicksRight: boolean;
+  readonly showTimestamps: boolean;
+  /** Casemapped membership test, so only real nicks are highlighted in text. */
+  readonly isMember?: (word: string) => boolean;
+  /** Casemapped fold, so one person is one colour whatever case they use. */
+  readonly fold?: (nick: string) => string;
+  readonly onReply?: (message: Message) => void;
+  readonly onReact?: (message: Message) => void;
+  readonly onCopy?: (message: Message) => void;
+  readonly onNickClick?: (nick: string) => void;
+  /** Highlights the row, for a message that mentions the user. */
+  readonly highlighted?: boolean;
+}
+
+/**
+ * One line of the message list.
+ *
+ * Compact and IRC-native rather than a chat bubble, with fixed-width timestamp
+ * and nick columns so message text is left-aligned into one readable edge.
+ *
+ * Hover actions are always in the DOM and only change opacity. Mounting them on
+ * hover would reflow the row under the pointer, which is the layout shift
+ * CLAUDE.md rules out absolutely.
+ */
+export function MessageRow(props: MessageRowProps): ReactNode {
+  switch (props.row.kind) {
+    case 'day':
+      return <DayRow at={props.row.at} />;
+    case 'unread-marker':
+      return <UnreadRow />;
+    case 'events':
+      return <EventsRow row={props.row} showTimestamps={props.showTimestamps} />;
+    case 'message':
+      return <TextRow {...props} row={props.row} />;
+  }
+}
+
+function DayRow({ at }: { at: Date }): ReactNode {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2">
+      <span aria-hidden="true" className="h-px flex-1 bg-[var(--separator)]" />
+      <span className="text-caption-1 text-[var(--label-tertiary)]">{formatDay(at)}</span>
+      <span aria-hidden="true" className="h-px flex-1 bg-[var(--separator)]" />
+    </div>
+  );
+}
+
+function UnreadRow(): ReactNode {
+  return (
+    <div className="flex items-center gap-3 px-4 py-1">
+      <span aria-hidden="true" className="h-px flex-1 bg-[var(--accent)]" />
+      <span className="text-caption-2 font-medium text-[var(--accent)]">New messages</span>
+    </div>
+  );
+}
+
+function EventsRow({
+  row,
+  showTimestamps,
+}: {
+  row: Extract<Row, { kind: 'events' }>;
+  showTimestamps: boolean;
+}): ReactNode {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="px-4 py-0.5">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full items-baseline gap-2 text-left text-footnote text-[var(--label-tertiary)] hover:text-[var(--label-secondary)]"
+      >
+        {showTimestamps ? (
+          <span className="shrink-0 font-mono tabular-nums opacity-60">{formatTime(row.at)}</span>
+        ) : null}
+        <span aria-hidden="true">·</span>
+        <span>{row.summary}</span>
+        <span aria-hidden="true" className="opacity-60">
+          {expanded ? '▾' : '▸'}
+        </span>
+      </button>
+
+      {expanded ? (
+        <ul className="mt-1 ml-6 flex flex-col gap-0.5">
+          {row.messages.map((message) => (
+            <li key={message.id} className="text-footnote text-[var(--label-tertiary)]">
+              <span className="font-mono tabular-nums opacity-60">{formatTime(message.at)}</span>{' '}
+              {message.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function TextRow({
+  row,
+  nickWidth,
+  alignNicksRight,
+  showTimestamps,
+  isMember,
+  fold,
+  onReply,
+  onReact,
+  onCopy,
+  onNickClick,
+  highlighted = false,
+}: MessageRowProps & { row: Extract<Row, { kind: 'message' }> }): ReactNode {
+  const { message, grouped } = row;
+  const nick = message.source?.nick ?? '';
+  const isAction = message.kind === 'action';
+  const isNotice = message.kind === 'notice';
+  const isError = message.kind === 'error';
+
+  return (
+    <div
+      className={cn(
+        'group relative flex items-baseline gap-2 px-4 py-px',
+        'hover:bg-[var(--fill-quaternary)]',
+        highlighted && 'bg-[var(--accent-muted)]',
+      )}
+    >
+      {showTimestamps ? (
+        <time
+          dateTime={message.at.toISOString()}
+          // The distinction is on hover, per CLAUDE.md: a local clock can
+          // disagree with the server by minutes and the reader should be able
+          // to find out which they are looking at.
+          title={
+            message.fromServerTime
+              ? `${message.at.toLocaleString()} — the server's clock`
+              : `${message.at.toLocaleString()} — this device's clock`
+          }
+          className={cn(
+            'shrink-0 font-mono text-caption-1 tabular-nums text-[var(--label-quaternary)]',
+            !message.fromServerTime && 'italic',
+          )}
+        >
+          {formatTime(message.at)}
+        </time>
+      ) : null}
+
+      <span
+        className={cn(
+          'shrink-0 overflow-hidden font-mono text-footnote whitespace-nowrap',
+          alignNicksRight ? 'text-right' : 'text-left',
+        )}
+        style={{ width: `${nickWidth}ch` }}
+      >
+        {grouped || nick === '' ? null : (
+          <button
+            type="button"
+            onClick={onNickClick === undefined ? undefined : () => onNickClick(nick)}
+            style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}
+            className="max-w-full truncate hover:underline"
+          >
+            {isAction ? null : fitNick(nick, nickWidth)}
+          </button>
+        )}
+      </span>
+
+      <span
+        className={cn(
+          'min-w-0 flex-1 font-mono text-footnote break-words',
+          isAction && 'italic',
+          isNotice && 'text-[var(--accent)]',
+          isError && 'text-[var(--danger)]',
+          message.pending && 'opacity-60',
+          !isNotice && !isError && 'text-[var(--label-primary)]',
+        )}
+      >
+        {message.replyTo === undefined ? null : <ReplyChip id={message.replyTo} />}
+        {isAction ? (
+          <span style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}>{nick} </span>
+        ) : null}
+        <Body text={message.text} kind={message.kind} isMember={isMember} fold={fold} />
+        {message.pending ? (
+          <span
+            title="Not yet confirmed by the server"
+            className="ml-1.5 align-middle text-[var(--label-quaternary)]"
+          >
+            <span aria-hidden="true">◌</span>
+            <span className="sr-only">Not yet confirmed by the server</span>
+          </span>
+        ) : null}
+      </span>
+
+      {/* Always mounted, opacity-only: mounting on hover would reflow the row
+          under the pointer. */}
+      <span className="pointer-events-none absolute top-0 right-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        {onReply === undefined ? null : (
+          <IconButton
+            label="Reply"
+            size="small"
+            icon={<Glyph>↩</Glyph>}
+            onClick={() => onReply(message)}
+          />
+        )}
+        {onReact === undefined ? null : (
+          <IconButton
+            label="React"
+            size="small"
+            icon={<Glyph>☺</Glyph>}
+            onClick={() => onReact(message)}
+          />
+        )}
+        {onCopy === undefined ? null : (
+          <IconButton
+            label="Copy message"
+            size="small"
+            icon={<Glyph>⧉</Glyph>}
+            onClick={() => onCopy(message)}
+          />
+        )}
+      </span>
+    </div>
+  );
+}
+
+const Glyph = ({ children }: { children: string }) => (
+  <span className="text-caption-1">{children}</span>
+);
+
+function ReplyChip({ id }: { id: string }): ReactNode {
+  return (
+    <span className="mr-1.5 inline-flex max-w-48 items-center gap-1 rounded-[6px] bg-[var(--fill-tertiary)] px-1.5 text-caption-2 text-[var(--label-tertiary)]">
+      <span aria-hidden="true">↩</span>
+      <span className="truncate">in reply to {id}</span>
+    </span>
+  );
+}
+
+/**
+ * Message text, with links and nicks picked out.
+ *
+ * A server line that contains a mode string or a numeric gets a decoder around
+ * it — that is where the arcana actually appears in the flow of the interface,
+ * and where somebody who does not recognise it will be looking.
+ */
+function Body({
+  text,
+  kind,
+  isMember,
+  fold,
+}: {
+  text: string;
+  kind: Message['kind'];
+  isMember: ((word: string) => boolean) | undefined;
+  fold: ((nick: string) => string) | undefined;
+}): ReactNode {
+  if (kind === 'mode' || kind === 'server' || kind === 'error') {
+    return <WithDecoder text={text} />;
+  }
+
+  return (
+    <>
+      {segment(text, isMember).map((part, index) => (
+        // Segments have no identity of their own; their position in the line is
+        // what they are.
+        <Piece key={index} part={part} fold={fold} />
+      ))}
+    </>
+  );
+}
+
+function Piece({
+  part,
+  fold,
+}: {
+  part: TextSegment;
+  fold: ((nick: string) => string) | undefined;
+}): ReactNode {
+  switch (part.kind) {
+    case 'link':
+      return (
+        <a
+          href={part.href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-[var(--accent)] underline underline-offset-2"
+        >
+          {part.text}
+        </a>
+      );
+    case 'nick':
+      return (
+        <span style={{ color: `var(${nickColorVar(part.text, fold?.(part.text))})` }}>
+          {part.text}
+        </span>
+      );
+    case 'text':
+      return part.text;
+  }
+}
+
+/** A mode string inside a sentence, e.g. "jonquil set +mnt". */
+const MODE_IN_TEXT = /(^|\s)([+-][A-Za-z]+)(?=$|\s)/;
+
+function WithDecoder({ text }: { text: string }): ReactNode {
+  const match = MODE_IN_TEXT.exec(text);
+  if (match === null || match[2] === undefined) {
+    return text;
+  }
+  const start = match.index + (match[1]?.length ?? 0);
+  const token = match[2];
+
+  return (
+    <>
+      {text.slice(0, start)}
+      <Decoder token={token} />
+      {text.slice(start + token.length)}
+    </>
+  );
+}

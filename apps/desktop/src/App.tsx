@@ -1,16 +1,17 @@
+import { Marmotter } from '@marmotter/ui';
 import type { JSX } from 'react';
+import { createDesktopTransport } from './transport';
 
 /**
- * Phase 0 shell. Phase 5 of BUILD_PLAN.md replaces this with the three-column
- * layout, sidebar, message list, composer, and member list.
+ * The desktop app.
+ *
+ * The shell itself lives in `@marmotter/ui` and is shared with the web build;
+ * the only thing that differs here is the transport, which goes through Rust to
+ * a real socket.
  */
 export function App(): JSX.Element {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-2 bg-bg-base p-4 text-label-primary">
-      <h1 className="text-title-1 font-bold">Marmotter</h1>
-      <p className="text-subhead text-label-secondary">
-        The scaffold is in place. No networks are configured yet.
-      </p>
-    </main>
-  );
+  // Desktop keeps profiles and, when the user opts in, logs. Phase 7 adds the
+  // storage behind both; the flag is what tells the shell not to promise the
+  // web build's "nothing is kept" guarantee here.
+  return <Marmotter createTransport={() => createDesktopTransport()} persists />;
 }

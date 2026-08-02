@@ -243,6 +243,37 @@ connect to Libera.Chat with SASL, join a channel, send and receive messages,
 and see a member list — without typing a slash command or encountering a raw
 numeric. Playwright covers this path end to end against local ergo.
 
+> **Progress, 2026-08-02. Phase 5 is part-done; this is what is and is not in.**
+>
+> **In:** the responsive shell at all three breakpoints; the sidebar with
+> unread and highlight badges, per-network grouping, drag reordering and a
+> keyboard equivalent; the virtualized message list with folded events, day
+> separators, collapsed nick columns, the unread marker, hover actions with no
+> layout shift, and history paging that preserves scroll position; the composer
+> with tab completion, per-target drafts, input history and typing indicators;
+> the member list with `PREFIX`-derived roles, away dimming, search and a
+> context menu; the "Add a network" flow with the security choice in plain
+> language and the three presets; the command set with `/raw` and `/quote`; and
+> the raw log with direction, filtering and copy. Both apps mount one shared
+> `Marmotter` component, so desktop and web cannot drift.
+>
+> **Not yet in:** the settings screens, desktop notifications, the channel
+> browser, emoji entry, the command bar's autocomplete surface (the command
+> table and parser are done and tested; what is missing is the popup that shows
+> them while typing), and the Playwright run against local ergo. The acceptance
+> criterion above is therefore not yet met and Phase 6 must not start.
+>
+> Two notes on decisions taken along the way:
+>
+> - **The shell lives in `packages/ui`, not a new package.** It needs both the
+>   design system and `@marmotter/client`, and CLAUDE.md's repository layout has
+>   no fourth package for it. `packages/ui/src/app/` depends on `client`;
+>   `primitives/` still does not.
+> - **Interface state is a second store.** Selection, drafts, unread counts and
+>   appearance are not network state, and putting "have I read this" in the
+>   reducer would make the reducer answer questions it cannot know. It holds no
+>   message content, on any platform.
+
 ---
 
 ## Phase 6 — The abstraction layer

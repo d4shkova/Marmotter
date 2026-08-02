@@ -46,6 +46,8 @@ export * from './layout/ListGroup.js';
 export * from './layout/NavBar.js';
 export * from './layout/TabBar.js';
 
+export * from './app/index.js';
+
 export * from './decoder/Decoder.js';
 export * from './decoder/dictionary.js';
 export * from './decoder/explain.js';

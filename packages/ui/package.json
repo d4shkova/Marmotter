@@ -26,7 +26,11 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
-    "@marmotter/shared": "workspace:*"
+    "@marmotter/client": "workspace:*",
+    "@marmotter/protocol": "workspace:*",
+    "@marmotter/shared": "workspace:*",
+    "@tanstack/react-virtual": "^3.14.9",
+    "zustand": "^5.0.14"
   },
   "peerDependencies": {
     "react": "^19.2.0",

@@ -3,6 +3,22 @@ import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  type ChannelState,
+  type Message,
+  type NetworkState,
+  emptyChannel,
+  initialNetworkState,
+} from '@marmotter/client';
+import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import { AddNetwork } from './app/AddNetwork.js';
+import { Composer } from './app/Composer.js';
+import { MemberList } from './app/MemberList.js';
+import { MessageList } from './app/MessageList.js';
+import { MessageRow } from './app/MessageRow.js';
+import { RawLog } from './app/RawLog.js';
+import { Sidebar } from './app/Sidebar.js';
+import { buildRows } from './app/rows.js';
 import { Decoder } from './decoder/Decoder.js';
 import { ListGroup, SectionHeader } from './layout/ListGroup.js';
 import { NavBar } from './layout/NavBar.js';
@@ -53,6 +69,59 @@ async function expectNoViolations(ui: ReactNode): Promise<void> {
   );
   expect(described).toEqual([]);
 }
+
+/** A small but realistic conversation, for the shell components. */
+const supportFixture = applyISupport(DEFAULT_ISUPPORT, [
+  'PREFIX=(qaohv)~&@%+',
+  'CHANTYPES=#',
+  'CASEMAPPING=rfc1459',
+]);
+
+const messageFixture = (id: string, text: string, kind: Message['kind'] = 'privmsg'): Message => ({
+  id,
+  kind,
+  at: new Date('2026-08-02T09:00:00.000Z'),
+  fromServerTime: true,
+  source: makeSource('tamsin', '~t', 'host.example'),
+  target: '#marmotter',
+  text,
+  account: undefined,
+  replyTo: undefined,
+  pending: false,
+  tags: new Map(),
+});
+
+const channelFixture = (): ChannelState => ({
+  ...emptyChannel('#marmotter'),
+  joined: true,
+  messages: [messageFixture('a', 'morning all'), messageFixture('b', 'jonquil set +mnt', 'mode')],
+  members: new Map([
+    [
+      'tamsin',
+      {
+        nick: 'tamsin',
+        user: '~t',
+        host: 'host.example',
+        account: 'tam',
+        realname: 'Tamsin',
+        away: false,
+        bot: false,
+        prefixes: '@',
+      },
+    ],
+  ]),
+});
+
+const networkFixture = (): NetworkState => ({
+  ...initialNetworkState('libera', 'Libera.Chat', 'marmot'),
+  phase: 'registered',
+  support: supportFixture,
+  channels: new Map([['#marmotter', channelFixture()]]),
+  rawLog: [
+    { at: new Date('2026-08-02T09:00:00.000Z'), direction: 'out', line: 'CAP LS 302' },
+    { at: new Date('2026-08-02T09:00:01.000Z'), direction: 'in', line: ':srv 001 marmot :Welcome' },
+  ],
+});
 
 const noop = (): void => {};
 
@@ -280,6 +349,67 @@ describe('every component passes axe', () => {
         ]}
       />,
     ],
+    [
+      'MessageRow',
+      <div key="mr">
+        {buildRows(channelFixture().messages, { foldEvents: true }).map((row) => (
+          <MessageRow
+            key={row.id}
+            row={row}
+            nickWidth={12}
+            alignNicksRight
+            showTimestamps
+            onReply={noop}
+            onCopy={noop}
+          />
+        ))}
+      </div>,
+    ],
+    [
+      'MessageList',
+      <div key="ml" className="h-64">
+        <MessageList
+          network={networkFixture()}
+          conversation={channelFixture()}
+          nickWidth={12}
+          alignNicksRight
+          showTimestamps
+          foldEvents
+        />
+      </div>,
+    ],
+    [
+      'Composer',
+      <Composer
+        key="cp"
+        value="hello"
+        onChange={noop}
+        onSend={noop}
+        target="#marmotter"
+        nicks={['tamsin']}
+        channels={['#marmotter']}
+        fold={(text: string) => text.toLowerCase()}
+        typing={['jonquil']}
+      />,
+    ],
+    ['MemberList', <MemberList key="mem" network={networkFixture()} channel={channelFixture()} />],
+    [
+      'Sidebar',
+      <Sidebar
+        key="sb"
+        networks={[networkFixture()]}
+        selection={{ networkId: 'libera', target: '#marmotter' }}
+        onSelect={noop}
+        unreadFor={() => ({ count: 3, highlight: false })}
+        collapsed={new Set()}
+        onToggleCollapsed={noop}
+        onReorder={noop}
+        onAddNetwork={noop}
+        onOpenSettings={noop}
+      />,
+    ],
+    ['RawLog', <RawLog key="rl" network={networkFixture()} onCopy={noop} />],
+    ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
   ])('%s', async (_name, ui) => {
     await expectNoViolations(ui);
   });
