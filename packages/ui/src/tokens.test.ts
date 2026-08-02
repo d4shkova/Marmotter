@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Reads tokens.css off disk, so it needs Node rather than the jsdom default.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -10,6 +10,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/coverage/**',
+      '**/storybook-static/**',
       '**/target/**',
       '**/node_modules/**',
       'apps/desktop/src-tauri/gen/**',

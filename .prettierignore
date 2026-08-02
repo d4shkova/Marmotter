@@ -6,6 +6,7 @@ BUILD_PLAN.md
 node_modules/
 dist/
 coverage/
+storybook-static/
 target/
 pnpm-lock.yaml
 apps/desktop/src-tauri/gen/

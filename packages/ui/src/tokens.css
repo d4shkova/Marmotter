@@ -80,6 +80,15 @@
   --accent-muted: rgba(10, 132, 255, 0.14);
   --on-accent: #ffffff;
 
+  /* The dimming layer behind a sheet or modal. Dark rather than tinted, so a
+     sheet reads as depth rather than as a coloured state. */
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  /* The knob of a switch, and anything else that sits on top of the accent
+     fill. Named rather than written as `white` at the call site, so a light
+     theme redefines it in one place along with everything else. */
+  --control-knob: #ffffff;
+
   /* Alarm. Reserved: errors, alerts, and destructive actions only. */
   --danger: var(--red-500);
   --danger-hover: var(--red-400);

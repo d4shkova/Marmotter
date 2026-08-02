@@ -43,6 +43,12 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Build Storybook
+        # BUILD_PLAN phase 4 acceptance: Storybook builds and covers every
+        # component. The axe checks themselves run in `pnpm coverage`, against
+        # rendered components rather than against the built site.
+        run: pnpm --filter @marmotter/ui build-storybook
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

@@ -34,6 +34,8 @@
   --color-accent-pressed: var(--accent-pressed);
   --color-accent-muted: var(--accent-muted);
   --color-on-accent: var(--on-accent);
+  --color-control-knob: var(--control-knob);
+  --color-scrim: var(--scrim);
 
   --color-danger: var(--danger);
   --color-danger-hover: var(--danger-hover);

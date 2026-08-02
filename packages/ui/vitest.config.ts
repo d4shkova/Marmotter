@@ -5,7 +5,9 @@ export default defineConfig({
   resolve: { alias: workspaceAlias },
   test: {
     name: 'ui',
-    environment: 'node',
+    // The token and dictionary tests need no DOM, but the component tests do,
+    // and one environment for the package keeps the config honest.
+    environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
   },
 });

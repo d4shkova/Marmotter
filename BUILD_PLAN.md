@@ -188,6 +188,33 @@ passes axe with no violations. No hardcoded hex value exists anywhere in
 `packages/ui` outside `tokens.css`. Keyboard focus is visible on every
 interactive element.
 
+> **Notes from implementation, 2026-08-02.** Phase 4 complete.
+>
+> - **The acceptance criteria are tests, not review items.** `no-literals.test.ts`
+>   scans every source file for hex, `rgb()`, and Tailwind's own palette;
+>   `stories.test.ts` asserts every exported component appears in a story;
+>   `a11y.test.tsx` renders each component and runs axe over it. A rule that is
+>   only written down decays, and these three are exactly the kind nobody
+>   notices breaking.
+> - **Contrast is checked where axe cannot see it.** jsdom has no layout and no
+>   computed colours, so axe's contrast rule is switched off there and
+>   `tokens.test.ts` checks the ramp arithmetically instead — which is stronger,
+>   since it covers combinations no story happens to render.
+> - **Two colour tokens were added**, `--control-knob` and `--scrim`. Both were
+>   about to become a literal `white` and a literal `rgba(0,0,0,0.5)` at a call
+>   site, which is exactly what the no-literals rule exists to prevent.
+> - **axe found three real defects** while the components were being written: a
+>   `<label for>` pointing at a span with a `spinbutton` role, an `aria-label` on
+>   a plain span where it is ignored, and `aria-expanded` on a wrapper with no
+>   widget role. All three would have shipped invisibly.
+> - **Storybook's a11y addon is the interactive panel, not the gate.** The gate
+>   is the vitest suite, which runs in CI already; adding the Storybook test
+>   runner would mean a second browser install for a check that is covered.
+>
+> The decoder reads the network's own `PREFIX` and `CHANMODES` where the caller
+> passes them, because `+q` is channel ownership on some ircds and a mute list
+> on others — and a decoder that guesses is worse than none.
+
 ---
 
 ## Phase 5 — Core application shell
