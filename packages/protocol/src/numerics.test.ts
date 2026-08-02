@@ -347,6 +347,80 @@ describe('MONITOR', () => {
       targets: ['dunlin'],
     });
   });
+
+  it('reads the stored list', () => {
+    expect(event(':srv 732 me :tamsin,jonquil')).toEqual({
+      kind: 'monitor-list',
+      targets: ['tamsin', 'jonquil'],
+    });
+    expect(event(':srv 733 me :End of MONITOR list')).toEqual({ kind: 'monitor-list-end' });
+  });
+});
+
+describe('WATCH', () => {
+  // UnrealIRCd — irc.dashkova.co.uk among them — offers WATCH rather than
+  // MONITOR. Both must reduce to the same event, so the Friends panel never
+  // learns which mechanism it is running on.
+  it('reads someone coming online', () => {
+    expect(event(':srv 600 me tamsin ~u host.example 1754130000 :logged online')).toEqual({
+      kind: 'monitor',
+      online: true,
+      targets: ['tamsin'],
+    });
+    expect(event(':srv 604 me tamsin ~u host.example 1754130000 :is online')).toEqual({
+      kind: 'monitor',
+      online: true,
+      targets: ['tamsin'],
+    });
+  });
+
+  it('treats someone online but away as online', () => {
+    expect(event(':srv 609 me tamsin ~u host.example 1754130000 :is away')).toEqual({
+      kind: 'monitor',
+      online: true,
+      targets: ['tamsin'],
+    });
+  });
+
+  it('reads someone going offline', () => {
+    expect(event(':srv 601 me tamsin * * 1754130000 :logged offline')).toEqual({
+      kind: 'monitor',
+      online: false,
+      targets: ['tamsin'],
+    });
+    expect(event(':srv 605 me dunlin * * 0 :is offline')).toEqual({
+      kind: 'monitor',
+      online: false,
+      targets: ['dunlin'],
+    });
+  });
+
+  it('reads the stored list, which WATCH sends space-separated', () => {
+    expect(event(':srv 606 me :tamsin jonquil dunlin')).toEqual({
+      kind: 'monitor-list',
+      targets: ['tamsin', 'jonquil', 'dunlin'],
+    });
+    expect(event(':srv 607 me :End of WATCH list')).toEqual({ kind: 'monitor-list-end' });
+  });
+
+  it('reads a removal, which MONITOR never confirms', () => {
+    expect(event(':srv 602 me tamsin * * 0 :stopped watching')).toEqual({
+      kind: 'monitor-removed',
+      targets: ['tamsin'],
+    });
+  });
+
+  it('sends the entry count to the server tab rather than the Friends panel', () => {
+    expect(event(':srv 603 me :You have 2 and are on 1 WATCH entries')).toEqual({
+      kind: 'server-info',
+      text: 'You have 2 and are on 1 WATCH entries',
+    });
+  });
+
+  it('does not invent a target when the nick field is missing', () => {
+    expect(event(':srv 604 me')).toEqual({ kind: 'monitor', online: true, targets: [] });
+    expect(event(':srv 602 me')).toEqual({ kind: 'monitor-removed', targets: [] });
+  });
 });
 
 describe('errors as plain English', () => {

@@ -377,12 +377,16 @@ describe('UnrealIRCd transcript', () => {
     expect(state.standardReplies).toEqual(['fail:CHANNEL_FULL']);
   });
 
-  it('leaves no numeric unhandled except ones outside the map', () => {
-    // 604 (RPL_NOWON, from WATCH) is not in the numeric table yet; it is
-    // reported as `unhandled` rather than leaking as a raw line, which is the
-    // contract. Phase 6 adds the WATCH numerics with the Friends panel.
-    const unexpected = state.numericKinds.filter((kind) => kind === 'unhandled');
-    expect(unexpected).toHaveLength(1);
+  it('leaves no numeric unhandled', () => {
+    // This transcript is the reason the WATCH numerics exist: 604 (RPL_NOWON)
+    // arrived here as `unhandled` before the notify list was wired up.
+    expect(state.numericKinds.filter((kind) => kind === 'unhandled')).toEqual([]);
+  });
+
+  it('reads WATCH as the same notify event MONITOR produces', () => {
+    // UnrealIRCd offers WATCH where Libera offers MONITOR, and the Friends
+    // panel must not be able to tell which one it is running on.
+    expect(state.numericKinds).toContain('monitor');
   });
 });
 

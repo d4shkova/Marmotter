@@ -74,6 +74,23 @@ export const ERR_NOMOTD = '422';
 export const RPL_QUIETLIST = '728';
 export const RPL_ENDOFQUIETLIST = '729';
 
+/**
+ * WATCH, the older notify mechanism.
+ *
+ * UnrealIRCd and its relatives offer WATCH where Libera offers MONITOR. The two
+ * carry the same information in different shapes, so both reduce to the same
+ * `monitor` event and the Friends panel never learns which one it got.
+ */
+export const RPL_LOGON = '600';
+export const RPL_LOGOFF = '601';
+export const RPL_WATCHOFF = '602';
+export const RPL_WATCHSTAT = '603';
+export const RPL_NOWON = '604';
+export const RPL_NOWOFF = '605';
+export const RPL_WATCHLIST = '606';
+export const RPL_ENDOFWATCHLIST = '607';
+export const RPL_NOWISAWAY = '609';
+
 export const RPL_MONONLINE = '730';
 export const RPL_MONOFFLINE = '731';
 export const RPL_MONLIST = '732';
@@ -216,6 +233,15 @@ export const NUMERICS: ReadonlyMap<string, NumericInfo> = new Map([
   [RPL_ENDOFMOTD, info('RPL_ENDOFMOTD', 'motd', 'state')],
   [ERR_NOMOTD, info('ERR_NOMOTD', 'motd', 'state')],
 
+  [RPL_LOGON, info('RPL_LOGON', 'monitor', 'state')],
+  [RPL_LOGOFF, info('RPL_LOGOFF', 'monitor', 'state')],
+  [RPL_WATCHOFF, info('RPL_WATCHOFF', 'monitor', 'state')],
+  [RPL_WATCHSTAT, info('RPL_WATCHSTAT', 'monitor', 'state')],
+  [RPL_NOWON, info('RPL_NOWON', 'monitor', 'state')],
+  [RPL_NOWOFF, info('RPL_NOWOFF', 'monitor', 'state')],
+  [RPL_WATCHLIST, info('RPL_WATCHLIST', 'monitor', 'state')],
+  [RPL_ENDOFWATCHLIST, info('RPL_ENDOFWATCHLIST', 'monitor', 'state')],
+  [RPL_NOWISAWAY, info('RPL_NOWISAWAY', 'monitor', 'state')],
   [RPL_MONONLINE, info('RPL_MONONLINE', 'monitor', 'state')],
   [RPL_MONOFFLINE, info('RPL_MONOFFLINE', 'monitor', 'state')],
   [RPL_MONLIST, info('RPL_MONLIST', 'monitor', 'state')],
@@ -501,6 +527,8 @@ export type NumericEvent =
   | { readonly kind: 'inviting'; readonly channel: string; readonly nick: string }
   | { readonly kind: 'monitor-list'; readonly targets: readonly string[] }
   | { readonly kind: 'monitor-list-end' }
+  /** A nick left the notify list. WATCH confirms removals; MONITOR does not. */
+  | { readonly kind: 'monitor-removed'; readonly targets: readonly string[] }
   | { readonly kind: 'logged-out' }
   | { readonly kind: 'sasl-already-authenticated' }
   | { readonly kind: 'away'; readonly nick: string; readonly reason: string }
@@ -739,6 +767,26 @@ export function interpretNumeric(msg: IrcMessage, support: ISupport): NumericEve
       return { kind: 'monitor', online: true, targets: last.split(',').filter((t) => t !== '') };
     case RPL_MONOFFLINE:
       return { kind: 'monitor', online: false, targets: last.split(',').filter((t) => t !== '') };
+
+    // WATCH names one nick per line, in `<nick> <user> <host> <signon>` form.
+    case RPL_LOGON:
+    case RPL_NOWON:
+    case RPL_NOWISAWAY:
+      return { kind: 'monitor', online: true, targets: p[1] === undefined ? [] : [p[1]] };
+    case RPL_LOGOFF:
+    case RPL_NOWOFF:
+      return { kind: 'monitor', online: false, targets: p[1] === undefined ? [] : [p[1]] };
+    case RPL_WATCHLIST:
+      // The list reply carries the whole list on one line, space-separated.
+      return { kind: 'monitor-list', targets: last.split(' ').filter((t) => t !== '') };
+    case RPL_ENDOFWATCHLIST:
+      return { kind: 'monitor-list-end' };
+    case RPL_WATCHOFF:
+      return { kind: 'monitor-removed', targets: p[1] === undefined ? [] : [p[1]] };
+    case RPL_WATCHSTAT:
+      // "You have N and are on M WATCH entries" — a count, not a membership
+      // change, so it belongs in the server tab rather than the Friends panel.
+      return { kind: 'server-info', text: last };
 
     default: {
       if (NUMERICS.get(numeric)?.disposition === 'error') {

@@ -133,6 +133,34 @@ rejoin, mass `QUIT`, nick change of a channel operator, mode change while the
 member list is loading, and `chathistory` backfill overlapping the live buffer
 without duplicates.
 
+> **Notes from implementation, 2026-08-02.** Phase 3 complete. Four things
+> worth recording, because each was a decision rather than a transcription:
+>
+> - **The reducer is pure; a `Session` wraps it.** `reduce` takes one parsed
+>   message and returns new state plus lines to send, with no I/O and no
+>   timers, which is what makes the transcript harness possible. SASL cannot
+>   live there — SCRAM derives keys through WebCrypto and returns a promise —
+>   so the reducer reports `start-sasl` and `session.ts` drives the exchange.
+> - **Sessions are not in the store.** The Zustand registry holds
+>   `NetworkProfile` and reduced `NetworkState` keyed by network ID; the
+>   `Session` objects, which own sockets and listeners, live beside it. There is
+>   no "current network" in the store — selection is two fields nothing in
+>   `packages/client` reads.
+> - **`CHATHISTORY` moved into `packages/protocol`.** Request construction reads
+>   `CHATHISTORY` and `MSGREFTYPES` from ISUPPORT, so a server that only accepts
+>   timestamps is never sent a `msgid=` selector, and page sizes are clamped to
+>   what the server will serve. Completeness and gaps are inferred from what
+>   came back, since no server states either.
+> - **WATCH joined MONITOR in the numeric map.** UnrealIRCd — including
+>   `irc.dashkova.co.uk` — offers WATCH where Libera offers MONITOR. Both reduce
+>   to the same `monitor` event, so the Friends panel in Phase 5 never learns
+>   which mechanism it is running on, and a network with neither falls back to
+>   polled `WHOIS`.
+>
+> One protocol bug found and fixed on the way: the session was sending its SASL
+> initial response immediately after `AUTHENTICATE <MECH>` instead of waiting
+> for the server's empty challenge.
+
 ---
 
 ## Phase 4 — Design system

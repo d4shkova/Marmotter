@@ -76,6 +76,20 @@ export interface ISupport {
    * on solanum), so the ban builder must read it here rather than hardcode one.
    */
   readonly extban: { readonly prefix: string; readonly types: string } | undefined;
+  /**
+   * `CHATHISTORY=<max>`, the largest number of messages one request may ask
+   * for. Undefined means the server does not offer history at all; a value of
+   * 0 means it offers it with no fixed ceiling.
+   */
+  readonly chatHistory: number | undefined;
+  /**
+   * `MSGREFTYPES`, the message reference types the server accepts, in its own
+   * order of preference.
+   *
+   * A server that only accepts `timestamp` cannot be paginated by `msgid`, and
+   * asking it to would silently return the wrong page.
+   */
+  readonly msgRefTypes: readonly string[];
   readonly whox: boolean;
   readonly utf8Only: boolean;
   readonly maxNickLength: number | undefined;
@@ -114,6 +128,9 @@ export const DEFAULT_ISUPPORT: ISupport = {
   monitor: { supported: false, limit: undefined },
   watch: { supported: false, limit: undefined },
   extban: undefined,
+  chatHistory: undefined,
+  // The spec's default when the token is absent but the capability is offered.
+  msgRefTypes: ['timestamp', 'msgid'],
   whox: false,
   utf8Only: false,
   maxNickLength: undefined,
@@ -302,6 +319,21 @@ export function applyISupport(current: ISupport, tokens: readonly string[]): ISu
     current.monitor,
   );
 
+  // Servers that predate ratification still advertise `draft/CHATHISTORY`, and
+  // a few send both. The unprefixed token is applied second so it wins.
+  const draftChatHistory = pick(
+    'DRAFT/CHATHISTORY',
+    parseInteger,
+    DEFAULT_ISUPPORT.chatHistory,
+    current.chatHistory,
+  );
+  const chatHistory = pick(
+    'CHATHISTORY',
+    parseInteger,
+    DEFAULT_ISUPPORT.chatHistory,
+    draftChatHistory,
+  );
+
   return {
     raw,
     network: pick('NETWORK', (value) => value, undefined, current.network),
@@ -328,6 +360,17 @@ export function applyISupport(current: ISupport, tokens: readonly string[]): ISu
     monitor,
     watch,
     extban,
+    chatHistory,
+    msgRefTypes: pick(
+      'MSGREFTYPES',
+      (value) =>
+        value
+          .split(',')
+          .map((entry) => entry.trim().toLowerCase())
+          .filter((entry) => entry !== ''),
+      DEFAULT_ISUPPORT.msgRefTypes,
+      current.msgRefTypes,
+    ),
     whox: pick('WHOX', () => true, false, current.whox),
     utf8Only: pick('UTF8ONLY', () => true, false, current.utf8Only),
     maxNickLength: pick('NICKLEN', parseInteger, undefined, current.maxNickLength),
