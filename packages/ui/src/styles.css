@@ -30,14 +30,27 @@
   --color-separator-opaque: var(--separator-opaque);
 
   --color-accent: var(--accent);
-  --color-green: var(--green);
-  --color-red: var(--red);
-  --color-orange: var(--orange);
-  --color-yellow: var(--yellow);
-  --color-purple: var(--purple);
-  --color-pink: var(--pink);
-  --color-teal: var(--teal);
-  --color-indigo: var(--indigo);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-muted: var(--accent-muted);
+  --color-on-accent: var(--on-accent);
+
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-muted: var(--danger-muted);
+
+  --color-status-connected: var(--status-connected);
+  --color-status-connecting: var(--status-connecting);
+  --color-status-failed: var(--status-failed);
+
+  --color-nick-1: var(--nick-1);
+  --color-nick-2: var(--nick-2);
+  --color-nick-3: var(--nick-3);
+  --color-nick-4: var(--nick-4);
+  --color-nick-5: var(--nick-5);
+  --color-nick-6: var(--nick-6);
+  --color-nick-7: var(--nick-7);
+  --color-nick-8: var(--nick-8);
 
   --font-sans: var(--font-ui-stack);
   --font-mono: var(--font-mono-stack);

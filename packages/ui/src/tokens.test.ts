@@ -6,36 +6,56 @@ import { describe, expect, it } from 'vitest';
 const srcDir = fileURLToPath(new URL('.', import.meta.url));
 const tokensCss = readFileSync(join(srcDir, 'tokens.css'), 'utf8');
 
-/** The colour contract from the Design section of CLAUDE.md, verbatim. */
-const requiredColours: Record<string, string> = {
-  '--bg-base': '#000000',
-  '--bg-elevated': '#1c1c1e',
-  '--bg-elevated-2': '#2c2c2e',
-  '--bg-elevated-3': '#3a3a3c',
-  '--fill-primary': 'rgba(120, 120, 128, 0.36)',
-  '--fill-secondary': 'rgba(120, 120, 128, 0.32)',
-  '--fill-tertiary': 'rgba(118, 118, 128, 0.24)',
-  '--fill-quaternary': 'rgba(116, 116, 128, 0.18)',
-  '--label-primary': '#ffffff',
-  '--label-secondary': 'rgba(235, 235, 245, 0.6)',
-  '--label-tertiary': 'rgba(235, 235, 245, 0.3)',
-  '--label-quaternary': 'rgba(235, 235, 245, 0.16)',
-  '--separator': 'rgba(84, 84, 88, 0.65)',
-  '--separator-opaque': '#38383a',
-  '--accent': '#0a84ff',
-  '--green': '#30d158',
-  '--red': '#ff453a',
-  '--orange': '#ff9f0a',
-  '--yellow': '#ffd60a',
-  '--purple': '#bf5af2',
-  '--pink': '#ff375f',
-  '--teal': '#40c8e0',
-  '--indigo': '#5e5ce6',
-};
-
 const declaredValue = (property: string): string | undefined => {
   const match = new RegExp(`^\\s*${property}:\\s*([^;]+);`, 'm').exec(tokensCss);
   return match?.[1]?.trim();
+};
+
+/** Follows `var(--x)` indirection down to the literal a token resolves to. */
+const resolve = (property: string, depth = 0): string | undefined => {
+  const value = declaredValue(property);
+  if (value === undefined || depth > 8) {
+    return value;
+  }
+  const indirect = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value);
+  return indirect?.[1] === undefined ? value : resolve(indirect[1], depth + 1);
+};
+
+const rgb = (hex: string): [number, number, number] => {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match?.[1]) {
+    throw new Error(`not a six-digit hex colour: ${hex}`);
+  }
+  const value = Number.parseInt(match[1], 16);
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+};
+
+/** WCAG relative luminance. */
+const luminance = (hex: string): number => {
+  const [r, g, b] = rgb(hex).map((channel) => {
+    const c = channel / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+const contrast = (a: string, b: string): number => {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (light + 0.05) / (dark + 0.05);
+};
+
+/**
+ * Perceptual distance, using the "redmean" approximation. Good enough to catch
+ * two nick colours that would read as the same colour in a message list.
+ */
+const perceptualDistance = (a: string, b: string): number => {
+  const [r1, g1, b1] = rgb(a);
+  const [r2, g2, b2] = rgb(b);
+  const rMean = (r1 + r2) / 2;
+  const dr = r1 - r2;
+  const dg = g1 - g2;
+  const db = b1 - b2;
+  return Math.sqrt((2 + rMean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rMean) / 256) * db * db);
 };
 
 const walk = (dir: string): string[] =>
@@ -44,11 +64,139 @@ const walk = (dir: string): string[] =>
     return statSync(path).isDirectory() ? walk(path) : [path];
   });
 
-describe('design tokens', () => {
-  it.each(Object.entries(requiredColours))('defines %s as %s', (property, value) => {
-    expect(declaredValue(property)).toBe(value);
+const BLUE_RAMP = ['050', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+const NICK_TOKENS = Array.from({ length: 8 }, (_, i) => `--nick-${i + 1}`);
+
+describe('primitives', () => {
+  it.each(BLUE_RAMP)('defines --blue-%s as a hex value', (step) => {
+    const value = declaredValue(`--blue-${step}`);
+    expect(value).toMatch(/^#[0-9a-f]{6}$/);
   });
 
+  it('keeps systemBlue as the middle of the ramp', () => {
+    expect(declaredValue('--blue-500')).toBe('#0a84ff');
+  });
+
+  it('orders the ramp from light to dark', () => {
+    const luminances = BLUE_RAMP.map((step) => luminance(declaredValue(`--blue-${step}`) ?? ''));
+    const sorted = [...luminances].sort((a, b) => b - a);
+    expect(luminances).toEqual(sorted);
+  });
+
+  it('defines the neutral and alarm primitives', () => {
+    for (const token of ['--ink-000', '--ink-900', '--ink-800', '--ink-700', '--red-500']) {
+      expect(declaredValue(token), token).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+});
+
+describe('semantic aliases', () => {
+  const aliases = [
+    '--bg-base',
+    '--bg-elevated',
+    '--bg-elevated-2',
+    '--bg-elevated-3',
+    '--accent',
+    '--accent-hover',
+    '--accent-pressed',
+    '--danger',
+    '--status-connected',
+    '--status-connecting',
+    '--status-failed',
+    ...NICK_TOKENS,
+  ];
+
+  it.each(aliases)('%s points at a primitive rather than a literal', (token) => {
+    expect(declaredValue(token), token).toMatch(/^var\(--[\w-]+\)$/);
+  });
+
+  it('resolves the accent to systemBlue', () => {
+    expect(resolve('--accent')).toBe('#0a84ff');
+  });
+
+  it('keeps the base surface black', () => {
+    expect(resolve('--bg-base')).toBe('#000000');
+  });
+});
+
+describe('red is reserved for alarm', () => {
+  const reds = new Set(
+    ['--red-400', '--red-500', '--red-900'].map((token) => declaredValue(token) ?? ''),
+  );
+
+  const alarmAliases = ['--danger', '--danger-hover', '--danger-muted', '--status-failed'];
+
+  it('uses red for the alarm aliases', () => {
+    expect(reds.has(resolve('--danger') ?? '')).toBe(true);
+    expect(reds.has(resolve('--status-failed') ?? '')).toBe(true);
+  });
+
+  it('uses red nowhere else', () => {
+    // Every alias in the file, minus the ones that are supposed to be red.
+    const aliasNames = [...tokensCss.matchAll(/^\s*(--[\w-]+):\s*var\(--[\w-]+\);/gm)]
+      .map((match) => match[1] ?? '')
+      .filter((name) => !alarmAliases.includes(name));
+
+    for (const name of aliasNames) {
+      expect(reds.has(resolve(name) ?? ''), `${name} resolves to red`).toBe(false);
+    }
+  });
+
+  it('does not offer a green or an amber primitive to reach for', () => {
+    // The palette is one blue family plus red. Anything else has to be added
+    // deliberately, as a semantic alias, not picked out of a grab bag of hues.
+    for (const token of ['--green', '--orange', '--yellow', '--purple', '--pink']) {
+      expect(declaredValue(token), `${token} should not exist`).toBeUndefined();
+    }
+  });
+
+  it('shows connection health in blue, so red only ever means trouble', () => {
+    expect(reds.has(resolve('--status-connected') ?? '')).toBe(false);
+    expect(reds.has(resolve('--status-connecting') ?? '')).toBe(false);
+  });
+});
+
+describe('nick colours', () => {
+  const resolved = NICK_TOKENS.map((token) => ({ token, value: resolve(token) ?? '' }));
+  const base = resolve('--bg-base') ?? '#000000';
+
+  it('defines eight of them', () => {
+    expect(resolved).toHaveLength(8);
+    for (const { token, value } of resolved) {
+      expect(value, token).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  // The accessibility floor in CLAUDE.md, checked rather than asserted.
+  it.each(resolved)('$token clears 4.5:1 against the message background', ({ value }) => {
+    expect(contrast(value, base)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps every pair far enough apart to tell two people apart', () => {
+    // The real risk of a single-hue palette: two nicks that read as one colour.
+    const tooClose: string[] = [];
+    for (let i = 0; i < resolved.length; i += 1) {
+      for (let k = i + 1; k < resolved.length; k += 1) {
+        const a = resolved[i];
+        const b = resolved[k];
+        if (a === undefined || b === undefined) {
+          continue;
+        }
+        const distance = perceptualDistance(a.value, b.value);
+        if (distance < 40) {
+          tooClose.push(`${a.token} and ${b.token} (${distance.toFixed(1)})`);
+        }
+      }
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  it('uses distinct values', () => {
+    expect(new Set(resolved.map((entry) => entry.value)).size).toBe(resolved.length);
+  });
+});
+
+describe('typography, geometry, and motion', () => {
   it('defines the iOS text styles', () => {
     for (const style of [
       'large-title',
@@ -83,8 +231,6 @@ describe('design tokens', () => {
 });
 
 describe('token discipline', () => {
-  // Phase 4 acceptance, enforced from Phase 0: no hardcoded colour anywhere in
-  // packages/ui outside tokens.css.
   it('keeps every literal colour inside tokens.css', () => {
     const offenders = walk(srcDir)
       .filter((path) => !path.endsWith('tokens.css') && !path.endsWith('.test.ts'))
@@ -93,5 +239,17 @@ describe('token discipline', () => {
       .map((path) => path.slice(srcDir.length));
 
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps every literal colour in tokens.css inside the primitive layer', () => {
+    // Semantic aliases must go through var(); a literal below the primitives
+    // would break theming, since a theme only redefines primitives.
+    const semanticSection = tokensCss.slice(tokensCss.indexOf('2. semantic aliases'));
+    const literals = [...semanticSection.matchAll(/^\s*--[\w-]+:\s*(#[0-9a-f]{3,8})\b/gim)].map(
+      (match) => match[0].trim(),
+    );
+
+    // --label-primary and --on-accent are pure white in every theme.
+    expect(literals.every((line) => line.includes('#ffffff'))).toBe(true);
   });
 });

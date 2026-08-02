@@ -287,5 +287,10 @@ Do not build these, and do not leave partial implementations behind:
 - Push notification infrastructure.
 - macOS and iOS builds. Tauri makes them cheap to add later; they need signing
   hardware and are not a v1 target.
-- Theming beyond the shipped iOS dark palette. A light mode may follow, but the
-  tokens must be structured so it is a token swap and not a refactor.
+- Theming beyond the shipped blue dark palette. **User-selectable themes are a
+  planned follow-up, not a v1 feature** (decided 2026-07-30). Ship one palette,
+  but keep the two-layer token structure in `CLAUDE.md` intact — primitives and
+  semantic aliases — so adding a theme later is a token swap and not a refactor.
+  Do not build theme-switching UI, a theme file format, or persistence for it
+  now; do reject any component that reaches past an alias to a primitive, or
+  hardcodes a colour, because each one is a thing a future theme cannot move.

@@ -241,35 +241,61 @@ in components.
 
 ### Color
 
+The palette is **one blue family, plus red**. Hue carries no decorative meaning,
+so red is reserved: it appears only for errors, alerts, and destructive actions.
+Seeing red anywhere in the interface always means the same thing. There is no
+green, amber, purple, or pink primitive to reach for — adding a colour means
+adding a semantic alias and justifying it, not picking a hue.
+
+Tokens live in `packages/ui/src/tokens.css` in **two layers**:
+
+1. **Primitives** — the raw ramp. Every literal colour in the product is here
+   and nowhere else.
+2. **Semantic aliases** — what components actually reference. These point at
+   primitives through `var()`, never at literals.
+
+A theme redefines the primitives; the aliases follow. That is what makes later
+theming a token swap rather than a refactor.
+
 ```
---bg-base:            #000000
---bg-elevated:        #1C1C1E
---bg-elevated-2:      #2C2C2E
---bg-elevated-3:      #3A3A3C
+/* primitives: the blue ramp */
+--blue-050: #F2F8FF    --blue-500: #0A84FF   /* systemBlue dark */
+--blue-100: #DCECFF    --blue-600: #0A6FD8
+--blue-200: #BFDDFF    --blue-700: #0A5AB0
+--blue-300: #8CC4FF    --blue-800: #0B4586
+--blue-400: #5AABFF    --blue-900: #0A2F5C
 
---fill-primary:       rgba(120,120,128,0.36)
---fill-secondary:     rgba(120,120,128,0.32)
---fill-tertiary:      rgba(118,118,128,0.24)
---fill-quaternary:    rgba(116,116,128,0.18)
+/* primitives: the ends of the family, for nick variety */
+--cyan-300: #7FE2F5    --periwinkle-300: #C3CCFF
+--cyan-400: #4FD1E8    --periwinkle-400: #A9B6FF
+--cyan-500: #40C8E0    --indigo-400:     #8280FF
 
---label-primary:      #FFFFFF
---label-secondary:    rgba(235,235,245,0.60)
---label-tertiary:     rgba(235,235,245,0.30)
---label-quaternary:   rgba(235,235,245,0.16)
+/* primitives: blue-biased neutrals */
+--ink-000: #000000     --ink-800: #1A2430
+--ink-900: #101720     --ink-700: #26333F   --ink-600: #33414F
 
---separator:          rgba(84,84,88,0.65)
---separator-opaque:   #38383A
+/* primitives: alarm, and the only non-blue in the system */
+--red-400: #FF6961     --red-500: #FF453A   --red-900: #3A0F0C
 
---accent:             #0A84FF   /* systemBlue dark */
---green:              #30D158
---red:                #FF453A
---orange:             #FF9F0A
---yellow:             #FFD60A
---purple:             #BF5AF2
---pink:               #FF375F
---teal:               #40C8E0
---indigo:             #5E5CE6
+/* semantic aliases */
+--bg-base / --bg-elevated / --bg-elevated-2 / --bg-elevated-3
+--fill-primary … --fill-quaternary
+--label-primary … --label-quaternary
+--separator, --separator-opaque
+--accent, --accent-hover, --accent-pressed, --accent-muted, --on-accent
+--danger, --danger-hover, --danger-muted
+--status-connected, --status-connecting, --status-failed
+--nick-1 … --nick-8
 ```
+
+Connection health is shown in blue — connected is bright, connecting is dim —
+so red is never spent on a state that is merely in progress.
+
+Nick colours are hashed from the normalised nick across `--nick-1`–`--nick-8`.
+Within a single hue family they separate mostly by lightness, which is a real
+constraint: `packages/ui/src/tokens.test.ts` checks every one clears 4.5:1
+against `--bg-base` and that no two are perceptually closer than a set
+threshold. Widening the palette means widening that ramp, not adding hues.
 
 ### Typography
 
