@@ -1,0 +1,26 @@
+# OFTC registration. No SASL: this network is reached with a server password,
+# and it advertises a smaller capability set than Libera.
+
+> CAP LS 302
+< :kinetic.oftc.net CAP * LS :account-notify away-notify chghost extended-join multi-prefix sasl=PLAIN server-time
+> CAP REQ :sasl server-time multi-prefix extended-join away-notify account-notify chghost
+< :kinetic.oftc.net CAP * NAK :sasl server-time multi-prefix extended-join away-notify account-notify chghost
+> CAP END
+> NICK marmot
+> USER marmot 0 * :Marmotter user
+< :kinetic.oftc.net 433 * marmot :Nickname is already in use.
+> NICK marmot_
+< :kinetic.oftc.net 001 marmot_ :Welcome to the OFTC Internet Relay Chat Network marmot_
+< :kinetic.oftc.net 002 marmot_ :Your host is kinetic.oftc.net[93.0.2.9/6697], running version hybrid-7.2.3+oftc1.7.3
+< :kinetic.oftc.net 003 marmot_ :This server was created Jan 14 2024 at 03:21:09
+< :kinetic.oftc.net 004 marmot_ kinetic.oftc.net hybrid-7.2.3+oftc1.7.3 CDGPRSabcdefgijklnorsuwxyz biklmnopstveIh bkloveIh
+< :kinetic.oftc.net 005 marmot_ CALLERID CASEMAPPING=rfc1459 DEAF=D KICKLEN=160 MODES=4 NICKLEN=30 PREFIX=(ohv)@%+ STATUSMSG=@%+ TOPICLEN=391 NETWORK=OFTC MAXLIST=beI:100 MAXTARGETS=1 CHANTYPES=#& :are supported by this server
+< :kinetic.oftc.net 005 marmot_ CHANLIMIT=#&:20 CHANNELLEN=50 CHANMODES=eIb,k,l,imnpstMORS AWAYLEN=160 KNOCK ELIST=CMNTU SAFELIST EXCEPTS=e INVEX=I :are supported by this server
+< :kinetic.oftc.net 251 marmot_ :There are 118 users and 5920 invisible on 12 servers
+< :kinetic.oftc.net 422 marmot_ :MOTD File is missing
+> JOIN #debian
+< :marmot_!~marmot@203.0.113.9 JOIN :#debian
+< :kinetic.oftc.net 332 marmot_ #debian :Debian user support | https://www.debian.org
+< :kinetic.oftc.net 353 marmot_ = #debian :@%+opper @halfop +voiced plain marmot_
+< :kinetic.oftc.net 366 marmot_ #debian :End of /NAMES list.
+< :kinetic.oftc.net 482 marmot_ #debian :You're not a channel operator

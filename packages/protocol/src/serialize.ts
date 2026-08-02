@@ -21,7 +21,19 @@ export type SerializeFailureReason =
   /** A parameter other than the last one cannot be represented on the wire. */
   | 'ambiguous-parameter'
   /** The verb was empty, or contained a space. */
-  | 'invalid-command';
+  | 'invalid-command'
+  /**
+   * Some part of the message contained CR, LF, or NUL.
+   *
+   * These terminate or corrupt a message on the wire, so emitting one would let
+   * whatever produced the string append arbitrary commands to the stream. A
+   * nick, a topic, or a channel key taken from user input is exactly where such
+   * a string comes from.
+   */
+  | 'forbidden-character';
+
+/** Bytes that cannot appear anywhere in an IRC message. */
+const FORBIDDEN = /[\r\n\0]/;
 
 export type SerializeResult =
   | { readonly ok: true; readonly line: string }
@@ -37,6 +49,22 @@ export function serializeMessage(msg: IrcMessage): SerializeResult {
   const verb = msg.rawCommand ?? msg.command;
   if (verb === '' || verb.includes(' ')) {
     return { ok: false, reason: 'invalid-command' };
+  }
+
+  // Refuse the injection vector before anything else. Tag values are escaped on
+  // the way out, so only names need checking there.
+  if (FORBIDDEN.test(verb) || (msg.source !== undefined && FORBIDDEN.test(msg.source.raw))) {
+    return { ok: false, reason: 'forbidden-character' };
+  }
+  for (const value of msg.params) {
+    if (FORBIDDEN.test(value)) {
+      return { ok: false, reason: 'forbidden-character' };
+    }
+  }
+  for (const name of msg.tags.keys()) {
+    if (FORBIDDEN.test(name) || name.includes(' ') || name.includes(';')) {
+      return { ok: false, reason: 'forbidden-character' };
+    }
   }
 
   for (let i = 0; i < msg.params.length - 1; i += 1) {

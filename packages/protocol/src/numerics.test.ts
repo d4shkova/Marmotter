@@ -425,6 +425,101 @@ describe('nick collision', () => {
   });
 });
 
+describe('the interpreter covers the table', () => {
+  // CLAUDE.md: no numeric reaches a consumer as a raw string. A numeric listed
+  // in NUMERICS but missing from interpretNumeric would fall through as
+  // `unhandled`, which is exactly the gap the ergo transcript caught.
+  it.each([...NUMERICS.keys()])('interprets %s as something other than unhandled', (numeric) => {
+    // Enough parameters that a well-formed numeric of any shape is satisfied.
+    const line = `:srv ${numeric} me #chan a b c d :trailing text`;
+    const result = parseMessage(line);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(interpretNumeric(result.message, support).kind).not.toBe('unhandled');
+  });
+});
+
+describe('WHO', () => {
+  it('reads a WHO reply, splitting the flags field', () => {
+    expect(event(':srv 352 me #c ~user host.example srv tamsin H@ :0 Real Name')).toEqual({
+      kind: 'who-reply',
+      channel: '#c',
+      username: '~user',
+      host: 'host.example',
+      server: 'srv',
+      nick: 'tamsin',
+      away: false,
+      oper: false,
+      bot: false,
+      prefixes: '@',
+      realname: 'Real Name',
+    });
+  });
+
+  it('reads away, operator, and bot flags', () => {
+    const result = event(':srv 352 me #c u h srv nick G*B@ :0 Name');
+    expect(result).toMatchObject({ away: true, oper: true, bot: true, prefixes: '@' });
+  });
+
+  it('ignores a flag character the server never advertised as a prefix', () => {
+    const result = event(':srv 352 me #c u h srv nick H! :0 Name');
+    expect(result.kind === 'who-reply' && result.prefixes).toBe('');
+  });
+
+  it('reports WHOX fields without guessing their meaning', () => {
+    const result = event(':srv 354 me 152 #c ~user host nick H@ account :Real Name');
+    expect(result).toEqual({
+      kind: 'whox-reply',
+      fields: ['152', '#c', '~user', 'host', 'nick', 'H@', 'account', 'Real Name'],
+    });
+  });
+
+  it('ends the WHO burst', () => {
+    expect(event(':srv 315 me #c :End of /WHO list')).toEqual({ kind: 'who-end', target: '#c' });
+  });
+});
+
+describe('other state numerics', () => {
+  it('reads the channel creation time', () => {
+    expect(event(':srv 329 me #c 1699999999')).toEqual({
+      kind: 'channel-created',
+      channel: '#c',
+      at: new Date(1699999999000),
+    });
+  });
+
+  it('reads an invite confirmation in either parameter order', () => {
+    expect(event(':srv 341 me #c tamsin')).toEqual({
+      kind: 'inviting',
+      channel: '#c',
+      nick: 'tamsin',
+    });
+    expect(event(':srv 341 me tamsin #c')).toEqual({
+      kind: 'inviting',
+      channel: '#c',
+      nick: 'tamsin',
+    });
+  });
+
+  it('reads the monitor list', () => {
+    expect(event(':srv 732 me :a,b,c')).toEqual({
+      kind: 'monitor-list',
+      targets: ['a', 'b', 'c'],
+    });
+    expect(event(':srv 733 me :End of MONITOR list').kind).toBe('monitor-list-end');
+  });
+
+  it('reads the list start and logout', () => {
+    expect(event(':srv 321 me Channel :Users Name').kind).toBe('channel-list-start');
+    expect(event(':srv 901 me nick!u@h :You are now logged out').kind).toBe('logged-out');
+    expect(event(':srv 907 me :You have already authenticated').kind).toBe(
+      'sasl-already-authenticated',
+    );
+  });
+});
+
 describe('degenerate input', () => {
   // A server that truncates a reply, or a hostile one that sends a numeric with
   // no parameters at all, must not be able to crash the interpreter.

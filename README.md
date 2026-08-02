@@ -13,7 +13,14 @@ rules. Read [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phase-by-phase plan.
 
 ## Status
 
-Phase 0 (scaffold) is complete. Phase 1 builds the protocol core.
+Phases 0 (scaffold) and 1 (protocol core) are complete. Phase 2 builds the
+transport layer.
+
+`packages/protocol` implements the line parser and serializer, IRCv3 capability
+negotiation, SASL (PLAIN, EXTERNAL, SCRAM-SHA-256), ISUPPORT, casemapping, the
+numeric map, the mode parser, CTCP, batch and labeled-response correlation, and
+standard replies. It passes the official `ircdocs/parser-tests` vectors, and
+SCRAM reproduces the RFC 7677 test vector.
 
 ## Requirements
 

@@ -46,6 +46,60 @@ describe('serializeMessage', () => {
   });
 });
 
+describe('command injection', () => {
+  // Found by the fuzz suite: a parameter carrying CRLF used to serialize into a
+  // line that parsed back as two messages, letting anything that reached a
+  // parameter append commands of its own.
+  it('refuses a parameter containing CRLF', () => {
+    const result = serializeMessage(
+      message({ command: 'PRIVMSG', params: ['#c', 'hi\r\nJOIN #evil'] }),
+    );
+    expect(result).toEqual({ ok: false, reason: 'forbidden-character' });
+  });
+
+  it.each(['\r', '\n', '\0'])('refuses a parameter containing %j', (char) => {
+    const result = serializeMessage(message({ command: 'PRIVMSG', params: ['#c', `a${char}b`] }));
+    expect(result).toEqual({ ok: false, reason: 'forbidden-character' });
+  });
+
+  it('refuses a channel name carrying a newline', () => {
+    // The shape a malicious autojoin entry or a pasted channel name would take.
+    const result = serializeMessage(message({ command: 'JOIN', params: ['#c\r\nQUIT'] }));
+    expect(result.ok).toBe(false);
+  });
+
+  it('refuses a verb containing a newline', () => {
+    expect(serializeMessage(message({ command: 'PING\r\nQUIT' }))).toEqual({
+      ok: false,
+      reason: 'forbidden-character',
+    });
+  });
+
+  it('refuses a source containing a newline', () => {
+    const result = serializeMessage(
+      message({ command: 'PING', source: makeSource('nick\r\nQUIT') }),
+    );
+    expect(result).toEqual({ ok: false, reason: 'forbidden-character' });
+  });
+
+  it('refuses a tag name that would break the tag section', () => {
+    for (const name of ['a\r\nb', 'a b', 'a;b']) {
+      const result = serializeMessage(
+        message({ tags: new Map([[name, 'v']]), command: 'PING', params: ['x'] }),
+      );
+      expect(result, name).toEqual({ ok: false, reason: 'forbidden-character' });
+    }
+  });
+
+  it('still allows a tag value containing a newline, because those are escaped', () => {
+    const result = serializeMessage(
+      message({ tags: new Map([['a', 'x\ny']]), command: 'PING', params: ['t'] }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.line).toBe('@a=x\\ny PING t');
+  });
+});
+
 describe('measureMessage', () => {
   it('counts the body including CRLF', () => {
     const result = measureMessage(message({ command: 'PING', params: ['x'] }));

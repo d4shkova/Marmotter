@@ -4,9 +4,9 @@
  * All IRC protocol logic lives here, in TypeScript, so desktop, web, and Android
  * share one implementation. This package performs no I/O and imports nothing.
  *
- * Phase 1 of BUILD_PLAN.md: line parser and serializer, capability negotiation,
- * SASL, ISUPPORT, casemapping, the numeric map, and the mode parser. CTCP,
- * batch and labeled-response correlation, and standard replies follow.
+ * Phase 1 of BUILD_PLAN.md, complete: line parser and serializer, capability
+ * negotiation, SASL, ISUPPORT, casemapping, the numeric map, the mode parser,
+ * CTCP, batch and labeled-response correlation, and standard replies.
  */
 
 export * from './limits.js';
@@ -22,3 +22,6 @@ export * from './caps.js';
 export * from './base64.js';
 export * from './sasl.js';
 export * from './numerics.js';
+export * from './ctcp.js';
+export * from './batch.js';
+export * from './standard-replies.js';

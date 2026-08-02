@@ -1,0 +1,45 @@
+# ergo, which supports the newest extensions: batch, labeled-response,
+# chathistory, and the draft reply and react tags. This is the transcript the
+# Playwright suite will run against a local instance in later phases.
+
+> CAP LS 302
+< :ergo.test CAP * LS * :account-notify account-tag away-notify batch cap-notify chghost draft/chathistory draft/message-redaction draft/read-marker draft/typing echo-message extended-join
+< :ergo.test CAP * LS :invite-notify labeled-response message-tags multi-prefix sasl=PLAIN,EXTERNAL,SCRAM-SHA-256 server-time setname standard-replies +draft/react +draft/reply
+> CAP REQ :sasl server-time echo-message message-tags batch labeled-response multi-prefix extended-join away-notify account-notify account-tag chghost setname invite-notify standard-replies draft/chathistory cap-notify draft/typing +draft/reply +draft/react
+< :ergo.test CAP * ACK :sasl server-time echo-message message-tags batch labeled-response multi-prefix extended-join away-notify account-notify account-tag chghost setname invite-notify standard-replies draft/chathistory cap-notify draft/typing +draft/reply +draft/react
+> AUTHENTICATE SCRAM-SHA-256
+< AUTHENTICATE +
+> AUTHENTICATE biwsbj10ZXN0ZXIscj1yT3ByTkdmd0ViZVJXZ2JORWtxTw==
+< AUTHENTICATE cj1yT3ByTkdmd0ViZVJXZ2JORWtxTyUzRDNEcyxzPVcyMlphSjBTTlk3c29Fc1VFamI2Z1E9PSxpPTQwOTY=
+> AUTHENTICATE Yz1iaXdzLHI9ck9wck5HZndFYmVSV2diTkVrcU8lM0QzRHMscD1hYmM9
+< :ergo.test 900 tester tester!~t@localhost tester :You are now logged in as tester
+< :ergo.test 903 tester :Authentication successful
+> CAP END
+> NICK tester
+> USER tester 0 * :Test user
+< :ergo.test 001 tester :Welcome to the ErgoTest IRC Network tester
+< :ergo.test 005 tester AWAYLEN=390 BOT=B CASEMAPPING=ascii CHANLIMIT=#:100 CHANMODES=beI,k,fl,CEMRUimnstu CHANNELLEN=64 CHANTYPES=# ELIST=U EXCEPTS=e EXTBAN=,m FORWARD=f INVEX=I :are supported by this server
+< :ergo.test 005 tester KICKLEN=390 MAXLIST=beI:60 MAXTARGETS=4 MODES MONITOR=100 NETWORK=ErgoTest NICKLEN=32 PREFIX=(qaohv)~&@%+ STATUSMSG=~&@%+ TARGMAX=NAMES:1,LIST:1,KICK:,WHOIS:1,USERHOST:10,PRIVMSG:4,TAGMSG:4,NOTICE:4,MONITOR:100 TOPICLEN=390 UTF8ONLY WHOX :are supported by this server
+< :ergo.test 376 tester :End of MOTD command
+> JOIN #test
+< :tester!~t@localhost JOIN #test tester :Test user
+< :ergo.test 353 tester = #test :~founder &admin @op %halfop +voice tester
+< :ergo.test 366 tester #test :End of NAMES list
+> @label=mm1 CHATHISTORY LATEST #test * 3
+< @label=mm1 :ergo.test BATCH +hist chathistory #test
+< @batch=hist;msgid=h1;time=2026-07-30T08:00:00.000Z :alice!~a@localhost PRIVMSG #test :first
+< @batch=hist;msgid=h2;time=2026-07-30T08:01:00.000Z :bob!~b@localhost PRIVMSG #test :second
+< @batch=hist;msgid=h3;time=2026-07-30T08:02:00.000Z :alice!~a@localhost PRIVMSG #test :third
+< :ergo.test BATCH -hist
+> @label=mm2 WHO #test
+< @label=mm2 :ergo.test BATCH +who labeled-response
+< @batch=who :ergo.test 352 tester #test ~a localhost ergo.test alice H :0 Alice
+< @batch=who :ergo.test 315 tester #test :End of WHO list
+< :ergo.test BATCH -who
+> @label=mm3 PING check
+< @label=mm3 :ergo.test PONG ergo.test :check
+< @+draft/reply=h1;msgid=r1;time=2026-07-30T09:00:00.000Z :bob!~b@localhost PRIVMSG #test :replying to the first one
+< @+draft/react=👍;+draft/reply=h1;msgid=r2 :alice!~a@localhost TAGMSG #test
+< :ergo.test FAIL JOIN CHANNEL_FULL #full :Cannot join channel, it is full.
+< :ergo.test WARN REHASH CONFIG_OUTDATED :Configuration is out of date.
+< :ergo.test NOTE * TEST_NOTE :Just so you know.

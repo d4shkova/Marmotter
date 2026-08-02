@@ -7,7 +7,7 @@
  * interface copy rules in CLAUDE.md.
  */
 
-import { type ISupport, splitPrefixes } from './isupport.js';
+import { type ISupport, isChannel, splitPrefixes } from './isupport.js';
 import type { IrcMessage } from './message.js';
 
 export const RPL_WELCOME = '001';
@@ -475,6 +475,34 @@ export type NumericEvent =
       readonly params: readonly string[];
     }
   | { readonly kind: 'whois-end'; readonly nick: string }
+  | {
+      readonly kind: 'who-reply';
+      readonly channel: string;
+      readonly username: string;
+      readonly host: string;
+      readonly server: string;
+      readonly nick: string;
+      readonly away: boolean;
+      readonly oper: boolean;
+      readonly bot: boolean;
+      /** Status prefixes carried in the flags field. */
+      readonly prefixes: string;
+      readonly realname: string;
+    }
+  /**
+   * A WHOX reply. The field order is decided by the token the client sent, so
+   * the protocol layer reports the fields and the caller — which knows what it
+   * asked for — reads them.
+   */
+  | { readonly kind: 'whox-reply'; readonly fields: readonly string[] }
+  | { readonly kind: 'who-end'; readonly target: string }
+  | { readonly kind: 'channel-list-start' }
+  | { readonly kind: 'channel-created'; readonly channel: string; readonly at: Date | undefined }
+  | { readonly kind: 'inviting'; readonly channel: string; readonly nick: string }
+  | { readonly kind: 'monitor-list'; readonly targets: readonly string[] }
+  | { readonly kind: 'monitor-list-end' }
+  | { readonly kind: 'logged-out' }
+  | { readonly kind: 'sasl-already-authenticated' }
   | { readonly kind: 'away'; readonly nick: string; readonly reason: string }
   | { readonly kind: 'away-state'; readonly away: boolean }
   | { readonly kind: 'sasl-success'; readonly account: string | undefined }
@@ -632,6 +660,63 @@ export function interpretNumeric(msg: IrcMessage, support: ISupport): NumericEve
     case RPL_ENDOFWHOIS:
     case RPL_ENDOFWHOWAS:
       return { kind: 'whois-end', nick: p[1] ?? '' };
+
+    case RPL_WHOREPLY: {
+      // <client> <channel> <user> <host> <server> <nick> <flags> :<hops> <real>
+      const flags = p[6] ?? '';
+      const advertised = support.prefixes.map((entry) => entry.prefix);
+      const trailing = p[7] ?? '';
+      // The trailing parameter is "<hopcount> <realname>".
+      const space = trailing.indexOf(' ');
+
+      return {
+        kind: 'who-reply',
+        channel: p[1] ?? '',
+        username: p[2] ?? '',
+        host: p[3] ?? '',
+        server: p[4] ?? '',
+        nick: p[5] ?? '',
+        away: flags.startsWith('G'),
+        oper: flags.includes('*'),
+        bot: flags.includes('B'),
+        prefixes: flags
+          .split('')
+          .filter((char) => advertised.includes(char))
+          .join(''),
+        realname: space === -1 ? '' : trailing.slice(space + 1),
+      };
+    }
+
+    case RPL_WHOSPCRPL:
+      return { kind: 'whox-reply', fields: p.slice(1) };
+
+    case RPL_ENDOFWHO:
+      return { kind: 'who-end', target: p[1] ?? '' };
+
+    case RPL_LISTSTART:
+      return { kind: 'channel-list-start' };
+
+    case RPL_CREATIONTIME:
+      return { kind: 'channel-created', channel: p[1] ?? '', at: toDate(p[2]) };
+
+    case RPL_INVITING:
+      // Parameter order varies between ircds; the channel is the one that
+      // starts with a channel type character.
+      return isChannel(p[1] ?? '', support)
+        ? { kind: 'inviting', channel: p[1] ?? '', nick: p[2] ?? '' }
+        : { kind: 'inviting', channel: p[2] ?? '', nick: p[1] ?? '' };
+
+    case RPL_MONLIST:
+      return { kind: 'monitor-list', targets: last.split(',').filter((t) => t !== '') };
+
+    case RPL_ENDOFMONLIST:
+      return { kind: 'monitor-list-end' };
+
+    case RPL_LOGGEDOUT:
+      return { kind: 'logged-out' };
+
+    case ERR_SASLALREADY:
+      return { kind: 'sasl-already-authenticated' };
 
     case RPL_AWAY:
       return { kind: 'away', nick: p[1] ?? '', reason: last };
