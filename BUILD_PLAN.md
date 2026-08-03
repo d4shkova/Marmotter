@@ -263,6 +263,41 @@ numeric. Playwright covers this path end to end against local ergo.
 > them while typing), and the Playwright run against local ergo. The acceptance
 > criterion above is therefore not yet met and Phase 6 must not start.
 >
+> **Progress, 2026-08-03.** The settings screen landed earlier; this pass adds
+> the remaining four. What is left of Phase 5 is the Playwright run against a
+> local ergo, and nothing else.
+>
+> - **The command bar's autocomplete surface.** `suggest.ts` is a pure function
+>   of the text and the caret, which is what makes the offset arithmetic
+>   testable without a DOM — and that arithmetic is where this feature goes
+>   wrong, because a wrong `from` silently eats what somebody typed. The popup
+>   shows each command's parameters, its one-sentence summary, and where the
+>   same thing lives in the interface, so `/mode` teaches that the channel
+>   settings panel exists rather than just completing.
+> - **Emoji entry**, both ways: `:shortcode` completion through the same popup,
+>   and a picker on the composer. Shortcodes resolve on send, so typing the
+>   whole thing and picking from the list produce the same line. The set is
+>   hand-picked rather than the full Unicode table — several hundred kilobytes
+>   of bundle for a long tail nobody reaches for is a bad trade, and the system
+>   emoji keyboard still covers everything.
+> - **Desktop notifications.** Mentions and direct messages only, and only when
+>   the window is not in front. Two things needed care: WebView2 has no web
+>   `Notification` API, so Windows goes through `tauri-plugin-notification` and
+>   the browser path would have silently done nothing; and a `chathistory`
+>   backfill must not arrive as a burst of notifications, which is why the
+>   shell records a conversation's tail on first sight without acting on it.
+> - **The channel browser**, which is Phase 6 work pulled forward because
+>   `/list` had nowhere to put its answer — a numeric per channel is exactly
+>   what CLAUDE.md says never to render. `RPL_LIST` now reduces into a
+>   `directory` on the network state, capped at twenty thousand rows with the
+>   truncation stated plainly rather than silently shown as if it were the whole
+>   network. Rows render as they arrive; search filters client-side, because
+>   every ircd spells the server-side `LIST` filter differently.
+>
+> The a11y and story gates from Phase 4 caught two defects on the way, which is
+> the second time they have paid for themselves: `role="combobox"` is not
+> allowed on a textarea, and the browser had no story.
+>
 > Two notes on decisions taken along the way:
 >
 > - **The shell lives in `packages/ui`, not a new package.** It needs both the

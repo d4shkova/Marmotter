@@ -1,5 +1,6 @@
 import { Marmotter } from '@marmotter/ui';
-import type { JSX } from 'react';
+import { type JSX, useMemo } from 'react';
+import { createDesktopNotifier } from './notifier';
 import { createDesktopTransport } from './transport';
 
 /**
@@ -13,5 +14,9 @@ export function App(): JSX.Element {
   // Desktop keeps profiles and, when the user opts in, logs. Phase 7 adds the
   // storage behind both; the flag is what tells the shell not to promise the
   // web build's "nothing is kept" guarantee here.
-  return <Marmotter createTransport={() => createDesktopTransport()} persists />;
+  const notifier = useMemo(() => createDesktopNotifier(), []);
+
+  return (
+    <Marmotter createTransport={() => createDesktopTransport()} notifier={notifier} persists />
+  );
 }

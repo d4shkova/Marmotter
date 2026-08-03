@@ -41,6 +41,7 @@ import { type IgnoreChannel, findIgnore, hostmaskOf } from './ignore.js';
 import { getMember, removeMember, renameMember, upsertMember } from './members.js';
 import { derivedId, insertMessage, reconcileEcho, timestampOf } from './messages.js';
 import {
+  CHANNEL_LIST_LIMIT,
   type ChannelState,
   type IgnoreRule,
   type Member,
@@ -49,6 +50,7 @@ import {
   type NetworkState,
   type NotifyEntry,
   emptyChannel,
+  emptyDirectory,
 } from './types.js';
 
 /** Everything the reducer needs that is not in the state itself. */
@@ -98,6 +100,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     ignores: [],
     batches: new Map(),
     rawLog: [],
+    directory: emptyDirectory(),
   };
 }
 
@@ -1104,6 +1107,43 @@ function reduceNumeric(
         }),
       );
     }
+
+    // The public channel list. Not every server sends the start numeric, so
+    // the first row opens the listing as well — otherwise a network that goes
+    // straight to 322 would fill a directory nobody had marked as loading.
+    case 'channel-list-start':
+      return result({
+        ...state,
+        directory: { entries: [], loading: true, complete: false, truncated: false },
+      });
+
+    case 'channel-list-entry': {
+      const directory = state.directory.complete
+        ? { entries: [], loading: true, complete: false, truncated: false }
+        : state.directory;
+
+      if (directory.entries.length >= CHANNEL_LIST_LIMIT) {
+        return result({ ...state, directory: { ...directory, loading: true, truncated: true } });
+      }
+
+      return result({
+        ...state,
+        directory: {
+          ...directory,
+          loading: true,
+          entries: [
+            ...directory.entries,
+            { channel: event.channel, members: event.members, topic: event.topic },
+          ],
+        },
+      });
+    }
+
+    case 'channel-list-end':
+      return result({
+        ...state,
+        directory: { ...state.directory, loading: false, complete: true },
+      });
 
     case 'away-state':
       return result({ ...state, away: event.away });

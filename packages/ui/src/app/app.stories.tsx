@@ -1,4 +1,5 @@
 import {
+  type ChannelDirectory,
   type ChannelState,
   type Message,
   type NetworkState,
@@ -11,6 +12,7 @@ import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
+import { ChannelBrowser } from './ChannelBrowser.js';
 import { Composer } from './Composer.js';
 import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
@@ -119,6 +121,19 @@ const network = (): NetworkState => ({
       line: ':jonquil!~j@host.example PRIVMSG #marmotter :morning all',
     },
   ],
+});
+
+const directory = (): ChannelDirectory => ({
+  entries: [
+    { channel: '#marmotter', members: 42, topic: 'Building the client | logs off' },
+    { channel: '#libera', members: 1_204, topic: 'Welcome to Libera.Chat' },
+    { channel: '#irc', members: 318, topic: 'Talking about the protocol itself' },
+    { channel: '#rust', members: 2_880, topic: 'Rust programming language' },
+    { channel: '#tauri', members: 96, topic: '' },
+  ],
+  loading: false,
+  complete: true,
+  truncated: false,
 });
 
 const failedNetwork = (): NetworkState => ({
@@ -271,6 +286,31 @@ export const TheRawLog: StoryObj = {
   render: () => (
     <div className="h-80 w-[42rem] rounded-card border border-[var(--separator)]">
       <RawLog network={network()} onCopy={() => {}} />
+    </div>
+  ),
+};
+
+export const BrowsingChannels: StoryObj = {
+  render: () => (
+    <div className="flex h-96 w-[46rem] flex-col rounded-card border border-[var(--separator)]">
+      <ChannelBrowser
+        network={{ ...network(), directory: directory() }}
+        onRefresh={() => {}}
+        onJoin={() => {}}
+        joined={new Set(['#marmotter'])}
+      />
+    </div>
+  ),
+};
+
+export const BrowsingChannelsWhileLoading: StoryObj = {
+  render: () => (
+    <div className="flex h-96 w-[46rem] flex-col rounded-card border border-[var(--separator)]">
+      <ChannelBrowser
+        network={{ ...network(), directory: { ...directory(), loading: true, complete: false } }}
+        onRefresh={() => {}}
+        onJoin={() => {}}
+      />
     </div>
   ),
 };

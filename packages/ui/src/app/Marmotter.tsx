@@ -9,7 +9,7 @@ import {
 } from '@marmotter/client';
 import { fold, isChannel } from '@marmotter/protocol';
 import type { NetworkProfile, Transport } from '@marmotter/shared';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
 import { Button } from '../primitives/Button.js';
@@ -18,6 +18,7 @@ import { IconButton } from '../primitives/IconButton.js';
 import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
+import { ChannelBrowser } from './ChannelBrowser.js';
 import { Composer } from './Composer.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -28,6 +29,13 @@ import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { parseInput } from './commands.js';
 import { memberActions } from './member-actions.js';
+import {
+  type Notifier,
+  buildNotification,
+  createWebNotifier,
+  shouldNotify,
+  windowIsFocused,
+} from './notify.js';
 import type { MenuItem } from '../primitives/ContextMenu.js';
 import {
   type TargetRef,
@@ -57,6 +65,13 @@ export interface MarmotterProps {
    * message content survives the tab.
    */
   readonly persists?: boolean;
+  /**
+   * How the platform raises a notification.
+   *
+   * Desktop passes a Tauri-backed one, because WebView2 has no web
+   * Notification API and the browser fallback would do nothing on Windows.
+   */
+  readonly notifier?: Notifier;
 }
 
 /** The whole client. */
@@ -64,6 +79,7 @@ export function Marmotter({
   createTransport,
   resolveSecret,
   persists = false,
+  notifier,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -103,24 +119,79 @@ export function Marmotter({
     return network.channels.get(key) ?? network.queries.get(key);
   }, [network, selection]);
 
-  // Unread and highlight tracking. Watching the buffer lengths rather than
-  // each message keeps this out of the reducer, where a "have I read this"
-  // question does not belong.
+  // The newest message seen in each conversation, so the same one is never
+  // counted or notified twice. Recording a conversation the first time it is
+  // seen without acting on it is what keeps a `draft/chathistory` backfill from
+  // arriving as a burst of notifications the moment a channel is joined.
+  const seen = useRef(new Map<string, string>());
+  const platformNotifier = useMemo(
+    () => notifier ?? createWebNotifier((ref) => view.select(ref)),
+    // The store's `select` is stable; rebuilding the notifier on every render
+    // would hand each notification a listener the next render orphans.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notifier],
+  );
+  /** Undefined until the platform has been asked; false once it has refused. */
+  const permission = useRef<boolean | undefined>(undefined);
+  /** Whether that question is currently outstanding, so it is only asked once. */
+  const asking = useRef(false);
+
+  // Unread, highlight, and notification tracking. Watching the tail of each
+  // buffer rather than every message keeps this out of the reducer, where a
+  // "have I read this" question does not belong.
   useEffect(() => {
     for (const state of networks) {
-      for (const [, channel] of [...state.channels, ...state.queries]) {
+      for (const [key, channel] of [...state.channels, ...state.queries]) {
         const newest = channel.messages[channel.messages.length - 1];
-        if (newest === undefined || newest.kind !== 'privmsg') {
+        if (newest === undefined) {
           continue;
         }
+        const seenKey = `${state.id} ${key}`;
+        const previous = seen.current.get(seenKey);
+        seen.current.set(seenKey, newest.id);
+        if (previous === newest.id) {
+          continue;
+        }
+
         const ref: TargetRef = { networkId: state.id, target: channel.name };
-        if (sameRef(ref, view.selection)) {
+        const watching = sameRef(ref, view.selection) && view.pane === 'chat';
+        const mentions = (text: string): boolean =>
+          isHighlight(text, state.nick, view.appearance.highlightWords);
+
+        if (newest.kind === 'privmsg' && !watching) {
+          view.noteActivity(ref, mentions(newest.text));
+        }
+
+        // First sight of a conversation is not news, whatever is in it.
+        if (previous === undefined) {
           continue;
         }
-        view.noteActivity(
+
+        const reason = shouldNotify({
+          message: newest,
+          network: state,
           ref,
-          isHighlight(newest.text, state.nick, view.appearance.highlightWords),
-        );
+          watching: watching && windowIsFocused(),
+          enabled: view.appearance.notificationsEnabled,
+          isHighlight: mentions,
+        });
+        if (reason !== undefined) {
+          const request = buildNotification(reason, newest, state, ref);
+          if (permission.current === true) {
+            platformNotifier.show(request);
+          } else if (permission.current === undefined && !asking.current) {
+            // Asked once, lazily. A burst of messages must not turn into a
+            // stack of permission prompts.
+            asking.current = true;
+            void platformNotifier.ensurePermission().then((granted) => {
+              permission.current = granted;
+              asking.current = false;
+              if (granted) {
+                platformNotifier.show(request);
+              }
+            });
+          }
+        }
       }
     }
     // Deliberately keyed on the networks array identity: the store hands back a
@@ -192,6 +263,22 @@ export function Marmotter({
     view.select({ networkId: target, target: channelName });
   };
 
+  // The channel browser. Opening it does not fetch anything by itself — a bare
+  // LIST on a large network is thousands of rows, and asking for them should be
+  // something the user did on purpose.
+  const browseChannels = (networkId: string): void => {
+    view.select({ networkId, target: undefined });
+    view.setPane('channel-browser');
+  };
+
+  const joinFromBrowser = (channel: string): void => {
+    if (network === undefined) {
+      return;
+    }
+    registry.sessionOf(network.id)?.join(channel);
+    view.select({ networkId: network.id, target: channel });
+  };
+
   /** Opens a direct message with someone, creating the conversation. */
   const messageMember = (nick: string): void => {
     if (network !== undefined) {
@@ -245,6 +332,12 @@ export function Marmotter({
         session.sendMessage(selection.target, parsed.text);
         return;
       case 'line':
+        // `/list` is the one command whose answer has nowhere to go in the
+        // message list — a numeric per channel is exactly what CLAUDE.md says
+        // never to render — so typing it opens the browser that consumes it.
+        if (parsed.command.name === 'list') {
+          view.setPane('channel-browser');
+        }
         session.send(parsed.line);
         return;
       case 'handled':
@@ -267,7 +360,13 @@ export function Marmotter({
   };
 
   const title =
-    selection === undefined ? 'Marmotter' : (selection.target ?? network?.name ?? 'Marmotter');
+    view.pane === 'channel-browser'
+      ? `Channels on ${network?.name ?? 'this network'}`
+      : view.pane === 'settings'
+        ? 'Settings'
+        : selection === undefined
+          ? 'Marmotter'
+          : (selection.target ?? network?.name ?? 'Marmotter');
 
   const main = (
     <>
@@ -328,6 +427,19 @@ export function Marmotter({
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
+      ) : view.pane === 'channel-browser' && network !== undefined ? (
+        <ChannelBrowser
+          network={network}
+          onRefresh={(pattern) => registry.sessionOf(network.id)?.listChannels(pattern)}
+          onJoin={joinFromBrowser}
+          joined={
+            new Set(
+              [...network.channels.values()]
+                .filter((channel) => channel.joined)
+                .map((channel) => channel.name.toLowerCase()),
+            )
+          }
+        />
       ) : network === undefined || selection === undefined ? (
         <EmptyState
           className="flex-1"
@@ -346,6 +458,7 @@ export function Marmotter({
               network={network}
               onReconnect={() => reconnect(network.id)}
               onOpenRawLog={() => view.setPane('raw-log')}
+              onBrowseChannels={() => browseChannels(network.id)}
             />
           ) : (
             <MessageList
@@ -418,6 +531,7 @@ export function Marmotter({
             onOpenSettings={() => view.setPane(view.pane === 'settings' ? 'chat' : 'settings')}
             settingsOpen={view.pane === 'settings'}
             onJoinChannel={(networkId) => setJoiningNetwork(networkId)}
+            onBrowseChannels={browseChannels}
           />
         }
         aside={
@@ -488,10 +602,12 @@ function ServerPane({
   network,
   onReconnect,
   onOpenRawLog,
+  onBrowseChannels,
 }: {
   network: NetworkState;
   onReconnect: () => void;
   onOpenRawLog?: () => void;
+  onBrowseChannels?: () => void;
 }): ReactNode {
   // A dropped or refused connection is shown as what it is, with the reason and
   // a way to try again — not as an indefinite "connecting" that never resolves,
@@ -541,18 +657,26 @@ function ServerPane({
         title={network.phase === 'registered' ? 'Connected' : 'Not connected'}
         description={
           network.phase === 'registered'
-            ? 'Join a channel from the sidebar, or type /join #channel below.'
+            ? 'Browse what this network has, or join a channel by name from the sidebar.'
             : 'This network is not connected.'
         }
-        {...(network.phase === 'registered'
-          ? {}
-          : {
+        {...(network.phase !== 'registered'
+          ? {
               action: (
                 <Button variant="primary" onClick={onReconnect}>
                   Connect
                 </Button>
               ),
-            })}
+            }
+          : onBrowseChannels === undefined
+            ? {}
+            : {
+                action: (
+                  <Button variant="primary" onClick={onBrowseChannels}>
+                    Browse channels
+                  </Button>
+                ),
+              })}
       />
     );
   }

@@ -16,4 +16,5 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 marmotter-transport = { path = "../../../crates/marmotter-transport" }
 tauri = { version = "2", features = [] }
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }

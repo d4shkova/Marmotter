@@ -4,6 +4,7 @@ import { StatusDot, type ConnectionStatus } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
 import { Stepper } from '../primitives/Stepper.js';
+import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
 import type { Appearance } from './view-store.js';
@@ -171,6 +172,36 @@ export function Settings({
               min={6}
               max={24}
               onChange={(nickColumnWidth) => onAppearanceChange({ nickColumnWidth })}
+            />
+          </div>
+        </ListGroup>
+
+        <ListGroup
+          header="Notifications"
+          footer="Marmotter notifies you when somebody says your name or messages you directly, and only while the window is not in front."
+        >
+          <div className="px-4 py-3">
+            <Toggle
+              label="Notify me when I am mentioned"
+              hint="Your operating system asks for permission the first time one would be shown."
+              checked={appearance.notificationsEnabled}
+              onChange={(notificationsEnabled) => onAppearanceChange({ notificationsEnabled })}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <TextField
+              label="Other words that count as a mention"
+              hint="Separated by commas. Your own name always counts."
+              value={appearance.highlightWords.join(', ')}
+              onChange={(event) =>
+                onAppearanceChange({
+                  highlightWords: event.target.value
+                    .split(',')
+                    .map((word) => word.trim())
+                    .filter((word) => word !== ''),
+                })
+              }
+              placeholder="release, deploy"
             />
           </div>
         </ListGroup>

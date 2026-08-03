@@ -48,7 +48,13 @@ import {
   reduce,
   startRegistration,
 } from './state/reduce.js';
-import { type Message, type NetworkState, RAW_LOG_LIMIT, emptyChannel } from './state/types.js';
+import {
+  type Message,
+  type NetworkState,
+  RAW_LOG_LIMIT,
+  emptyChannel,
+  emptyDirectory,
+} from './state/types.js';
 
 /** Resolves a secret handle to the secret itself, or undefined if it is gone. */
 export type SecretResolver = (ref: SecretRef) => Promise<string | undefined>;
@@ -97,6 +103,14 @@ export interface Session {
 
   join(target: string, key?: string): void;
   part(target: string, reason?: string): void;
+  /**
+   * Asks the network for its public channel list.
+   *
+   * The pattern is passed through as the server understands it; every ircd
+   * spells the filter differently, so the browser narrows what came back
+   * rather than relying on the server to.
+   */
+  listChannels(pattern?: string): void;
 
   /** Loads the page before what is shown, for scrolling upward. */
   loadOlder(target: string): void;
@@ -531,6 +545,13 @@ export function createSession(options: SessionOptions): Session {
     join: (target, key) => write([key === undefined ? `JOIN ${target}` : `JOIN ${target} ${key}`]),
     part: (target, reason) =>
       write([reason === undefined ? `PART ${target}` : `PART ${target} :${reason}`]),
+
+    listChannels(pattern) {
+      // Clearing first means the browser shows an empty loading state rather
+      // than the previous network-wide list while the new answer arrives.
+      publish({ ...state, directory: { ...emptyDirectory(), loading: true } });
+      write([pattern === undefined || pattern === '' ? 'LIST' : `LIST ${pattern}`]);
+    },
 
     loadOlder(target) {
       const result = requestOlder(state, target, options.historyPageSize);

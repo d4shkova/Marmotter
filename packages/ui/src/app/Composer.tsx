@@ -1,7 +1,9 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 import { IconButton } from '../primitives/IconButton.js';
 import { type CompletionState, complete } from './completion.js';
+import { EMOJI_GROUPS, replaceShortcodes } from './emoji.js';
+import { type SuggestionItem, applySuggestion, computeSuggestions } from './suggest.js';
 
 export interface ComposerProps {
   readonly value: string;
@@ -63,6 +65,17 @@ export function Composer({
   const typingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [history, setHistory] = useState<readonly string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  /** Where the caret was at the last keystroke, for the suggestion popup. */
+  const [caret, setCaret] = useState(0);
+  const [highlighted, setHighlighted] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const suggestions = useMemo(
+    () => (dismissed ? undefined : computeSuggestions(value, caret)),
+    [value, caret, dismissed],
+  );
+  const active = suggestions?.items[Math.min(highlighted, suggestions.items.length - 1)];
 
   // Grow with the content up to a ceiling, so a long message is visible while
   // being written without the field taking over the window.
@@ -89,16 +102,68 @@ export function Composer({
     if (text === '') {
       return;
     }
+    // History keeps what was typed; the wire gets the shortcodes resolved. A
+    // recalled line is therefore still editable as `:tada:` rather than as a
+    // character somebody now has to delete blind.
     setHistory((current) => [text, ...current].slice(0, 100));
     setHistoryIndex(-1);
     onChange('');
+    setDismissed(false);
     clearTimeout(typingTimer.current);
     onTyping?.(false);
-    onSend(text);
+    onSend(replaceShortcodes(text));
+  };
+
+  /** Writes text into the field and puts the caret where it belongs. */
+  const replace = (text: string, nextCaret: number): void => {
+    onChange(text);
+    setCaret(nextCaret);
+    queueMicrotask(() => {
+      const element = field.current;
+      element?.focus();
+      element?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const accept = (item: SuggestionItem): void => {
+    if (suggestions === undefined) {
+      return;
+    }
+    const result = applySuggestion(value, suggestions, item);
+    setHighlighted(0);
+    replace(result.text, result.caret);
+  };
+
+  const insertEmoji = (char: string): void => {
+    setPickerOpen(false);
+    const at = field.current?.selectionStart ?? value.length;
+    replace(`${value.slice(0, at)}${char}${value.slice(at)}`, at + char.length);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     const element = event.currentTarget;
+
+    // The suggestion popup owns the arrow keys and Enter while it is open, so
+    // picking a command never sends a half-typed line by accident.
+    if (suggestions !== undefined) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const count = suggestions.items.length;
+        const step = event.key === 'ArrowDown' ? 1 : count - 1;
+        setHighlighted((current) => (Math.min(current, count - 1) + step) % count);
+        return;
+      }
+      if ((event.key === 'Enter' || event.key === 'Tab') && active !== undefined) {
+        event.preventDefault();
+        accept(active);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDismissed(true);
+        return;
+      }
+    }
 
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -117,6 +182,7 @@ export function Composer({
       });
       if (result !== undefined) {
         completion.current = result.state;
+        setCaret(result.caret);
         onChange(result.text);
         // The caret has to move after React has written the new value.
         queueMicrotask(() => element.setSelectionRange(result.caret, result.caret));
@@ -151,11 +217,95 @@ export function Composer({
   return (
     <div
       className={cn(
-        'border-t border-[var(--separator)] px-4 py-2',
+        'relative border-t border-[var(--separator)] px-4 py-2',
         'bg-[var(--bg-elevated)]/80 [backdrop-filter:var(--blur-vibrancy)]',
         className,
       )}
     >
+      {suggestions === undefined || active === undefined ? null : (
+        <ul
+          id="composer-suggestions"
+          role="listbox"
+          aria-label={suggestions.kind === 'command' ? 'Commands' : 'Emoji'}
+          className={cn(
+            'absolute bottom-full left-4 z-30 mb-1 max-h-72 w-[min(32rem,calc(100%-2rem))]',
+            'overflow-y-auto rounded-card border border-[var(--separator)]',
+            'bg-[var(--bg-elevated-2)]/95 py-1 shadow-lg [backdrop-filter:var(--blur-vibrancy)]',
+          )}
+        >
+          {suggestions.items.map((item, index) => (
+            <li
+              key={item.id}
+              id={`suggestion-${item.id}`}
+              role="option"
+              aria-selected={item.id === active.id}
+              className={cn(
+                'flex cursor-pointer items-baseline gap-2 px-3 py-1.5',
+                item.id === active.id && 'bg-[var(--fill-tertiary)]',
+              )}
+              onMouseDown={(event) => {
+                // Mouse down rather than click: a click would blur the field
+                // first and the caret would be gone by the time we splice.
+                event.preventDefault();
+                accept(item);
+              }}
+              onMouseEnter={() => setHighlighted(index)}
+            >
+              <span className="font-mono text-footnote text-[var(--label-primary)]">
+                {item.label}
+              </span>
+              <span className="font-mono text-caption-2 text-[var(--label-tertiary)]">
+                {item.hint}
+              </span>
+              {item.detail === '' ? null : (
+                <span className="min-w-0 flex-1 truncate text-caption-1 text-[var(--label-secondary)]">
+                  {item.detail}
+                </span>
+              )}
+              {item.alsoAt === undefined ? null : (
+                <span className="shrink-0 text-caption-2 text-[var(--label-tertiary)]">
+                  Also at {item.alsoAt}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!pickerOpen ? null : (
+        <div
+          role="dialog"
+          aria-label="Emoji"
+          className={cn(
+            'absolute right-4 bottom-full z-30 mb-1 max-h-72 w-72 overflow-y-auto',
+            'rounded-card border border-[var(--separator)] bg-[var(--bg-elevated-2)]/95 p-2',
+            'shadow-lg [backdrop-filter:var(--blur-vibrancy)]',
+          )}
+        >
+          {EMOJI_GROUPS.map((group) => (
+            <section key={group.name} className="mb-2">
+              <h2 className="px-1 pb-1 text-caption-2 text-[var(--label-tertiary)]">
+                {group.name}
+              </h2>
+              <div className="flex flex-wrap gap-0.5">
+                {group.emoji.map((entry) => (
+                  <button
+                    key={entry.name}
+                    type="button"
+                    title={`:${entry.name}:`}
+                    aria-label={entry.name.replace(/_/g, ' ')}
+                    className="rounded-control px-1.5 py-1 text-body hover:bg-[var(--fill-tertiary)]"
+                    onClick={() => insertEmoji(entry.char)}
+                  >
+                    {entry.char}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
       {replyingTo === undefined ? null : (
         <div className="mb-1.5 flex items-center gap-2 rounded-control bg-[var(--fill-tertiary)] px-2 py-1">
           <span aria-hidden="true" className="text-[var(--label-tertiary)]">
@@ -191,10 +341,22 @@ export function Composer({
                 : `Message ${target}`
           }
           onChange={(event) => {
+            setCaret(event.target.selectionStart);
+            setHighlighted(0);
+            setDismissed(false);
             onChange(event.target.value);
             noteTyping();
           }}
+          onKeyUp={(event) => setCaret(event.currentTarget.selectionStart)}
+          onClick={(event) => setCaret(event.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
+          // Not a `combobox`: that role is not allowed on a textarea, and the
+          // field has to stay multi-line. A textbox supports the list
+          // relationship on its own, which is all the popup needs to be
+          // announced and navigated.
+          aria-controls={suggestions === undefined ? undefined : 'composer-suggestions'}
+          aria-activedescendant={active === undefined ? undefined : `suggestion-${active.id}`}
+          aria-autocomplete="list"
           className={cn(
             'flex-1 resize-none rounded-control bg-[var(--fill-tertiary)] px-3 py-2',
             'font-mono text-footnote text-[var(--label-primary)]',
@@ -202,6 +364,13 @@ export function Composer({
             'border border-transparent focus:border-[var(--separator)]',
             'disabled:cursor-not-allowed disabled:opacity-60',
           )}
+        />
+        <IconButton
+          label={pickerOpen ? 'Close the emoji picker' : 'Insert an emoji'}
+          icon={<span aria-hidden="true">☺</span>}
+          pressed={pickerOpen}
+          disabled={disabled}
+          onClick={() => setPickerOpen(!pickerOpen)}
         />
         <IconButton
           label={commandsOnly ? 'Run this command' : `Send to ${target}`}

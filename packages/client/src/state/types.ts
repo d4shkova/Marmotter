@@ -269,7 +269,56 @@ export interface NetworkState {
 
   /** The full bidirectional line stream, for the raw log tab. */
   readonly rawLog: readonly RawLine[];
+
+  /** The network's public channel list, as far as it has been fetched. */
+  readonly directory: ChannelDirectory;
 }
+
+/** One row of a network's public channel list. */
+export interface ChannelListing {
+  readonly channel: string;
+  readonly members: number;
+  readonly topic: string;
+}
+
+/**
+ * The result of a `LIST`.
+ *
+ * A large network answers with tens of thousands of rows over several seconds,
+ * so this is deliberately incremental: `entries` grows while `loading` is true
+ * and the browser renders what has arrived rather than waiting for the end.
+ */
+export interface ChannelDirectory {
+  readonly entries: readonly ChannelListing[];
+  /** True between the request and the server's end-of-list. */
+  readonly loading: boolean;
+  /** True once the server has said it is finished. */
+  readonly complete: boolean;
+  /**
+   * True when the server sent more rows than are kept.
+   *
+   * The browser says so plainly and suggests narrowing the search, rather than
+   * silently showing a partial list as if it were the whole network.
+   */
+  readonly truncated: boolean;
+}
+
+/**
+ * How many channel rows to keep.
+ *
+ * Libera answers a bare `LIST` with around twenty thousand channels. Keeping
+ * every one costs more memory than the browser can usefully show, and the
+ * answer to "I cannot find it in twenty thousand rows" is a search, not more
+ * rows.
+ */
+export const CHANNEL_LIST_LIMIT = 20_000;
+
+export const emptyDirectory = (): ChannelDirectory => ({
+  entries: [],
+  loading: false,
+  complete: false,
+  truncated: false,
+});
 
 /** Someone on the notify list. */
 export interface NotifyEntry {
