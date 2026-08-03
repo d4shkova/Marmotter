@@ -22,6 +22,11 @@ export interface ComposerProps {
   readonly onCancelReply?: () => void;
   readonly disabled?: boolean;
   readonly disabledReason?: string;
+  /**
+   * Nothing can be said here, only done — the server tab, where there is no
+   * conversation to send to but every command still works.
+   */
+  readonly commandsOnly?: boolean;
   readonly className?: string;
 }
 
@@ -50,6 +55,7 @@ export function Composer({
   onCancelReply,
   disabled = false,
   disabledReason,
+  commandsOnly = false,
   className,
 }: ComposerProps): ReactNode {
   const field = useRef<HTMLTextAreaElement>(null);
@@ -169,7 +175,7 @@ export function Composer({
 
       <div className="flex items-end gap-2">
         <label htmlFor="composer" className="sr-only">
-          Message {target}
+          {commandsOnly ? `Command for ${target}` : `Message ${target}`}
         </label>
         <textarea
           id="composer"
@@ -177,7 +183,13 @@ export function Composer({
           rows={1}
           value={value}
           disabled={disabled}
-          placeholder={disabled ? (disabledReason ?? 'You cannot send here') : `Message ${target}`}
+          placeholder={
+            disabled
+              ? (disabledReason ?? 'You cannot send here')
+              : commandsOnly
+                ? 'Type a command, such as /join #channel'
+                : `Message ${target}`
+          }
           onChange={(event) => {
             onChange(event.target.value);
             noteTyping();
@@ -192,7 +204,7 @@ export function Composer({
           )}
         />
         <IconButton
-          label={`Send to ${target}`}
+          label={commandsOnly ? 'Run this command' : `Send to ${target}`}
           icon={<span aria-hidden="true">↑</span>}
           disabled={disabled || value.trim() === ''}
           onClick={send}

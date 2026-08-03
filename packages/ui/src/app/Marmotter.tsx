@@ -241,29 +241,41 @@ export function Marmotter({
             </Button>
           }
         />
-      ) : conversation === undefined ? (
-        <ServerPane network={network} />
       ) : (
         <>
-          <MessageList
-            network={network}
-            conversation={conversation}
-            nickWidth={view.appearance.nickColumnWidth}
-            alignNicksRight={view.appearance.alignNicksRight}
-            showTimestamps={view.appearance.showTimestamps}
-            foldEvents={view.appearance.foldEvents}
-            onLoadOlder={loadOlder}
-            isHighlight={(message) =>
-              isHighlight(message.text, network.nick, view.appearance.highlightWords)
-            }
-            onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
-          />
+          {conversation === undefined ? (
+            <ServerPane network={network} />
+          ) : (
+            <MessageList
+              network={network}
+              conversation={conversation}
+              nickWidth={view.appearance.nickColumnWidth}
+              alignNicksRight={view.appearance.alignNicksRight}
+              showTimestamps={view.appearance.showTimestamps}
+              foldEvents={view.appearance.foldEvents}
+              onLoadOlder={loadOlder}
+              isHighlight={(message) =>
+                isHighlight(message.text, network.nick, view.appearance.highlightWords)
+              }
+              onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
+            />
+          )}
+
+          {/* The composer is on the server tab too, where it takes commands
+              only. Without it there is nowhere to type `/join` before the
+              first channel exists, and a client you cannot get into a channel
+              from is not a client. */}
           <Composer
             value={draftFor(view, selection)}
             onChange={(text) => view.setDraft(selection, text)}
             onSend={send}
             target={selection.target ?? network.name}
-            nicks={[...(conversation.members.values() ?? [])].map((entry) => entry.nick)}
+            commandsOnly={conversation === undefined}
+            nicks={
+              conversation === undefined
+                ? []
+                : [...conversation.members.values()].map((entry) => entry.nick)
+            }
             channels={[...network.channels.values()].map((entry) => entry.name)}
             fold={(text) => fold(text, network.support.caseMapping)}
             disabled={network.phase !== 'registered'}
