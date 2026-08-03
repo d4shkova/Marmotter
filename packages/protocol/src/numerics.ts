@@ -121,6 +121,17 @@ export const ERR_USERNOTINCHANNEL = '441';
 export const ERR_NOTONCHANNEL = '442';
 export const ERR_USERONCHANNEL = '443';
 export const ERR_NEEDMOREPARAMS = '461';
+export const ERR_PASSWDMISMATCH = '464';
+/**
+ * The connection itself was refused, before any channel.
+ *
+ * `465` is a network-wide ban (a K-line or G-line); `466` is a warning that one
+ * is coming. Both carry the server's own explanation as the trailing text, and
+ * that explanation is the whole point — "proxy detected", "you are banned" —
+ * so it must reach the person rather than being dropped as an unknown numeric.
+ */
+export const ERR_YOUREBANNEDCREEP = '465';
+export const ERR_YOUWILLBEBANNED = '466';
 export const ERR_CHANNELISFULL = '471';
 export const ERR_UNKNOWNMODE = '472';
 export const ERR_INVITEONLYCHAN = '473';
@@ -272,6 +283,9 @@ export const NUMERICS: ReadonlyMap<string, NumericInfo> = new Map([
   [ERR_NOTONCHANNEL, info('ERR_NOTONCHANNEL', 'error', 'error')],
   [ERR_USERONCHANNEL, info('ERR_USERONCHANNEL', 'error', 'error')],
   [ERR_NEEDMOREPARAMS, info('ERR_NEEDMOREPARAMS', 'error', 'error')],
+  [ERR_PASSWDMISMATCH, info('ERR_PASSWDMISMATCH', 'error', 'error')],
+  [ERR_YOUREBANNEDCREEP, info('ERR_YOUREBANNEDCREEP', 'error', 'error')],
+  [ERR_YOUWILLBEBANNED, info('ERR_YOUWILLBEBANNED', 'error', 'error')],
   [ERR_CHANNELISFULL, info('ERR_CHANNELISFULL', 'error', 'error')],
   [ERR_UNKNOWNMODE, info('ERR_UNKNOWNMODE', 'error', 'error')],
   [ERR_INVITEONLYCHAN, info('ERR_INVITEONLYCHAN', 'error', 'error')],
@@ -315,6 +329,9 @@ export interface ErrorReport {
  * what the user controls rather than by protocol mechanism, and never surface a
  * numeric or a mode letter here — those belong to the decoder and the raw log.
  */
+/** Ensures a fragment of server text reads as a finished sentence. */
+const endWithStop = (text: string): string => (/[.!?]$/.test(text.trim()) ? text : `${text}.`);
+
 export function describeError(numeric: string, params: readonly string[]): ErrorReport {
   // params[0] is our own nick on every error numeric; the subject follows.
   const subject = params[1] ?? '';
@@ -428,6 +445,22 @@ export function describeError(numeric: string, params: readonly string[]): Error
     case ERR_MONLISTFULL:
       return {
         message: `Your notify list is full. Remove someone before adding another person.`,
+        action: 'none',
+      };
+    case ERR_YOUREBANNEDCREEP:
+    case ERR_YOUWILLBEBANNED:
+      // The server's own reason is the useful part — an anti-proxy rule, a
+      // ban list — so it leads, with a plain statement of what happened.
+      return {
+        message:
+          detail !== ''
+            ? `This network refused the connection: ${endWithStop(detail)}`
+            : `This network has refused your connection.`,
+        action: 'none',
+      };
+    case ERR_PASSWDMISMATCH:
+      return {
+        message: `The server password was wrong, or one was needed and none was given.`,
         action: 'none',
       };
     default:

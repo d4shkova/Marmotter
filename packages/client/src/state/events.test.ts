@@ -241,6 +241,24 @@ describe('the connection ending', () => {
     expect(session.state.phase).toBe('disconnected');
   });
 
+  it('keeps the ERROR message, which usually says why the connection ended', () => {
+    const session = feed(joined(), [
+      ':irc.test ERROR :Closing Link: [1.2.3.4] (Banned (G-Lined): proxy detected)',
+    ]);
+    const notice = session.state.serverNotices.at(-1);
+    expect(notice?.kind).toBe('error');
+    expect(notice?.text).toContain('proxy detected');
+  });
+
+  it('surfaces a network-wide ban as a readable error', () => {
+    const session = feed(joined(), [
+      ':irc.test 465 marmot :You are not welcome on this network. G-Lined: proxy/drone detected.',
+    ]);
+    const notice = session.state.serverNotices.at(-1);
+    expect(notice?.kind).toBe('error');
+    expect(notice?.text).toContain('proxy/drone detected');
+  });
+
   it('leaves a command it does not understand entirely alone', () => {
     const before = joined();
     const after = feed(before, [':irc.test SOMETHINGNEW #test :who knows']);

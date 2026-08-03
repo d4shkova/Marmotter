@@ -431,8 +431,20 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
     case 'PONG':
       return result(state);
 
-    case 'ERROR':
-      return result({ ...state, phase: 'disconnected' });
+    case 'ERROR': {
+      // The server's parting message is usually the most direct account of why
+      // a connection ended — "Closing Link: … (Banned)". Dropping it, as this
+      // once did, throws away the one line that explains the disconnect.
+      const text = msg.params[msg.params.length - 1] ?? '';
+      return result({
+        ...state,
+        phase: 'disconnected',
+        serverNotices:
+          text === ''
+            ? state.serverNotices
+            : [...state.serverNotices, buildMessage(msg, { kind: 'error', target: '', text }, now)],
+      });
+    }
 
     case 'CAP': {
       const step = handleCapMessage(state.caps, msg, { wantsSasl: context.wantsSasl });

@@ -409,11 +409,17 @@ function ServerPane({
   // a way to try again — not as an indefinite "connecting" that never resolves,
   // which is what the server tab used to do for every failure.
   if (network.phase === 'disconnected' && network.lastClose?.kind !== 'user') {
+    // The server's own last word — a ban message, a G-line reason — is more
+    // specific than the transport's close reason, so it leads when there is one.
+    const serverReason = [...network.serverNotices]
+      .reverse()
+      .find((notice) => notice.kind === 'error');
+
     return (
       <EmptyState
         className="flex-1"
         title={`Couldn't connect to ${network.name}`}
-        description={describeClose(network)}
+        description={serverReason?.text ?? describeClose(network)}
         action={
           <div className="flex gap-2">
             <Button variant="primary" onClick={onReconnect}>

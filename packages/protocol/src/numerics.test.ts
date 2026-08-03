@@ -442,6 +442,21 @@ describe('errors as plain English', () => {
     expect(describeError(ERR_NICKNAMEINUSE, ['me', 'marmot']).action).toBe('choose-another-nick');
   });
 
+  it('surfaces the server’s reason when the whole connection is refused', () => {
+    // A G-line or K-line carries its explanation as the trailing text, and that
+    // is the useful part — "proxy detected", an appeal address — so it leads.
+    const report = describeError('465', [
+      '*',
+      'You are not welcome on this network. G-Lined: proxy/drone detected.',
+    ]);
+    expect(report.message).toContain('proxy/drone detected');
+    expect(report.message.startsWith('This network refused the connection:')).toBe(true);
+  });
+
+  it('reads 465 as an error a person is shown, not an unknown numeric', () => {
+    expect(event(':irc.test 465 * :G-Lined: proxy detected').kind).toBe('error');
+  });
+
   it('names the channel when operator rights are missing', () => {
     const report = describeError(ERR_CHANOPRIVSNEEDED, ['me', '#marmotter']);
     expect(report.message).toContain('#marmotter');
