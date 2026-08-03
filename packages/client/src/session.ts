@@ -18,6 +18,8 @@ import {
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
+  DEFAULT_CTCP_POLICY,
+  type CtcpPolicy,
   createMechanism,
   encodeAction,
   fold,
@@ -82,6 +84,8 @@ export interface SessionOptions {
   readonly now?: () => Date;
   /** Messages per history request. Clamped to what the server allows. */
   readonly historyPageSize?: number;
+  /** Which automatic CTCP answers are switched on. Defaults to all of them. */
+  readonly ctcp?: CtcpPolicy;
 }
 
 /** Something the session did that the interface may want to react to. */
@@ -132,6 +136,13 @@ export interface Session {
   invite(nick: string, target: string): void;
   /** Forgets an invitation without joining. Purely local — IRC has no decline. */
   dismissInvite(channel: string): void;
+  /**
+   * Changes which automatic CTCP answers are switched on.
+   *
+   * Live rather than fixed at construction: somebody who turns off answering
+   * VERSION expects it to stop answering now, not at the next reconnect.
+   */
+  setCtcpPolicy(policy: CtcpPolicy): void;
 
   addIgnore(mask: string, options?: AddIgnoreOptions): void;
   removeIgnore(mask: string): void;
@@ -166,11 +177,16 @@ export function createSession(options: SessionOptions): Session {
   const states = new Listeners<NetworkState>();
   const events = new Listeners<SessionEvent>();
 
-  const context: ReduceContext = {
+  let ctcpPolicy: CtcpPolicy = options.ctcp ?? DEFAULT_CTCP_POLICY;
+
+  // Rebuilt per message rather than captured once, so a policy change takes
+  // effect on the next request instead of the next connection.
+  const contextNow = (): ReduceContext => ({
     altNicks: profile.identity.altNicks,
     wantsSasl: configuredMechanism(profile) !== undefined,
+    ctcp: ctcpPolicy,
     now,
-  };
+  });
 
   let state = initialNetworkState(profile.id, profile.name, profile.identity.nick);
   let mechanism: SaslMechanism | undefined;
@@ -429,7 +445,7 @@ export function createSession(options: SessionOptions): Session {
       next = { ...next, ignores };
     }
 
-    const step = reduce(next, msg, context);
+    const step = reduce(next, msg, contextNow());
     publish(step.state);
     write(step.send);
     handleEffects(step.effects);
@@ -613,6 +629,10 @@ export function createSession(options: SessionOptions): Session {
       write([message === undefined || message === '' ? 'AWAY' : `AWAY :${message}`]),
 
     invite: (nick, target) => write([`INVITE ${nick} ${target}`]),
+
+    setCtcpPolicy(policy) {
+      ctcpPolicy = policy;
+    },
 
     dismissInvite(channel) {
       const key = fold(channel, state.support.caseMapping);

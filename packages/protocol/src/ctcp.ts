@@ -232,3 +232,80 @@ export const AUTO_ANSWERED: ReadonlySet<string> = new Set([
 export function isAutoAnswered(command: string): boolean {
   return AUTO_ANSWERED.has(command.toUpperCase());
 }
+
+/**
+ * Which automatic answers are switched on.
+ *
+ * Each one tells a stranger something: that this client is online and reachable
+ * (`PING`), what software and version it runs (`VERSION`, `SOURCE`), and what
+ * its clock says — which, with a timezone, narrows down where somebody is
+ * (`TIME`). None of that is dangerous on its own and all of it is conventional,
+ * which is why the defaults are on; but each is a separate switch because the
+ * tradeoff is the user's to make, not ours.
+ */
+export interface CtcpPolicy {
+  readonly version: boolean;
+  readonly ping: boolean;
+  readonly time: boolean;
+  readonly clientinfo: boolean;
+  /** What to answer VERSION with. Empty means the built-in string. */
+  readonly versionText?: string;
+}
+
+export const DEFAULT_CTCP_POLICY: CtcpPolicy = {
+  version: true,
+  ping: true,
+  time: true,
+  clientinfo: true,
+};
+
+/** The version string sent when the profile has not overridden it. */
+export const DEFAULT_VERSION_TEXT = 'Marmotter';
+
+/**
+ * The reply to a CTCP request, or undefined for one that is not answered.
+ *
+ * `PING` echoes its parameter unchanged — that is the whole mechanism, since
+ * the asker times the round trip and the payload is theirs, not ours. `TIME`
+ * deliberately sends an ISO instant rather than a formatted local time: the
+ * instant is what the asker actually wants, and a locale-formatted string
+ * discloses more about the machine than the question asked for.
+ */
+export function ctcpReply(request: CtcpMessage, policy: CtcpPolicy, now: Date): string | undefined {
+  switch (request.command) {
+    case 'VERSION':
+      return policy.version
+        ? `VERSION ${policy.versionText === undefined || policy.versionText === '' ? DEFAULT_VERSION_TEXT : policy.versionText}`
+        : undefined;
+    case 'PING':
+      return policy.ping ? `PING ${request.params}` : undefined;
+    case 'TIME':
+      return policy.time ? `TIME ${now.toISOString()}` : undefined;
+    case 'CLIENTINFO':
+      return policy.clientinfo ? `CLIENTINFO ${clientInfoFor(policy)}` : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * What `CLIENTINFO` reports.
+ *
+ * Only the requests that would actually be answered. Advertising one that is
+ * switched off would invite a request this client then ignores, which reads as
+ * a broken client rather than a private one.
+ */
+function clientInfoFor(policy: CtcpPolicy): string {
+  const commands = ['ACTION'];
+  if (policy.version) {
+    commands.push('VERSION');
+  }
+  if (policy.ping) {
+    commands.push('PING');
+  }
+  if (policy.time) {
+    commands.push('TIME');
+  }
+  commands.push('CLIENTINFO');
+  return commands.join(' ');
+}

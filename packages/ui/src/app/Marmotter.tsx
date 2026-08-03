@@ -17,6 +17,7 @@ import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
 import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
 import { AccountMenu } from './AccountMenu.js';
+import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
@@ -147,6 +148,14 @@ export function Marmotter({
   /** Whether that question is currently outstanding, so it is only asked once. */
   const asking = useRef(false);
 
+  // A change to what strangers may ask takes effect now, not at the next
+  // reconnect — somebody who switches off answering VERSION means this one.
+  useEffect(() => {
+    for (const state of networks) {
+      registry.sessionOf(state.id)?.setCtcpPolicy(view.ctcp);
+    }
+  }, [view.ctcp, networks, registry]);
+
   // Unread, highlight, and notification tracking. Watching the tail of each
   // buffer rather than every message keeps this out of the reducer, where a
   // "have I read this" question does not belong.
@@ -218,6 +227,7 @@ export function Marmotter({
       const built: Session = createSession({
         profile,
         transport: createTransport(profile),
+        ctcp: useView.getState().ctcp,
         ...(resolveSecret === undefined ? {} : { resolveSecret }),
       });
 
@@ -380,11 +390,13 @@ export function Marmotter({
       ? `Channels on ${network?.name ?? 'this network'}`
       : view.pane === 'people'
         ? 'People'
-        : view.pane === 'settings'
-          ? 'Settings'
-          : selection === undefined
-            ? 'Marmotter'
-            : (selection.target ?? network?.name ?? 'Marmotter');
+        : view.pane === 'account'
+          ? 'Your account'
+          : view.pane === 'settings'
+            ? 'Settings'
+            : selection === undefined
+              ? 'Marmotter'
+              : (selection.target ?? network?.name ?? 'Marmotter');
 
   const main = (
     <>
@@ -416,6 +428,7 @@ export function Marmotter({
                 onSetAway={(text) => session.setAway(text)}
                 onChangeNick={(next) => session.send(`NICK ${next}`)}
                 onOpenPeople={() => view.setPane('people')}
+                onOpenAccount={() => view.setPane('account')}
               />
             )}
             {network === undefined ? null : (
@@ -454,6 +467,8 @@ export function Marmotter({
           networks={networks}
           appearance={view.appearance}
           onAppearanceChange={view.updateAppearance}
+          ctcp={view.ctcp}
+          onCtcpChange={view.updateCtcp}
           onReconnect={reconnect}
           onDisconnect={disconnect}
           onRemove={removeNetwork}
@@ -461,6 +476,12 @@ export function Marmotter({
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
+      ) : view.pane === 'account' && network !== undefined && session !== undefined ? (
+        <AccountPanel
+          className="flex-1 overflow-y-auto"
+          network={network}
+          onSend={(line) => session.send(line)}
+        />
       ) : view.pane === 'people' && network !== undefined && session !== undefined ? (
         <PeoplePanel
           className="flex-1 overflow-y-auto"

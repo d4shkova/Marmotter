@@ -8,6 +8,7 @@
  */
 
 export * from './AccountMenu.js';
+export * from './AccountPanel.js';
 export * from './AddNetwork.js';
 export * from './AppShell.js';
 export * from './ChannelBrowser.js';
@@ -30,6 +31,7 @@ export * from './notify.js';
 export * from './PeoplePanel.js';
 export * from './RawLog.js';
 export * from './rows.js';
+export * from './services.js';
 export * from './Settings.js';
 export * from './Sidebar.js';
 export * from './suggest.js';

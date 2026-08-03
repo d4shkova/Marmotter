@@ -10,8 +10,14 @@ import {
   emptyChannel,
   initialNetworkState,
 } from '@marmotter/client';
-import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import {
+  DEFAULT_CTCP_POLICY,
+  DEFAULT_ISUPPORT,
+  applyISupport,
+  makeSource,
+} from '@marmotter/protocol';
 import { AccountMenu } from './app/AccountMenu.js';
+import { AccountPanel } from './app/AccountPanel.js';
 import { AddNetwork } from './app/AddNetwork.js';
 import { ChannelBrowser } from './app/ChannelBrowser.js';
 import { ChannelPanel } from './app/ChannelPanel.js';
@@ -456,6 +462,8 @@ describe('every component passes axe', () => {
           notificationsEnabled: true,
         }}
         onAppearanceChange={noop}
+        ctcp={DEFAULT_CTCP_POLICY}
+        onCtcpChange={noop}
         onReconnect={noop}
         onDisconnect={noop}
         onRemove={noop}
@@ -553,6 +561,11 @@ describe('every component passes axe', () => {
         onIgnore={noop}
         onUnignore={noop}
       />,
+    ],
+    ['AccountPanel', <AccountPanel key="ap" network={networkFixture()} onSend={noop} />],
+    [
+      'AccountPanel, signed in',
+      <AccountPanel key="api" network={{ ...networkFixture(), account: 'marmot' }} onSend={noop} />,
     ],
     [
       'InviteBanner',

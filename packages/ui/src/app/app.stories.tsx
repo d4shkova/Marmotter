@@ -6,11 +6,17 @@ import {
   emptyChannel,
   initialNetworkState,
 } from '@marmotter/client';
-import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import {
+  DEFAULT_CTCP_POLICY,
+  DEFAULT_ISUPPORT,
+  applyISupport,
+  makeSource,
+} from '@marmotter/protocol';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { AccountMenu } from './AccountMenu.js';
+import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
@@ -473,6 +479,22 @@ export const YourAccount: StoryObj = {
   ),
 };
 
+export const YourAccountSettings: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <AccountPanel network={social()} onSend={() => {}} />
+    </div>
+  ),
+};
+
+export const RegisteringAName: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <AccountPanel network={{ ...network(), account: undefined }} onSend={() => {}} />
+    </div>
+  ),
+};
+
 export const AddingANetwork: StoryObj = {
   render: function AddingANetwork() {
     const [open, setOpen] = useState(true);
@@ -585,6 +607,7 @@ export const SettingsScreen: StoryObj = {
       highlightWords: [] as readonly string[],
       notificationsEnabled: true,
     });
+    const [ctcp, setCtcp] = useState(DEFAULT_CTCP_POLICY);
 
     return (
       <div className="h-[36rem] w-[40rem] overflow-hidden rounded-card border border-[var(--separator)]">
@@ -593,6 +616,8 @@ export const SettingsScreen: StoryObj = {
           networks={[network(), failedNetwork()]}
           appearance={appearance}
           onAppearanceChange={(changes) => setAppearance((current) => ({ ...current, ...changes }))}
+          ctcp={ctcp}
+          onCtcpChange={(changes) => setCtcp((current) => ({ ...current, ...changes }))}
           onReconnect={() => {}}
           onDisconnect={() => {}}
           onRemove={() => {}}

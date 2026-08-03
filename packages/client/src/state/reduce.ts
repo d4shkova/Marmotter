@@ -22,7 +22,13 @@ import {
   applyPrefixes,
   applyUserModes,
   beginNegotiation,
+  DEFAULT_CTCP_POLICY,
+  type CtcpMessage,
+  type CtcpPolicy,
+  ctcpReply,
   decodeAction,
+  decodeCtcp,
+  encodeCtcp,
   fold,
   handleCapMessage,
   interpretNumeric,
@@ -59,6 +65,13 @@ export interface ReduceContext {
   readonly altNicks: readonly string[];
   /** Whether the profile is configured to authenticate. */
   readonly wantsSasl: boolean;
+  /**
+   * Which automatic CTCP answers are switched on.
+   *
+   * Omitted means the defaults. Passed through the context rather than read
+   * from state because it is a preference, not something the network told us.
+   */
+  readonly ctcp?: CtcpPolicy;
   /** Injected so tests are deterministic. */
   readonly now?: () => Date;
 }
@@ -123,6 +136,36 @@ export function startRegistration(
     send: [line, `NICK ${identity.nick}`, `USER ${identity.username} 0 * :${identity.realname}`],
     effects: [],
   };
+}
+
+/** A CTCP request named for what it asks, never as a raw token. */
+function describeCtcp(ctcp: CtcpMessage): string {
+  switch (ctcp.command) {
+    case 'VERSION':
+      return 'what client you use';
+    case 'PING':
+      return 'a round-trip time';
+    case 'TIME':
+      return 'your clock';
+    case 'CLIENTINFO':
+      return 'what your client supports';
+    case 'SOURCE':
+      return 'where your client comes from';
+    case 'USERINFO':
+      return 'your user information';
+    case 'FINGER':
+      return 'your idle time';
+    default:
+      // Named rather than described, because there is nothing to describe. The
+      // decoder covers the ones worth knowing about.
+      return `an automated request (${ctcp.command})`;
+  }
+}
+
+/** Splits a reply body back into the command and parameters `encodeCtcp` takes. */
+function splitReply(reply: string): [string, string] {
+  const space = reply.indexOf(' ');
+  return space === -1 ? [reply, ''] : [reply.slice(0, space), reply.slice(space + 1)];
 }
 
 const noEffects: readonly Effect[] = [];
@@ -740,6 +783,38 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
           : target;
 
       const action = decodeAction(body);
+
+      // A CTCP request that is not an ACTION is not conversation, and CLAUDE.md
+      // says so explicitly: answered automatically where configured, surfaced
+      // as a quiet notice, never as a message in the channel. A CTCP *reply*
+      // (which arrives as a NOTICE) is somebody answering us, and is a notice
+      // in the same way.
+      const ctcp = action === undefined ? decodeCtcp(body) : undefined;
+      if (ctcp !== undefined && sender !== '') {
+        const policy = context.ctcp ?? DEFAULT_CTCP_POLICY;
+        const answer = msg.command === 'PRIVMSG' ? ctcpReply(ctcp, policy, now()) : undefined;
+
+        const notice = buildMessage(
+          msg,
+          {
+            kind: 'server',
+            target: conversation,
+            text:
+              msg.command === 'NOTICE'
+                ? `${sender} answered: ${describeCtcp(ctcp)}`
+                : answer === undefined
+                  ? `${sender} asked for ${describeCtcp(ctcp)}. Marmotter did not answer.`
+                  : `${sender} asked for ${describeCtcp(ctcp)}. Marmotter answered.`,
+          },
+          now,
+        );
+
+        return result(
+          { ...state, serverNotices: [...state.serverNotices, notice] },
+          answer === undefined ? [] : [`NOTICE ${sender} :${encodeCtcp(...splitReply(answer))}`],
+        );
+      }
+
       const built = buildMessage(
         msg,
         {

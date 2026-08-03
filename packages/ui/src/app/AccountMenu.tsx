@@ -11,6 +11,7 @@ export interface AccountMenuProps {
   readonly onSetAway: (message?: string) => void;
   readonly onChangeNick: (nick: string) => void;
   readonly onOpenPeople?: () => void;
+  readonly onOpenAccount?: () => void;
   readonly className?: string;
 }
 
@@ -28,6 +29,7 @@ export function AccountMenu({
   onSetAway,
   onChangeNick,
   onOpenPeople,
+  onOpenAccount,
   className,
 }: AccountMenuProps): ReactNode {
   const [open, setOpen] = useState(false);
@@ -113,10 +115,20 @@ export function AccountMenu({
           }}
         />
 
-        <div className="flex justify-between gap-2">
-          {onOpenPeople === undefined ? (
-            <span />
-          ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {onOpenAccount === undefined ? null : (
+            <Button
+              size="small"
+              variant="plain"
+              onClick={() => {
+                onOpenAccount();
+                setOpen(false);
+              }}
+            >
+              Account settings
+            </Button>
+          )}
+          {onOpenPeople === undefined ? null : (
             <Button
               size="small"
               variant="plain"
@@ -131,6 +143,7 @@ export function AccountMenu({
           <Button
             size="small"
             variant="primary"
+            className="ml-auto"
             disabled={!connected || nick.trim() === '' || nick.trim() === network.nick}
             onClick={() => {
               onChangeNick(nick.trim());
