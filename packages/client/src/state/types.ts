@@ -272,6 +272,22 @@ export interface NetworkState {
 
   /** The network's public channel list, as far as it has been fetched. */
   readonly directory: ChannelDirectory;
+
+  /**
+   * Invitations received and not yet acted on.
+   *
+   * Kept as state rather than only as a message, because CLAUDE.md asks for an
+   * incoming invite to be actionable — and something you can act on has to
+   * outlive scrolling past it.
+   */
+  readonly invites: readonly Invite[];
+}
+
+/** An invitation somebody sent us. */
+export interface Invite {
+  readonly channel: string;
+  readonly from: string;
+  readonly at: Date;
 }
 
 /** One row of a network's public channel list. */

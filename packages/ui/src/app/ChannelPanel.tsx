@@ -30,6 +30,10 @@ export interface ChannelPanelProps {
   readonly onSend: (line: string) => void;
   /** Whether the user may change anything, or is only looking. */
   readonly canModerate?: boolean;
+  /** Invites somebody in. Absent where the shell has no session to send with. */
+  readonly onInvite?: (nick: string) => void;
+  /** Names to offer as quick picks — the friends list, typically. */
+  readonly inviteSuggestions?: readonly string[];
 }
 
 /** The list modes, in the order the tabs show them. */
@@ -92,6 +96,8 @@ export function ChannelPanel({
   channel,
   onSend,
   canModerate = true,
+  onInvite,
+  inviteSuggestions = [],
 }: ChannelPanelProps): ReactNode {
   const support = network.support;
   const controls = useMemo(() => channelControls(channel.modes, support), [channel.modes, support]);
@@ -100,6 +106,7 @@ export function ChannelPanel({
   const [settings, setSettings] = useState<ChannelSettings>(() => settingsFrom(controls));
   const [topic, setTopic] = useState(channel.topic?.text ?? '');
   const [newMask, setNewMask] = useState('');
+  const [invitee, setInvitee] = useState('');
   /** The controls the settings state was built from, so a MODE resets the form. */
   const [basis, setBasis] = useState(controls);
 
@@ -195,6 +202,49 @@ export function ChannelPanel({
                 />
               </div>
             </ListGroup>
+
+            {onInvite === undefined ? null : (
+              <ListGroup
+                header="Invite somebody"
+                footer="They get a notification, and can join even when the channel is closed."
+              >
+                <div className="flex items-end gap-2 px-4 py-3">
+                  <TextField
+                    label="Their name"
+                    className="flex-1"
+                    value={invitee}
+                    placeholder="Their name"
+                    onChange={(event) => setInvitee(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && invitee.trim() !== '') {
+                        event.preventDefault();
+                        onInvite(invitee.trim());
+                        setInvitee('');
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    disabled={invitee.trim() === ''}
+                    onClick={() => {
+                      onInvite(invitee.trim());
+                      setInvitee('');
+                    }}
+                  >
+                    Invite
+                  </Button>
+                </div>
+                {inviteSuggestions.length === 0 ? null : (
+                  <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+                    {inviteSuggestions.slice(0, 8).map((name) => (
+                      <Button key={name} size="small" onClick={() => setInvitee(name)}>
+                        {name}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </ListGroup>
+            )}
 
             <ListGroup
               header="Who can take part"

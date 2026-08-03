@@ -16,15 +16,18 @@ import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
 import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
+import { AccountMenu } from './AccountMenu.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { InviteBanner } from './Invites.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { RawLog } from './RawLog.js';
+import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
@@ -375,11 +378,13 @@ export function Marmotter({
   const title =
     view.pane === 'channel-browser'
       ? `Channels on ${network?.name ?? 'this network'}`
-      : view.pane === 'settings'
-        ? 'Settings'
-        : selection === undefined
-          ? 'Marmotter'
-          : (selection.target ?? network?.name ?? 'Marmotter');
+      : view.pane === 'people'
+        ? 'People'
+        : view.pane === 'settings'
+          ? 'Settings'
+          : selection === undefined
+            ? 'Marmotter'
+            : (selection.target ?? network?.name ?? 'Marmotter');
 
   const main = (
     <>
@@ -405,6 +410,14 @@ export function Marmotter({
         }
         trailing={
           <>
+            {network === undefined || session === undefined ? null : (
+              <AccountMenu
+                network={network}
+                onSetAway={(text) => session.setAway(text)}
+                onChangeNick={(next) => session.send(`NICK ${next}`)}
+                onOpenPeople={() => view.setPane('people')}
+              />
+            )}
             {network === undefined ? null : (
               <IconButton
                 label={view.pane === 'raw-log' ? 'Back to messages' : 'Show the raw log'}
@@ -448,6 +461,21 @@ export function Marmotter({
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
+      ) : view.pane === 'people' && network !== undefined && session !== undefined ? (
+        <PeoplePanel
+          className="flex-1 overflow-y-auto"
+          network={network}
+          onWatch={(nick) => {
+            const rejected = session.addNotify([nick]);
+            if (rejected.length > 0) {
+              toast(`${network.name} will not watch any more names right now.`, 'error');
+            }
+          }}
+          onUnwatch={(nick) => session.removeNotify([nick])}
+          onMessage={messageMember}
+          onIgnore={(mask, ignoreOptions) => session.addIgnore(mask, ignoreOptions)}
+          onUnignore={(mask) => session.removeIgnore(mask)}
+        />
       ) : view.pane === 'channel-browser' && network !== undefined ? (
         <ChannelBrowser
           network={network}
@@ -474,6 +502,15 @@ export function Marmotter({
         />
       ) : (
         <>
+          <InviteBanner
+            invites={network.invites}
+            onAccept={(channelName) => {
+              session?.join(channelName);
+              view.select({ networkId: network.id, target: channelName });
+            }}
+            onDismiss={(channelName) => session?.dismissInvite(channelName)}
+          />
+
           {conversation === undefined ? (
             <ServerPane
               network={network}
@@ -607,6 +644,13 @@ export function Marmotter({
             channel={conversation}
             onSend={(line) => session.send(line)}
             canModerate={canModerateChannel(network, conversation, network.nick)}
+            onInvite={(nick) => {
+              session.invite(nick, conversation.name);
+              toast(`Invited ${nick} to ${conversation.name}.`);
+            }}
+            inviteSuggestions={[...network.notify.values()]
+              .filter((entry) => entry.online)
+              .map((entry) => entry.nick)}
           />
 
           {acting === undefined ? null : acting.kind === 'ban' ? (

@@ -39,7 +39,14 @@ import { Listeners } from './transport/listeners.js';
 import type { ReconnectingTransport } from './transport/reconnecting.js';
 import { type AddIgnoreOptions, addIgnore, pruneIgnores, removeIgnore } from './state/ignore.js';
 import { backfillJoinedChannels, requestOlder } from './state/history.js';
-import { addToNotify, removeFromNotify, resyncNotify } from './state/notify.js';
+import {
+  POLL_INTERVAL_MS,
+  addToNotify,
+  notifyMechanism,
+  pollTargets,
+  removeFromNotify,
+  resyncNotify,
+} from './state/notify.js';
 import { derivedId, insertMessage } from './state/messages.js';
 import {
   type Effect,
@@ -115,6 +122,17 @@ export interface Session {
   /** Loads the page before what is shown, for scrolling upward. */
   loadOlder(target: string): void;
 
+  /**
+   * Marks us away, or back when given nothing.
+   *
+   * The server's own reply is what moves the state; this only asks.
+   */
+  setAway(message?: string): void;
+  /** Invites somebody into a channel. */
+  invite(nick: string, target: string): void;
+  /** Forgets an invitation without joining. Purely local — IRC has no decline. */
+  dismissInvite(channel: string): void;
+
   addIgnore(mask: string, options?: AddIgnoreOptions): void;
   removeIgnore(mask: string): void;
   addNotify(nicks: readonly string[]): readonly string[];
@@ -161,6 +179,8 @@ export function createSession(options: SessionOptions): Session {
   let reassembler = new AuthenticateReassembler();
   let subscriptions: Unsubscribe[] = [];
   let destroyed = false;
+  /** The WHOIS poll, on networks with neither MONITOR nor WATCH. */
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   const publish = (next: NetworkState): void => {
     state = next;
@@ -239,7 +259,35 @@ export function createSession(options: SessionOptions): Session {
     publish(backfill.state);
     write(backfill.send);
 
+    startPolling();
     events.emit({ kind: 'registered' });
+  };
+
+  /**
+   * The WHOIS fallback for the notify list.
+   *
+   * Only runs on a network offering neither MONITOR nor WATCH. The interval is
+   * deliberately slow and the list deliberately short: a WHOIS per friend per
+   * tick is indistinguishable from flooding if either grows.
+   */
+  const startPolling = (): void => {
+    stopPolling();
+    if (pollTargets(state).length === 0 && notifyMechanism(state.support) !== 'poll') {
+      return;
+    }
+    pollTimer = setInterval(() => {
+      const targets = pollTargets(state);
+      if (targets.length > 0) {
+        write(targets.map((nick) => `WHOIS ${nick}`));
+      }
+    }, POLL_INTERVAL_MS);
+  };
+
+  const stopPolling = (): void => {
+    if (pollTimer !== undefined) {
+      clearInterval(pollTimer);
+      pollTimer = undefined;
+    }
   };
 
   const joinWithKey = async (target: string, ref: SecretRef): Promise<void> => {
@@ -561,6 +609,21 @@ export function createSession(options: SessionOptions): Session {
       }
     },
 
+    setAway: (message) =>
+      write([message === undefined || message === '' ? 'AWAY' : `AWAY :${message}`]),
+
+    invite: (nick, target) => write([`INVITE ${nick} ${target}`]),
+
+    dismissInvite(channel) {
+      const key = fold(channel, state.support.caseMapping);
+      publish({
+        ...state,
+        invites: state.invites.filter(
+          (invite) => fold(invite.channel, state.support.caseMapping) !== key,
+        ),
+      });
+    },
+
     addIgnore(mask, ignoreOptions) {
       publish({
         ...state,
@@ -587,6 +650,7 @@ export function createSession(options: SessionOptions): Session {
 
     destroy() {
       destroyed = true;
+      stopPolling();
       detach();
       states.clear();
       events.clear();

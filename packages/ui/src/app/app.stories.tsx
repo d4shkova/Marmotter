@@ -10,12 +10,15 @@ import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
+import { AccountMenu } from './AccountMenu.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { InviteBanner } from './Invites.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
+import { PeoplePanel } from './PeoplePanel.js';
 import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -166,6 +169,27 @@ const troublemaker = () => ({
   away: false,
   bot: false,
   prefixes: '',
+});
+
+/** A network with friends, mutes and an invitation waiting. */
+const social = (): NetworkState => ({
+  ...network(),
+  away: true,
+  account: 'marmot',
+  notify: new Map([
+    ['tamsin', { nick: 'tamsin', online: true, known: true }],
+    ['jonquil', { nick: 'jonquil', online: false, known: true }],
+    ['bramble', { nick: 'bramble', online: false, known: false }],
+  ]),
+  ignores: [
+    {
+      mask: 'spammer!*@*',
+      scope: { messages: true, notices: true, ctcp: true, invites: true, events: false },
+      expiresAt: undefined,
+      note: 'Kept posting links',
+    },
+  ],
+  invites: [{ channel: '#ircv3', from: 'tamsin', at: at(3) }],
 });
 
 const failedNetwork = (): NetworkState => ({
@@ -410,6 +434,42 @@ export const RemovingSomebody: StoryObj = {
       member={troublemaker()}
       onSend={() => {}}
     />
+  ),
+};
+
+export const FriendsAndIgnored: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <PeoplePanel
+        network={social()}
+        onWatch={() => {}}
+        onUnwatch={() => {}}
+        onMessage={() => {}}
+        onIgnore={() => {}}
+        onUnignore={() => {}}
+      />
+    </div>
+  ),
+};
+
+export const AnInvitation: StoryObj = {
+  render: () => (
+    <div className="w-[42rem] rounded-card border border-[var(--separator)]">
+      <InviteBanner invites={social().invites} onAccept={() => {}} onDismiss={() => {}} />
+    </div>
+  ),
+};
+
+export const YourAccount: StoryObj = {
+  render: () => (
+    <div className="flex h-64 w-[42rem] items-end justify-center">
+      <AccountMenu
+        network={social()}
+        onSetAway={() => {}}
+        onChangeNick={() => {}}
+        onOpenPeople={() => {}}
+      />
+    </div>
   ),
 };
 

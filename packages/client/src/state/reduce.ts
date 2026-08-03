@@ -101,6 +101,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     batches: new Map(),
     rawLog: [],
     directory: emptyDirectory(),
+    invites: [],
   };
 }
 
@@ -514,7 +515,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         messages: insertMessage(channel.messages, message),
       });
 
-      return result(next);
+      // Walking in answers the invitation, however it was accepted — from the
+      // notice, from the sidebar, or by typing `/join`. Leaving it on the list
+      // would invite somebody into a room they are standing in.
+      if (!joinedSelf) {
+        return result(next);
+      }
+      const joinedKey = fold(channelName, mapping);
+      return result({
+        ...next,
+        invites: next.invites.filter((invite) => fold(invite.channel, mapping) !== joinedKey),
+      });
     }
 
     case 'PART': {
@@ -761,16 +772,33 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
 
     case 'INVITE': {
       const channelName = msg.params[1] ?? '';
+      const from = msg.source?.nick ?? 'Someone';
       const message = buildMessage(
         msg,
         {
           kind: 'invite',
           target: channelName,
-          text: `${msg.source?.nick ?? 'Someone'} invited you to ${channelName}`,
+          text: `${from} invited you to ${channelName}`,
         },
         now,
       );
-      return result({ ...state, serverNotices: [...state.serverNotices, message] });
+
+      // `invite-notify` also reports invitations sent to *other* people, which
+      // are somebody else's business. Only one addressed to us is actionable.
+      const forUs = sameTarget(msg.params[0] ?? '', state.nick, mapping);
+      const key = fold(channelName, state.support.caseMapping);
+      const already = state.invites.some(
+        (invite) => fold(invite.channel, state.support.caseMapping) === key,
+      );
+
+      return result({
+        ...state,
+        serverNotices: [...state.serverNotices, message],
+        invites:
+          forUs && !already && channelName !== ''
+            ? [...state.invites, { channel: channelName, from, at: now() }]
+            : state.invites,
+      });
     }
 
     case 'AWAY': {

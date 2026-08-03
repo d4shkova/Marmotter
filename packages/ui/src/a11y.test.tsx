@@ -11,11 +11,14 @@ import {
   initialNetworkState,
 } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import { AccountMenu } from './app/AccountMenu.js';
 import { AddNetwork } from './app/AddNetwork.js';
 import { ChannelBrowser } from './app/ChannelBrowser.js';
 import { ChannelPanel } from './app/ChannelPanel.js';
 import { Composer } from './app/Composer.js';
+import { InviteBanner } from './app/Invites.js';
 import { BanDialog, KickDialog } from './app/MemberDialogs.js';
+import { PeoplePanel } from './app/PeoplePanel.js';
 import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
@@ -521,6 +524,48 @@ describe('every component passes axe', () => {
         member={memberFixture()}
         onSend={noop}
       />,
+    ],
+    [
+      'PeoplePanel',
+      <PeoplePanel
+        key="pp"
+        network={{
+          ...networkFixture(),
+          notify: new Map([['tamsin', { nick: 'tamsin', online: true, known: true }]]),
+          ignores: [
+            {
+              mask: 'spammer!*@*',
+              scope: {
+                messages: true,
+                notices: true,
+                ctcp: true,
+                invites: true,
+                events: false,
+              },
+              expiresAt: undefined,
+              note: undefined,
+            },
+          ],
+        }}
+        onWatch={noop}
+        onUnwatch={noop}
+        onMessage={noop}
+        onIgnore={noop}
+        onUnignore={noop}
+      />,
+    ],
+    [
+      'InviteBanner',
+      <InviteBanner
+        key="ib"
+        invites={[{ channel: '#ircv3', from: 'tamsin', at: new Date(0) }]}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    ],
+    [
+      'AccountMenu',
+      <AccountMenu key="am" network={networkFixture()} onSetAway={noop} onChangeNick={noop} />,
     ],
     [
       'KickDialog',
