@@ -75,6 +75,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y inspircd anope
           sudo systemctl disable --now inspircd anope || true
+          # Debian ships Anope's configuration as root:irc 0640, and the suite
+          # reads it as an ordinary user to build the service definitions from.
+          sudo chmod a+r /etc/anope/*.conf
 
       - name: Install ergo
         # The acceptance criteria for phases 5 and 6 are about behaviour against
