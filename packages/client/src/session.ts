@@ -18,6 +18,8 @@ import {
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
+  DEFAULT_CTCP_POLICY,
+  type CtcpPolicy,
   createMechanism,
   encodeAction,
   fold,
@@ -39,7 +41,14 @@ import { Listeners } from './transport/listeners.js';
 import type { ReconnectingTransport } from './transport/reconnecting.js';
 import { type AddIgnoreOptions, addIgnore, pruneIgnores, removeIgnore } from './state/ignore.js';
 import { backfillJoinedChannels, requestOlder } from './state/history.js';
-import { addToNotify, removeFromNotify, resyncNotify } from './state/notify.js';
+import {
+  POLL_INTERVAL_MS,
+  addToNotify,
+  notifyMechanism,
+  pollTargets,
+  removeFromNotify,
+  resyncNotify,
+} from './state/notify.js';
 import { derivedId, insertMessage } from './state/messages.js';
 import {
   type Effect,
@@ -48,7 +57,13 @@ import {
   reduce,
   startRegistration,
 } from './state/reduce.js';
-import { type Message, type NetworkState, RAW_LOG_LIMIT, emptyChannel } from './state/types.js';
+import {
+  type Message,
+  type NetworkState,
+  RAW_LOG_LIMIT,
+  emptyChannel,
+  emptyDirectory,
+} from './state/types.js';
 
 /** Resolves a secret handle to the secret itself, or undefined if it is gone. */
 export type SecretResolver = (ref: SecretRef) => Promise<string | undefined>;
@@ -69,6 +84,8 @@ export interface SessionOptions {
   readonly now?: () => Date;
   /** Messages per history request. Clamped to what the server allows. */
   readonly historyPageSize?: number;
+  /** Which automatic CTCP answers are switched on. Defaults to all of them. */
+  readonly ctcp?: CtcpPolicy;
 }
 
 /** Something the session did that the interface may want to react to. */
@@ -97,9 +114,35 @@ export interface Session {
 
   join(target: string, key?: string): void;
   part(target: string, reason?: string): void;
+  /**
+   * Asks the network for its public channel list.
+   *
+   * The pattern is passed through as the server understands it; every ircd
+   * spells the filter differently, so the browser narrows what came back
+   * rather than relying on the server to.
+   */
+  listChannels(pattern?: string): void;
 
   /** Loads the page before what is shown, for scrolling upward. */
   loadOlder(target: string): void;
+
+  /**
+   * Marks us away, or back when given nothing.
+   *
+   * The server's own reply is what moves the state; this only asks.
+   */
+  setAway(message?: string): void;
+  /** Invites somebody into a channel. */
+  invite(nick: string, target: string): void;
+  /** Forgets an invitation without joining. Purely local — IRC has no decline. */
+  dismissInvite(channel: string): void;
+  /**
+   * Changes which automatic CTCP answers are switched on.
+   *
+   * Live rather than fixed at construction: somebody who turns off answering
+   * VERSION expects it to stop answering now, not at the next reconnect.
+   */
+  setCtcpPolicy(policy: CtcpPolicy): void;
 
   addIgnore(mask: string, options?: AddIgnoreOptions): void;
   removeIgnore(mask: string): void;
@@ -134,11 +177,16 @@ export function createSession(options: SessionOptions): Session {
   const states = new Listeners<NetworkState>();
   const events = new Listeners<SessionEvent>();
 
-  const context: ReduceContext = {
+  let ctcpPolicy: CtcpPolicy = options.ctcp ?? DEFAULT_CTCP_POLICY;
+
+  // Rebuilt per message rather than captured once, so a policy change takes
+  // effect on the next request instead of the next connection.
+  const contextNow = (): ReduceContext => ({
     altNicks: profile.identity.altNicks,
     wantsSasl: configuredMechanism(profile) !== undefined,
+    ctcp: ctcpPolicy,
     now,
-  };
+  });
 
   let state = initialNetworkState(profile.id, profile.name, profile.identity.nick);
   let mechanism: SaslMechanism | undefined;
@@ -147,6 +195,8 @@ export function createSession(options: SessionOptions): Session {
   let reassembler = new AuthenticateReassembler();
   let subscriptions: Unsubscribe[] = [];
   let destroyed = false;
+  /** The WHOIS poll, on networks with neither MONITOR nor WATCH. */
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   const publish = (next: NetworkState): void => {
     state = next;
@@ -225,7 +275,35 @@ export function createSession(options: SessionOptions): Session {
     publish(backfill.state);
     write(backfill.send);
 
+    startPolling();
     events.emit({ kind: 'registered' });
+  };
+
+  /**
+   * The WHOIS fallback for the notify list.
+   *
+   * Only runs on a network offering neither MONITOR nor WATCH. The interval is
+   * deliberately slow and the list deliberately short: a WHOIS per friend per
+   * tick is indistinguishable from flooding if either grows.
+   */
+  const startPolling = (): void => {
+    stopPolling();
+    if (pollTargets(state).length === 0 && notifyMechanism(state.support) !== 'poll') {
+      return;
+    }
+    pollTimer = setInterval(() => {
+      const targets = pollTargets(state);
+      if (targets.length > 0) {
+        write(targets.map((nick) => `WHOIS ${nick}`));
+      }
+    }, POLL_INTERVAL_MS);
+  };
+
+  const stopPolling = (): void => {
+    if (pollTimer !== undefined) {
+      clearInterval(pollTimer);
+      pollTimer = undefined;
+    }
   };
 
   const joinWithKey = async (target: string, ref: SecretRef): Promise<void> => {
@@ -367,7 +445,7 @@ export function createSession(options: SessionOptions): Session {
       next = { ...next, ignores };
     }
 
-    const step = reduce(next, msg, context);
+    const step = reduce(next, msg, contextNow());
     publish(step.state);
     write(step.send);
     handleEffects(step.effects);
@@ -532,12 +610,38 @@ export function createSession(options: SessionOptions): Session {
     part: (target, reason) =>
       write([reason === undefined ? `PART ${target}` : `PART ${target} :${reason}`]),
 
+    listChannels(pattern) {
+      // Clearing first means the browser shows an empty loading state rather
+      // than the previous network-wide list while the new answer arrives.
+      publish({ ...state, directory: { ...emptyDirectory(), loading: true } });
+      write([pattern === undefined || pattern === '' ? 'LIST' : `LIST ${pattern}`]);
+    },
+
     loadOlder(target) {
       const result = requestOlder(state, target, options.historyPageSize);
       if (result.ok) {
         publish(result.state);
         write(result.send);
       }
+    },
+
+    setAway: (message) =>
+      write([message === undefined || message === '' ? 'AWAY' : `AWAY :${message}`]),
+
+    invite: (nick, target) => write([`INVITE ${nick} ${target}`]),
+
+    setCtcpPolicy(policy) {
+      ctcpPolicy = policy;
+    },
+
+    dismissInvite(channel) {
+      const key = fold(channel, state.support.caseMapping);
+      publish({
+        ...state,
+        invites: state.invites.filter(
+          (invite) => fold(invite.channel, state.support.caseMapping) !== key,
+        ),
+      });
     },
 
     addIgnore(mask, ignoreOptions) {
@@ -566,6 +670,7 @@ export function createSession(options: SessionOptions): Session {
 
     destroy() {
       destroyed = true;
+      stopPolling();
       detach();
       states.clear();
       events.clear();

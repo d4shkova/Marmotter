@@ -19,9 +19,11 @@ jobs:
           - name: Linux (deb, AppImage)
             os: ubuntu-22.04
             args: '--bundles deb,appimage'
-          - name: Windows (MSI)
+          - name: Windows (MSI, NSIS)
             os: windows-latest
-            args: '--bundles msi'
+            # Both, because NSIS installs per-user without an admin prompt and
+            # MSI is what a managed desktop expects.
+            args: '--bundles msi,nsis'
 
     runs-on: ${{ matrix.os }}
     steps:

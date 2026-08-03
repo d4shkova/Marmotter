@@ -392,6 +392,53 @@ describe('the raw log', () => {
   });
 });
 
+describe('being away, and being invited', () => {
+  const connected = async () => {
+    const built = build();
+    await built.session.connect();
+    built.transport.receive(':irc.test 001 marmot :Welcome');
+    built.transport.sent.length = 0;
+    return built;
+  };
+
+  it('asks to be marked away with a message, and back with nothing', async () => {
+    const { transport, session } = await connected();
+
+    session.setAway('Back later');
+    expect(transport.sent).toContain('AWAY :Back later');
+
+    session.setAway();
+    expect(transport.sent).toContain('AWAY');
+  });
+
+  // The server's own reply moves the state. Setting it here would show somebody
+  // as away on a network that refused the request.
+  it('does not mark itself away before the server says so', async () => {
+    const { session } = await connected();
+    session.setAway('Back later');
+    expect(session.state.away).toBe(false);
+  });
+
+  it('invites somebody into a channel', async () => {
+    const { transport, session } = await connected();
+    session.invite('tamsin', '#marmotter');
+    expect(transport.sent).toContain('INVITE tamsin #marmotter');
+  });
+
+  // IRC has no way to decline an invitation. A button that claimed to tell
+  // somebody "no" while sending nothing would be a lie about what happened.
+  it('dismisses an invitation without telling the network anything', async () => {
+    const { transport, session } = await connected();
+    transport.receive(':tamsin!~t@host.example INVITE marmot :#ircv3');
+    expect(session.state.invites).toHaveLength(1);
+
+    transport.sent.length = 0;
+    session.dismissInvite('#ircv3');
+    expect(session.state.invites).toEqual([]);
+    expect(transport.sent).toEqual([]);
+  });
+});
+
 describe('sending', () => {
   const inChannel = async () => {
     const built = build();

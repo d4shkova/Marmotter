@@ -1,9 +1,11 @@
 import type { NetworkState } from '@marmotter/client';
+import { DEFAULT_VERSION_TEXT, type CtcpPolicy } from '@marmotter/protocol';
 import type { ReactNode } from 'react';
 import { StatusDot, type ConnectionStatus } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
 import { Stepper } from '../primitives/Stepper.js';
+import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
 import type { Appearance } from './view-store.js';
@@ -12,6 +14,8 @@ export interface SettingsProps {
   readonly networks: readonly NetworkState[];
   readonly appearance: Appearance;
   readonly onAppearanceChange: (changes: Partial<Appearance>) => void;
+  readonly ctcp: CtcpPolicy;
+  readonly onCtcpChange: (changes: Partial<CtcpPolicy>) => void;
   /** Reconnects a network whose connection dropped or failed. */
   readonly onReconnect: (networkId: string) => void;
   readonly onDisconnect: (networkId: string) => void;
@@ -81,6 +85,8 @@ export function Settings({
   networks,
   appearance,
   onAppearanceChange,
+  ctcp,
+  onCtcpChange,
   onReconnect,
   onDisconnect,
   onRemove,
@@ -173,6 +179,85 @@ export function Settings({
               onChange={(nickColumnWidth) => onAppearanceChange({ nickColumnWidth })}
             />
           </div>
+        </ListGroup>
+
+        <ListGroup
+          header="Notifications"
+          footer="Marmotter notifies you when somebody says your name or messages you directly, and only while the window is not in front."
+        >
+          <div className="px-4 py-3">
+            <Toggle
+              label="Notify me when I am mentioned"
+              hint="Your operating system asks for permission the first time one would be shown."
+              checked={appearance.notificationsEnabled}
+              onChange={(notificationsEnabled) => onAppearanceChange({ notificationsEnabled })}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <TextField
+              label="Other words that count as a mention"
+              hint="Separated by commas. Your own name always counts."
+              value={appearance.highlightWords.join(', ')}
+              onChange={(event) =>
+                onAppearanceChange({
+                  highlightWords: event.target.value
+                    .split(',')
+                    .map((word) => word.trim())
+                    .filter((word) => word !== ''),
+                })
+              }
+              placeholder="release, deploy"
+            />
+          </div>
+        </ListGroup>
+
+        <ListGroup
+          header="What strangers can ask"
+          footer="Other people's clients can ask yours these questions automatically. Each answer tells them something, so each is a separate choice."
+        >
+          <div className="px-4 py-3">
+            <Toggle
+              label="Say what client I use"
+              hint="Answers with Marmotter and nothing about your computer."
+              checked={ctcp.version}
+              onChange={(version) => onCtcpChange({ version })}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <Toggle
+              label="Answer round-trip checks"
+              hint="Confirms you are online and how long a message takes to reach you."
+              checked={ctcp.ping}
+              onChange={(ping) => onCtcpChange({ ping })}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <Toggle
+              label="Say what my clock reads"
+              hint="Sends the time as an exact instant. Combined with a timezone this narrows down where you are."
+              checked={ctcp.time}
+              onChange={(time) => onCtcpChange({ time })}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <Toggle
+              label="List what my client can answer"
+              hint="Only lists the answers you have left switched on."
+              checked={ctcp.clientinfo}
+              onChange={(clientinfo) => onCtcpChange({ clientinfo })}
+            />
+          </div>
+          {!ctcp.version ? null : (
+            <div className="px-4 py-3">
+              <TextField
+                label="What to say when asked"
+                value={ctcp.versionText ?? ''}
+                placeholder={DEFAULT_VERSION_TEXT}
+                hint="Leave it empty for the default."
+                onChange={(event) => onCtcpChange({ versionText: event.target.value })}
+              />
+            </div>
+          )}
         </ListGroup>
 
         <ListGroup

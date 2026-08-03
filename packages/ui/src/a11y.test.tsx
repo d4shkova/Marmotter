@@ -10,9 +10,22 @@ import {
   emptyChannel,
   initialNetworkState,
 } from '@marmotter/client';
-import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import {
+  DEFAULT_CTCP_POLICY,
+  DEFAULT_ISUPPORT,
+  applyISupport,
+  makeSource,
+} from '@marmotter/protocol';
+import { AccountMenu } from './app/AccountMenu.js';
+import { AccountPanel } from './app/AccountPanel.js';
 import { AddNetwork } from './app/AddNetwork.js';
+import { ChannelAccess } from './app/ChannelAccess.js';
+import { ChannelBrowser } from './app/ChannelBrowser.js';
+import { ChannelPanel } from './app/ChannelPanel.js';
 import { Composer } from './app/Composer.js';
+import { InviteBanner } from './app/Invites.js';
+import { BanDialog, KickDialog } from './app/MemberDialogs.js';
+import { PeoplePanel } from './app/PeoplePanel.js';
 import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
@@ -123,6 +136,30 @@ const networkFixture = (): NetworkState => ({
     { at: new Date('2026-08-02T09:00:00.000Z'), direction: 'out', line: 'CAP LS 302' },
     { at: new Date('2026-08-02T09:00:01.000Z'), direction: 'in', line: ':srv 001 marmot :Welcome' },
   ],
+});
+
+/** A channel with settings and lists set, so the panel has something to render. */
+const moderatedFixture = (): ChannelState => ({
+  ...channelFixture(),
+  topic: { text: 'Building a nicer IRC client', setBy: 'tamsin', at: new Date(0) },
+  modes: { flags: new Set(['n', 't', 'l']), params: new Map([['l', '120']]) },
+  lists: {
+    ban: [{ mask: '*!*@spam.example', setBy: 'jonquil', at: new Date(0) }],
+    quiet: [],
+    invite: [],
+    except: [],
+  },
+});
+
+const memberFixture = () => ({
+  nick: 'corvid',
+  user: '~c',
+  host: 'pool-31.isp.example',
+  account: 'corvid_acct',
+  realname: 'corvid',
+  away: false,
+  bot: false,
+  prefixes: '',
 });
 
 const noop = (): void => {};
@@ -426,6 +463,8 @@ describe('every component passes axe', () => {
           notificationsEnabled: true,
         }}
         onAppearanceChange={noop}
+        ctcp={DEFAULT_CTCP_POLICY}
+        onCtcpChange={noop}
         onReconnect={noop}
         onDisconnect={noop}
         onRemove={noop}
@@ -453,6 +492,134 @@ describe('every component passes axe', () => {
         channel={channelFixture()}
         onMessage={noop}
         menuFor={() => [{ id: 'm', label: 'Send a message', onSelect: noop }]}
+      />,
+    ],
+    [
+      'ChannelBrowser',
+      <ChannelBrowser
+        key="cb"
+        network={{
+          ...networkFixture(),
+          directory: {
+            entries: [{ channel: '#marmotter', members: 42, topic: 'Building the client' }],
+            loading: false,
+            complete: true,
+            truncated: false,
+          },
+        }}
+        onRefresh={noop}
+        onJoin={noop}
+      />,
+    ],
+    [
+      'ChannelAccess',
+      <ChannelAccess
+        key="ca"
+        network={{
+          ...networkFixture(),
+          motd: ['Services provided by Atheme IRC Services'],
+          queries: new Map([
+            [
+              'chanserv',
+              {
+                ...emptyChannel('ChanServ'),
+                messages: [
+                  {
+                    ...messageFixture('c1', '1     tamsin                 +AFORefiorstv (FOUNDER)'),
+                    kind: 'notice' as const,
+                  },
+                  {
+                    ...messageFixture('c2', '2     jonquil                +AVvo'),
+                    kind: 'notice' as const,
+                  },
+                ],
+              },
+            ],
+          ]),
+        }}
+        channel={moderatedFixture()}
+        onSend={noop}
+      />,
+    ],
+    [
+      'ChannelPanel',
+      <ChannelPanel
+        key="cp"
+        open
+        onClose={noop}
+        network={networkFixture()}
+        channel={moderatedFixture()}
+        onSend={noop}
+      />,
+    ],
+    [
+      'BanDialog',
+      <BanDialog
+        key="bd"
+        open
+        onClose={noop}
+        network={networkFixture()}
+        channel={moderatedFixture()}
+        member={memberFixture()}
+        onSend={noop}
+      />,
+    ],
+    [
+      'PeoplePanel',
+      <PeoplePanel
+        key="pp"
+        network={{
+          ...networkFixture(),
+          notify: new Map([['tamsin', { nick: 'tamsin', online: true, known: true }]]),
+          ignores: [
+            {
+              mask: 'spammer!*@*',
+              scope: {
+                messages: true,
+                notices: true,
+                ctcp: true,
+                invites: true,
+                events: false,
+              },
+              expiresAt: undefined,
+              note: undefined,
+            },
+          ],
+        }}
+        onWatch={noop}
+        onUnwatch={noop}
+        onMessage={noop}
+        onIgnore={noop}
+        onUnignore={noop}
+      />,
+    ],
+    ['AccountPanel', <AccountPanel key="ap" network={networkFixture()} onSend={noop} />],
+    [
+      'AccountPanel, signed in',
+      <AccountPanel key="api" network={{ ...networkFixture(), account: 'marmot' }} onSend={noop} />,
+    ],
+    [
+      'InviteBanner',
+      <InviteBanner
+        key="ib"
+        invites={[{ channel: '#ircv3', from: 'tamsin', at: new Date(0) }]}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    ],
+    [
+      'AccountMenu',
+      <AccountMenu key="am" network={networkFixture()} onSetAway={noop} onChangeNick={noop} />,
+    ],
+    [
+      'KickDialog',
+      <KickDialog
+        key="kd"
+        open
+        onClose={noop}
+        channel={moderatedFixture()}
+        member={memberFixture()}
+        onSend={noop}
       />,
     ],
   ])('%s', async (_name, ui) => {

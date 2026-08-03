@@ -263,6 +263,54 @@ numeric. Playwright covers this path end to end against local ergo.
 > them while typing), and the Playwright run against local ergo. The acceptance
 > criterion above is therefore not yet met and Phase 6 must not start.
 >
+> **Phase 5 complete, 2026-08-03.** The Playwright run against a local ergo now
+> exists and passes, which closes the last item. It drives the *browser* build,
+> because ergo speaks WebSocket and a browser is far cheaper to automate than a
+> Tauri window — and both builds mount the same `Marmotter` component, so what
+> is under test is the desktop client's own interface with a different socket
+> under it. The acceptance sentence is asserted in two halves: the whole path is
+> driven through the interface with no slash command, and the message list is
+> then scanned for numerics and mode strings.
+>
+> Setting it up found a real hole. The "Add a network" form had no way to enter
+> a WebSocket endpoint, so the web build could not add a network it was capable
+> of reaching — the one transport it has. It has one now.
+>
+> **Progress, 2026-08-03.** The settings screen landed earlier; this pass adds
+> the remaining four. What is left of Phase 5 is the Playwright run against a
+> local ergo, and nothing else.
+>
+> - **The command bar's autocomplete surface.** `suggest.ts` is a pure function
+>   of the text and the caret, which is what makes the offset arithmetic
+>   testable without a DOM — and that arithmetic is where this feature goes
+>   wrong, because a wrong `from` silently eats what somebody typed. The popup
+>   shows each command's parameters, its one-sentence summary, and where the
+>   same thing lives in the interface, so `/mode` teaches that the channel
+>   settings panel exists rather than just completing.
+> - **Emoji entry**, both ways: `:shortcode` completion through the same popup,
+>   and a picker on the composer. Shortcodes resolve on send, so typing the
+>   whole thing and picking from the list produce the same line. The set is
+>   hand-picked rather than the full Unicode table — several hundred kilobytes
+>   of bundle for a long tail nobody reaches for is a bad trade, and the system
+>   emoji keyboard still covers everything.
+> - **Desktop notifications.** Mentions and direct messages only, and only when
+>   the window is not in front. Two things needed care: WebView2 has no web
+>   `Notification` API, so Windows goes through `tauri-plugin-notification` and
+>   the browser path would have silently done nothing; and a `chathistory`
+>   backfill must not arrive as a burst of notifications, which is why the
+>   shell records a conversation's tail on first sight without acting on it.
+> - **The channel browser**, which is Phase 6 work pulled forward because
+>   `/list` had nowhere to put its answer — a numeric per channel is exactly
+>   what CLAUDE.md says never to render. `RPL_LIST` now reduces into a
+>   `directory` on the network state, capped at twenty thousand rows with the
+>   truncation stated plainly rather than silently shown as if it were the whole
+>   network. Rows render as they arrive; search filters client-side, because
+>   every ircd spells the server-side `LIST` filter differently.
+>
+> The a11y and story gates from Phase 4 caught two defects on the way, which is
+> the second time they have paid for themselves: `role="combobox"` is not
+> allowed on a textarea, and the browser had no story.
+>
 > Two notes on decisions taken along the way:
 >
 > - **The shell lives in `packages/ui`, not a new package.** It needs both the
@@ -305,6 +353,119 @@ errors as plain-English guidance per the interface copy rules.
 a local Atheme-backed InspIRCd instance, verifying the abstraction works across
 two different services implementations. Every error path in the panels shows a
 human sentence, not a numeric — assert this in tests.
+
+> **Progress, 2026-08-03. Every row of the abstraction table is now built.**
+>
+> **Phase 6 complete, 2026-08-03.** Both halves of the acceptance now run, in
+> `e2e/`. Against ergo, through the interface: a channel setting is changed in
+> the settings panel and read back from what the server actually applied, the
+> browser lists what the network has, and a second real client joins, speaks and
+> leaves while the member list follows. Against **Anope on InspIRCd** — a
+> different services package on a different ircd, which is what the criterion is
+> actually about — the account and permissions commands are accepted and the
+> replies are fed through the same parsers the panels use.
+>
+> Anope rather than Atheme because that is what `irc.dashkova.co.uk` runs, so it
+> is the package this client has to be right about first. The criterion asks for
+> two implementations that disagree; these two disagree plenty.
+>
+> **It found two real defects immediately, which is the entire argument for
+> testing against something other than one server:**
+>
+> - **Services detection was built on the wrong signal.** It read the MOTD and
+>   server notices for a package name. Against a real Anope, *nothing a client
+>   sees during registration names the services package* — not the MOTD, not
+>   `RPL_MYINFO`, not ISUPPORT. It only appeared to work locally because the
+>   test server's own MOTD said "Anope", a false positive of my own making. The
+>   plan said "detected from version replies" and meant it: asking NickServ for
+>   its version answers plainly, so that is what the panels do now, once, when
+>   they open. The MOTD reading survives as a fallback for networks that do say.
+> - **The Anope access list was parsed for a shape Anope does not print.** The
+>   parser expected a numeric level (`1  10  tamsin`); real Anope with its XOP
+>   module — which is the normal configuration — names the role instead
+>   (`1  AOP  member`). The grid silently showed nothing on a channel that had
+>   entries. Both shapes are read now, and the tests carry the output captured
+>   verbatim from Anope 2.0.12 rather than a guess.
+>
+> Everything else the panels send was confirmed accepted as written: `REGISTER`,
+> `SET PASSWORD`, `SET EMAIL`, `HostServ REQUEST`, `AOP ... ADD`, `ACCESS ... LIST`.
+>
+> Two things the end-to-end run turned up, both worth recording:
+>
+> - **The browse-channels action was unreachable once you had joined a channel.**
+>   It lived only in the sidebar's empty state, so the person most likely to want
+>   it — somebody looking for a second channel — could not find it. It is in the
+>   network header now, beside "join".
+> - **`echo-message` made the client answer its own CTCP requests.** Our own
+>   outgoing request comes back as an echo, and the reducer treated it as a
+>   question from ourselves: a spurious reply on the wire and a notice claiming
+>   we had been asked something. Found by watching the raw log during an
+>   end-to-end run, which is exactly what CLAUDE.md says the raw log is for.
+>
+> One limitation, recorded because it looks like a bug and is not ours: **ergo's
+> WebSocket listener doubles the `\u0001` CTCP delimiter** when relaying from a
+> TCP client. It reproduces with a raw WebSocket and no Marmotter code in the
+> loop. Accepting a doubled delimiter would mean a parser that disagrees with
+> the CTCP spec, so the request path is covered by unit tests instead and the
+> desktop build's TCP transport is unaffected.
+>
+> Four decisions worth recording:
+>
+> - **A mode letter nobody can describe gets no control.** The panel builds
+>   itself from `CHANMODES`, but only shows a switch where the decoder has a
+>   sentence for the letter. Inventing a label would put a control in front of
+>   somebody with no way to know what it does; those letters stay reachable
+>   from the command bar, and the panel's footer says so. Same rule for the
+>   tabs: a network with no mute list gets no Muted tab.
+> - **Replacing a channel password takes two changes, not one.** Most ircds
+>   refuse a second `+k` rather than replacing the key, so the diff emits
+>   `-k+k old new`. This is the kind of thing that works against the one server
+>   you tested and fails everywhere else, which is why it is a test and not a
+>   comment.
+> - **`EXTBAN` decides whether an account ban is offered at all.** The prefix
+>   differs by ircd, and a network advertising no `a` extban never sees the
+>   option — per CLAUDE.md, a ban type the network cannot enforce is never
+>   offered. Cloaks widen from the right (`libera/staff/*`) and DNS names from
+>   the left (`*.isp.example`), because the two read in opposite directions;
+>   IPv6 is never widened, since guessing a prefix length from text is how a
+>   client bans a continent.
+> - **List modes are fetched when their tab is opened**, not on join. Four
+>   `MODE +b` queries per channel at join time is a burst of traffic for tables
+>   most people never open, and some networks rate-limit it.
+>
+> **The people surface.** Away is a switch with a message beside it, and coming
+> back is a thing you press — the state moves when the server says so, never
+> when we ask. The friends list runs on MONITOR, WATCH, or a slow WHOIS poll and
+> never says which, because it changes nothing a person can act on. Ignoring
+> somebody gets scope checkboxes and a duration rather than a timestamp.
+> Invitations became state, not a line that scrolls away: an `invite-notify`
+> about somebody else is not ours to accept, walking in answers the invitation
+> however the join happened, and dismissing sends nothing, because IRC has no
+> way to decline and a button that claimed otherwise would be lying.
+>
+> **The account surface.** Services are the least discoverable part of IRC, and
+> the packages disagree about everything. Detection reads ISUPPORT first (the
+> only signal that arrives before anyone speaks) then the network's own words,
+> and an unrecognised package still gets a working panel on the forms Atheme and
+> Anope share — while saying it is guessing. This matters more than it sounds:
+> ergo takes the email *before* the password, so sending Atheme's `REGISTER`
+> form would register somebody's password as their email address.
+>
+> **CTCP replies** finally exist. The protocol layer has been ready since Phase
+> 1; the reducer was not. `PING` echoes the asker's own payload because they are
+> timing it, `CLIENTINFO` advertises only what is switched on, a CTCP reply is
+> never itself answered, and none of it reaches the message list — a request is
+> a quiet notice naming what was asked in plain English.
+>
+> **The permissions grid follows the package rather than the spec.** CLAUDE.md
+> asks for members down the side and capabilities across the top, which is the
+> right shape for Atheme — and a lie on Anope and ergo, which store roles and
+> levels. A grid there would round somebody's choices to the nearest role and
+> silently discard the rest, so those packages get a role per person instead.
+> Two further rules: the grid diffs only the columns it displays, so it can
+> never strip a flag set by hand that it does not show; and services output is
+> parsed forgivingly and narrowly, showing the reply verbatim rather than a
+> confidently wrong table, because services output is not a protocol.
 
 ---
 

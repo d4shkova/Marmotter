@@ -27,3 +27,11 @@ Thumbs.db
 .env
 .env.local
 *.local
+
+# End-to-end run artefacts
+e2e/.ergo.db
+e2e/*.pem
+test-results/
+playwright-report/
+e2e/anope/.run/
+core

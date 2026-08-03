@@ -28,6 +28,8 @@ export interface MemberActionCallbacks {
   readonly onSend: (line: string) => void;
   /** Open the ban builder rather than banning with a default mask. */
   readonly onBanBuilder?: (member: Member) => void;
+  /** Ask for a reason before removing them, rather than kicking silently. */
+  readonly onKickBuilder?: (member: Member) => void;
 }
 
 /** The highest prefix a member holds, or '' when they hold none. */
@@ -49,6 +51,31 @@ function canModerate(
   const opFloor = halfOp === undefined ? prefixForMode('o', support) : halfOp;
   const floorRank = opFloor === undefined ? Number.POSITIVE_INFINITY : prefixRank(opFloor, support);
   return ourRank >= floorRank && ourRank >= prefixRank(topPrefix(them), support);
+}
+
+/**
+ * Whether we hold enough of a role in a channel to change it.
+ *
+ * Used to decide whether the channel panel offers controls or only shows what
+ * is set. Half-op is the floor where a network has one, operator where it does
+ * not — read from `PREFIX` rather than assumed, because not every ircd has
+ * every rank.
+ */
+export function canModerateChannel(
+  network: NetworkState,
+  channel: ChannelState,
+  ourNick: string,
+): boolean {
+  const us = channel.members.get(fold(ourNick, network.support.caseMapping));
+  if (us === undefined) {
+    return false;
+  }
+  const halfOp = prefixForMode('h', network.support);
+  const floor = halfOp ?? prefixForMode('o', network.support);
+  if (floor === undefined) {
+    return false;
+  }
+  return prefixRank(topPrefix(us), network.support) >= prefixRank(floor, network.support);
 }
 
 /**
@@ -109,7 +136,10 @@ export function memberActions(
       label: 'Remove from channel',
       destructive: true,
       startsGroup: true,
-      onSelect: () => callbacks.onSend(`KICK ${target} ${nick}`),
+      onSelect: () =>
+        callbacks.onKickBuilder !== undefined
+          ? callbacks.onKickBuilder(member)
+          : callbacks.onSend(`KICK ${target} ${nick}`),
     });
     items.push({
       id: 'ban',

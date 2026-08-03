@@ -22,7 +22,13 @@ import {
   applyPrefixes,
   applyUserModes,
   beginNegotiation,
+  DEFAULT_CTCP_POLICY,
+  type CtcpMessage,
+  type CtcpPolicy,
+  ctcpReply,
   decodeAction,
+  decodeCtcp,
+  encodeCtcp,
   fold,
   handleCapMessage,
   interpretNumeric,
@@ -41,6 +47,7 @@ import { type IgnoreChannel, findIgnore, hostmaskOf } from './ignore.js';
 import { getMember, removeMember, renameMember, upsertMember } from './members.js';
 import { derivedId, insertMessage, reconcileEcho, timestampOf } from './messages.js';
 import {
+  CHANNEL_LIST_LIMIT,
   type ChannelState,
   type IgnoreRule,
   type Member,
@@ -49,6 +56,7 @@ import {
   type NetworkState,
   type NotifyEntry,
   emptyChannel,
+  emptyDirectory,
 } from './types.js';
 
 /** Everything the reducer needs that is not in the state itself. */
@@ -57,6 +65,13 @@ export interface ReduceContext {
   readonly altNicks: readonly string[];
   /** Whether the profile is configured to authenticate. */
   readonly wantsSasl: boolean;
+  /**
+   * Which automatic CTCP answers are switched on.
+   *
+   * Omitted means the defaults. Passed through the context rather than read
+   * from state because it is a preference, not something the network told us.
+   */
+  readonly ctcp?: CtcpPolicy;
   /** Injected so tests are deterministic. */
   readonly now?: () => Date;
 }
@@ -98,6 +113,9 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     ignores: [],
     batches: new Map(),
     rawLog: [],
+    directory: emptyDirectory(),
+    invites: [],
+    ctcpVersions: new Map(),
   };
 }
 
@@ -119,6 +137,36 @@ export function startRegistration(
     send: [line, `NICK ${identity.nick}`, `USER ${identity.username} 0 * :${identity.realname}`],
     effects: [],
   };
+}
+
+/** A CTCP request named for what it asks, never as a raw token. */
+function describeCtcp(ctcp: CtcpMessage): string {
+  switch (ctcp.command) {
+    case 'VERSION':
+      return 'what client you use';
+    case 'PING':
+      return 'a round-trip time';
+    case 'TIME':
+      return 'your clock';
+    case 'CLIENTINFO':
+      return 'what your client supports';
+    case 'SOURCE':
+      return 'where your client comes from';
+    case 'USERINFO':
+      return 'your user information';
+    case 'FINGER':
+      return 'your idle time';
+    default:
+      // Named rather than described, because there is nothing to describe. The
+      // decoder covers the ones worth knowing about.
+      return `an automated request (${ctcp.command})`;
+  }
+}
+
+/** Splits a reply body back into the command and parameters `encodeCtcp` takes. */
+function splitReply(reply: string): [string, string] {
+  const space = reply.indexOf(' ');
+  return space === -1 ? [reply, ''] : [reply.slice(0, space), reply.slice(space + 1)];
 }
 
 const noEffects: readonly Effect[] = [];
@@ -511,7 +559,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         messages: insertMessage(channel.messages, message),
       });
 
-      return result(next);
+      // Walking in answers the invitation, however it was accepted — from the
+      // notice, from the sidebar, or by typing `/join`. Leaving it on the list
+      // would invite somebody into a room they are standing in.
+      if (!joinedSelf) {
+        return result(next);
+      }
+      const joinedKey = fold(channelName, mapping);
+      return result({
+        ...next,
+        invites: next.invites.filter((invite) => fold(invite.channel, mapping) !== joinedKey),
+      });
     }
 
     case 'PART': {
@@ -726,6 +784,54 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
           : target;
 
       const action = decodeAction(body);
+
+      // A CTCP request that is not an ACTION is not conversation, and CLAUDE.md
+      // says so explicitly: answered automatically where configured, surfaced
+      // as a quiet notice, never as a message in the channel. A CTCP *reply*
+      // (which arrives as a NOTICE) is somebody answering us, and is a notice
+      // in the same way.
+      // Our own outgoing request comes back through `echo-message`, and
+      // answering it would mean sending ourselves a reply to a question we
+      // asked somebody else — visible spurious traffic, and a notice claiming
+      // we had been asked something.
+      const ctcp = action === undefined && !isSelf(state, sender) ? decodeCtcp(body) : undefined;
+      if (ctcp !== undefined && sender !== '') {
+        const policy = context.ctcp ?? DEFAULT_CTCP_POLICY;
+        const answer = msg.command === 'PRIVMSG' ? ctcpReply(ctcp, policy, now()) : undefined;
+
+        const notice = buildMessage(
+          msg,
+          {
+            kind: 'server',
+            target: conversation,
+            text:
+              msg.command === 'NOTICE'
+                ? `${sender} answered: ${describeCtcp(ctcp)}`
+                : answer === undefined
+                  ? `${sender} asked for ${describeCtcp(ctcp)}. Marmotter did not answer.`
+                  : `${sender} asked for ${describeCtcp(ctcp)}. Marmotter answered.`,
+          },
+          now,
+        );
+
+        // A version reply is the one piece of CTCP worth keeping: it is how the
+        // account panel learns which services package this network runs, and
+        // nothing in registration says.
+        const versions =
+          msg.command === 'NOTICE' && ctcp.command === 'VERSION' && ctcp.params !== ''
+            ? new Map(state.ctcpVersions).set(fold(sender, mapping), ctcp.params)
+            : state.ctcpVersions;
+
+        return result(
+          {
+            ...state,
+            serverNotices: [...state.serverNotices, notice],
+            ctcpVersions: versions,
+          },
+          answer === undefined ? [] : [`NOTICE ${sender} :${encodeCtcp(...splitReply(answer))}`],
+        );
+      }
+
       const built = buildMessage(
         msg,
         {
@@ -758,16 +864,33 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
 
     case 'INVITE': {
       const channelName = msg.params[1] ?? '';
+      const from = msg.source?.nick ?? 'Someone';
       const message = buildMessage(
         msg,
         {
           kind: 'invite',
           target: channelName,
-          text: `${msg.source?.nick ?? 'Someone'} invited you to ${channelName}`,
+          text: `${from} invited you to ${channelName}`,
         },
         now,
       );
-      return result({ ...state, serverNotices: [...state.serverNotices, message] });
+
+      // `invite-notify` also reports invitations sent to *other* people, which
+      // are somebody else's business. Only one addressed to us is actionable.
+      const forUs = sameTarget(msg.params[0] ?? '', state.nick, mapping);
+      const key = fold(channelName, state.support.caseMapping);
+      const already = state.invites.some(
+        (invite) => fold(invite.channel, state.support.caseMapping) === key,
+      );
+
+      return result({
+        ...state,
+        serverNotices: [...state.serverNotices, message],
+        invites:
+          forUs && !already && channelName !== ''
+            ? [...state.invites, { channel: channelName, from, at: now() }]
+            : state.invites,
+      });
     }
 
     case 'AWAY': {
@@ -1104,6 +1227,43 @@ function reduceNumeric(
         }),
       );
     }
+
+    // The public channel list. Not every server sends the start numeric, so
+    // the first row opens the listing as well — otherwise a network that goes
+    // straight to 322 would fill a directory nobody had marked as loading.
+    case 'channel-list-start':
+      return result({
+        ...state,
+        directory: { entries: [], loading: true, complete: false, truncated: false },
+      });
+
+    case 'channel-list-entry': {
+      const directory = state.directory.complete
+        ? { entries: [], loading: true, complete: false, truncated: false }
+        : state.directory;
+
+      if (directory.entries.length >= CHANNEL_LIST_LIMIT) {
+        return result({ ...state, directory: { ...directory, loading: true, truncated: true } });
+      }
+
+      return result({
+        ...state,
+        directory: {
+          ...directory,
+          loading: true,
+          entries: [
+            ...directory.entries,
+            { channel: event.channel, members: event.members, topic: event.topic },
+          ],
+        },
+      });
+    }
+
+    case 'channel-list-end':
+      return result({
+        ...state,
+        directory: { ...state.directory, loading: false, complete: true },
+      });
 
     case 'away-state':
       return result({ ...state, away: event.away });

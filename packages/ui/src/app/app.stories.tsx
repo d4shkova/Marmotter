@@ -1,17 +1,31 @@
 import {
+  type ChannelDirectory,
   type ChannelState,
   type Message,
   type NetworkState,
   emptyChannel,
   initialNetworkState,
 } from '@marmotter/client';
-import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
+import {
+  DEFAULT_CTCP_POLICY,
+  DEFAULT_ISUPPORT,
+  applyISupport,
+  makeSource,
+} from '@marmotter/protocol';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
+import { AccountMenu } from './AccountMenu.js';
+import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
+import { ChannelAccess } from './ChannelAccess.js';
+import { ChannelBrowser } from './ChannelBrowser.js';
+import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { InviteBanner } from './Invites.js';
+import { BanDialog, KickDialog } from './MemberDialogs.js';
+import { PeoplePanel } from './PeoplePanel.js';
 import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -119,6 +133,70 @@ const network = (): NetworkState => ({
       line: ':jonquil!~j@host.example PRIVMSG #marmotter :morning all',
     },
   ],
+});
+
+const directory = (): ChannelDirectory => ({
+  entries: [
+    { channel: '#marmotter', members: 42, topic: 'Building the client | logs off' },
+    { channel: '#libera', members: 1_204, topic: 'Welcome to Libera.Chat' },
+    { channel: '#irc', members: 318, topic: 'Talking about the protocol itself' },
+    { channel: '#rust', members: 2_880, topic: 'Rust programming language' },
+    { channel: '#tauri', members: 96, topic: '' },
+  ],
+  loading: false,
+  complete: true,
+  truncated: false,
+});
+
+/** A channel with settings and lists to look at, for the channel panel. */
+const moderatedChannel = (): ChannelState => ({
+  ...channel(),
+  modes: {
+    flags: new Set(['n', 't', 'm', 'l']),
+    params: new Map([['l', '120']]),
+  },
+  lists: {
+    ban: [
+      { mask: '*!*@spam.example', setBy: 'jonquil', at: at(0) },
+      { mask: 'troublemaker!*@*', setBy: 'tamsin', at: at(1) },
+    ],
+    quiet: [{ mask: '*!*@noisy.example', setBy: 'jonquil', at: at(2) }],
+    invite: [],
+    except: [{ mask: '*!*@trusted.example', setBy: 'tamsin', at: undefined }],
+  },
+});
+
+/** Somebody to build a ban against. */
+const troublemaker = () => ({
+  nick: 'corvid',
+  user: '~c',
+  host: 'pool-31.isp.example',
+  account: 'corvid_acct',
+  realname: 'corvid',
+  away: false,
+  bot: false,
+  prefixes: '',
+});
+
+/** A network with friends, mutes and an invitation waiting. */
+const social = (): NetworkState => ({
+  ...network(),
+  away: true,
+  account: 'marmot',
+  notify: new Map([
+    ['tamsin', { nick: 'tamsin', online: true, known: true }],
+    ['jonquil', { nick: 'jonquil', online: false, known: true }],
+    ['bramble', { nick: 'bramble', online: false, known: false }],
+  ]),
+  ignores: [
+    {
+      mask: 'spammer!*@*',
+      scope: { messages: true, notices: true, ctcp: true, invites: true, events: false },
+      expiresAt: undefined,
+      note: 'Kept posting links',
+    },
+  ],
+  invites: [{ channel: '#ircv3', from: 'tamsin', at: at(3) }],
 });
 
 const failedNetwork = (): NetworkState => ({
@@ -275,6 +353,185 @@ export const TheRawLog: StoryObj = {
   ),
 };
 
+export const BrowsingChannels: StoryObj = {
+  render: () => (
+    <div className="flex h-96 w-[46rem] flex-col rounded-card border border-[var(--separator)]">
+      <ChannelBrowser
+        network={{ ...network(), directory: directory() }}
+        onRefresh={() => {}}
+        onJoin={() => {}}
+        joined={new Set(['#marmotter'])}
+      />
+    </div>
+  ),
+};
+
+export const BrowsingChannelsWhileLoading: StoryObj = {
+  render: () => (
+    <div className="flex h-96 w-[46rem] flex-col rounded-card border border-[var(--separator)]">
+      <ChannelBrowser
+        network={{ ...network(), directory: { ...directory(), loading: true, complete: false } }}
+        onRefresh={() => {}}
+        onJoin={() => {}}
+      />
+    </div>
+  ),
+};
+
+export const TheChannelPanel: StoryObj = {
+  render: function TheChannelPanel() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Channel settings
+        </button>
+        <ChannelPanel
+          open={open}
+          onClose={() => setOpen(false)}
+          network={network()}
+          channel={moderatedChannel()}
+          onSend={() => {}}
+        />
+      </>
+    );
+  },
+};
+
+export const TheChannelPanelWithoutOps: StoryObj = {
+  render: () => (
+    <ChannelPanel
+      open
+      onClose={() => {}}
+      network={network()}
+      channel={moderatedChannel()}
+      onSend={() => {}}
+      canModerate={false}
+    />
+  ),
+};
+
+export const BuildingABan: StoryObj = {
+  render: function BuildingABan() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Ban somebody
+        </button>
+        <BanDialog
+          open={open}
+          onClose={() => setOpen(false)}
+          network={network()}
+          channel={moderatedChannel()}
+          member={troublemaker()}
+          onSend={() => {}}
+        />
+      </>
+    );
+  },
+};
+
+export const RemovingSomebody: StoryObj = {
+  render: () => (
+    <KickDialog
+      open
+      onClose={() => {}}
+      channel={moderatedChannel()}
+      member={troublemaker()}
+      onSend={() => {}}
+    />
+  ),
+};
+
+export const FriendsAndIgnored: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <PeoplePanel
+        network={social()}
+        onWatch={() => {}}
+        onUnwatch={() => {}}
+        onMessage={() => {}}
+        onIgnore={() => {}}
+        onUnignore={() => {}}
+      />
+    </div>
+  ),
+};
+
+export const AnInvitation: StoryObj = {
+  render: () => (
+    <div className="w-[42rem] rounded-card border border-[var(--separator)]">
+      <InviteBanner invites={social().invites} onAccept={() => {}} onDismiss={() => {}} />
+    </div>
+  ),
+};
+
+export const YourAccount: StoryObj = {
+  render: () => (
+    <div className="flex h-64 w-[42rem] items-end justify-center">
+      <AccountMenu
+        network={social()}
+        onSetAway={() => {}}
+        onChangeNick={() => {}}
+        onOpenPeople={() => {}}
+      />
+    </div>
+  ),
+};
+
+export const YourAccountSettings: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <AccountPanel network={social()} onSend={() => {}} />
+    </div>
+  ),
+};
+
+export const RegisteringAName: StoryObj = {
+  render: () => (
+    <div className="w-[42rem]">
+      <AccountPanel network={{ ...network(), account: undefined }} onSend={() => {}} />
+    </div>
+  ),
+};
+
+/** A network whose ChanServ has answered, so the grid has rows. */
+const withAthemeReplies = (): NetworkState => {
+  const base = network();
+  const notice = (id: string, text: string): Message => ({
+    ...say('ChanServ', text, 1),
+    id,
+    kind: 'notice',
+    target: 'ChanServ',
+  });
+  return {
+    ...base,
+    motd: ['Services provided by Atheme IRC Services'],
+    queries: new Map([
+      [
+        'chanserv',
+        {
+          ...emptyChannel('ChanServ'),
+          messages: [
+            notice('c1', '1     tamsin                 +AFORefiorstv (FOUNDER)'),
+            notice('c2', '2     jonquil                +AVvo'),
+            notice('c3', '3     bramble                +Vv'),
+          ],
+        },
+      ],
+    ]),
+  };
+};
+
+export const WhoCanDoWhat: StoryObj = {
+  render: () => (
+    <div className="w-[52rem]">
+      <ChannelAccess network={withAthemeReplies()} channel={moderatedChannel()} onSend={() => {}} />
+    </div>
+  ),
+};
+
 export const AddingANetwork: StoryObj = {
   render: function AddingANetwork() {
     const [open, setOpen] = useState(true);
@@ -387,6 +644,7 @@ export const SettingsScreen: StoryObj = {
       highlightWords: [] as readonly string[],
       notificationsEnabled: true,
     });
+    const [ctcp, setCtcp] = useState(DEFAULT_CTCP_POLICY);
 
     return (
       <div className="h-[36rem] w-[40rem] overflow-hidden rounded-card border border-[var(--separator)]">
@@ -395,6 +653,8 @@ export const SettingsScreen: StoryObj = {
           networks={[network(), failedNetwork()]}
           appearance={appearance}
           onAppearanceChange={(changes) => setAppearance((current) => ({ ...current, ...changes }))}
+          ctcp={ctcp}
+          onCtcpChange={(changes) => setCtcp((current) => ({ ...current, ...changes }))}
           onReconnect={() => {}}
           onDisconnect={() => {}}
           onRemove={() => {}}

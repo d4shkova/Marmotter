@@ -44,9 +44,9 @@ export const PRESETS: readonly NetworkPreset[] = [
   },
 ];
 
-type Security = 'verified' | 'pinned' | 'off';
+type Security = 'verified' | 'pinned' | 'off' | 'websocket';
 
-const TLS_FOR: Record<Security, TlsConfig> = {
+const TLS_FOR: Record<Exclude<Security, 'websocket'>, TlsConfig> = {
   verified: { mode: 'tls', verifyCert: true },
   pinned: { mode: 'tls', verifyCert: false },
   off: { mode: 'off' },
@@ -76,6 +76,7 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
   const [port, setPort] = useState('6697');
   const [nick, setNick] = useState('');
   const [security, setSecurity] = useState<Security>('verified');
+  const [socketUrl, setSocketUrl] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
 
   const chosen = PRESETS.find((entry) => entry.id === preset);
@@ -87,7 +88,13 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
     port: custom ? Number.parseInt(port, 10) : (chosen?.port ?? 6697),
   };
 
+  const usesSocket = security === 'websocket';
+
   const submit = (): void => {
+    if (usesSocket) {
+      submitSocket();
+      return;
+    }
     if (effective.host.trim() === '') {
       setError('Enter the address of the server to connect to.');
       return;
@@ -114,6 +121,58 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
       identity: {
         nick: nick.trim(),
         // A second and third try, so a taken name does not stop the connection.
+        altNicks: [`${nick.trim()}_`, `${nick.trim()}__`],
+        username: nick.trim(),
+        realname: nick.trim(),
+      },
+      autojoin: [],
+      connectCommands: [],
+      encoding: 'utf-8',
+      autoReconnect: true,
+      logging: defaultLoggingPolicy,
+    });
+
+    setError(undefined);
+    onClose();
+  };
+
+  /**
+   * A WebSocket endpoint is a URL, not a host and a port.
+   *
+   * It is also the only kind of endpoint the browser build can open at all, so
+   * leaving it out of this form would mean the web app could never add a
+   * network it could reach.
+   */
+  const submitSocket = (): void => {
+    const url = socketUrl.trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      setError('That is not a web address. It should start with wss:// or ws://.');
+      return;
+    }
+    if (parsed.protocol !== 'wss:' && parsed.protocol !== 'ws:') {
+      setError('A web address for IRC starts with wss:// — or ws:// for an unencrypted one.');
+      return;
+    }
+    if (nick.trim() === '') {
+      setError('Choose a name for other people to see.');
+      return;
+    }
+
+    onAdd({
+      id: newId?.() ?? crypto.randomUUID(),
+      name: effective.name.trim() === '' ? parsed.hostname : effective.name.trim(),
+      servers: [
+        {
+          host: parsed.hostname,
+          port: parsed.port === '' ? (parsed.protocol === 'wss:' ? 443 : 80) : Number(parsed.port),
+          tls: { mode: 'websocket', url },
+        },
+      ],
+      identity: {
+        nick: nick.trim(),
         altNicks: [`${nick.trim()}_`, `${nick.trim()}__`],
         username: nick.trim(),
         realname: nick.trim(),
@@ -158,7 +217,23 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
           ]}
         />
 
-        {custom ? (
+        {custom && usesSocket ? (
+          <>
+            <TextField
+              label="Name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              hint="What this network is called in the sidebar."
+            />
+            <TextField
+              label="Web address"
+              value={socketUrl}
+              placeholder="wss://irc.example.net/webirc"
+              onChange={(event) => setSocketUrl(event.target.value)}
+              hint="Some networks offer one of these. It is the only kind of address a browser can open."
+            />
+          </>
+        ) : custom ? (
           <>
             <TextField
               label="Name"
@@ -213,6 +288,13 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
               label: 'Not encrypted',
               description:
                 'Anyone between you and the server can read everything you send, including your password.',
+            },
+            {
+              value: 'websocket',
+              label: 'A web address',
+              description:
+                'For a network that offers one. This is the only kind a browser can open, and it needs the address rather than a server and port.',
+              disabled: !custom,
             },
           ]}
         />
