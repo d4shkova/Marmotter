@@ -22,6 +22,7 @@ export * from './caps.js';
 export * from './base64.js';
 export * from './sasl.js';
 export * from './numerics.js';
+export * from './whois.js';
 export * from './ctcp.js';
 export * from './batch.js';
 export * from './chathistory.js';

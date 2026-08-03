@@ -26,6 +26,9 @@ import {
   fold,
   handleCapMessage,
   interpretNumeric,
+  RPL_WHOISUSER,
+  applyWhoisNumeric,
+  emptyWhois,
   isChannel,
   parseChannelModes,
   isCtcp,
@@ -91,6 +94,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     channels: new Map(),
     queries: new Map(),
     notify: new Map(),
+    whois: new Map(),
     ignores: [],
     batches: new Map(),
     rawLog: [],
@@ -1152,6 +1156,45 @@ function reduceNumeric(
         notify.delete(fold(target.split('!')[0] ?? target, mapping));
       }
       return result({ ...state, notify });
+    }
+
+    case 'whois': {
+      // 311 is always the first line of a WHOIS, so it starts a fresh profile —
+      // a repeated lookup then never shows a field left over from the last one.
+      // Every later line folds into whatever is being built.
+      const key = fold(event.nick, mapping);
+      const base =
+        event.numeric === RPL_WHOISUSER
+          ? emptyWhois(event.nick)
+          : (state.whois.get(key) ?? emptyWhois(event.nick));
+      const whois = new Map(state.whois);
+      whois.set(key, applyWhoisNumeric(base, event.numeric, event.params));
+      return result({ ...state, whois });
+    }
+
+    case 'whois-end': {
+      const key = fold(event.nick, mapping);
+      const existing = state.whois.get(key);
+      if (existing === undefined) {
+        return result(state);
+      }
+      const whois = new Map(state.whois);
+      whois.set(key, { ...existing, complete: true });
+      return result({ ...state, whois });
+    }
+
+    case 'away': {
+      // During a WHOIS the away message arrives as its own numeric (301). It is
+      // attached to the profile being built; a bare 301 — the kind sent when you
+      // message someone who is away — has no profile in flight and is left be.
+      const key = fold(event.nick, mapping);
+      const existing = state.whois.get(key);
+      if (existing === undefined || existing.complete) {
+        return result(state);
+      }
+      const whois = new Map(state.whois);
+      whois.set(key, { ...existing, away: event.reason });
+      return result({ ...state, whois });
     }
 
     case 'error': {

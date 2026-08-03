@@ -15,6 +15,7 @@ import type {
   ModeChange,
   Source,
   Tags,
+  WhoisProfile,
 } from '@marmotter/protocol';
 import type { CloseReason } from '@marmotter/shared';
 
@@ -253,6 +254,13 @@ export interface NetworkState {
 
   /** Nicks being watched, keyed by casemapped nick. */
   readonly notify: ReadonlyMap<string, NotifyEntry>;
+  /**
+   * WHOIS replies assembled into profiles, keyed by casemapped nick.
+   *
+   * Kept so the profile card can open on the last reply and refresh in place
+   * when a new one arrives, rather than being thrown away line by line.
+   */
+  readonly whois: ReadonlyMap<string, WhoisProfile>;
   /** Client-side mute list. */
   readonly ignores: readonly IgnoreRule[];
 

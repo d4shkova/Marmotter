@@ -20,6 +20,7 @@ import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
+import { WhoisCard } from './WhoisCard.js';
 import { buildRows } from './rows.js';
 import type { TargetRef, Unread } from './view-store.js';
 
@@ -421,6 +422,55 @@ export const JoinAChannel: StoryObj = {
           confirmLabel="Join"
           onConfirm={() => setOpen(false)}
           onCancel={() => setOpen(false)}
+        />
+      </>
+    );
+  },
+};
+
+export const Profile: StoryObj = {
+  render: function Profile() {
+    const [open, setOpen] = useState(true);
+    // A WHOIS the reducer has already assembled — what the card shows instead
+    // of the numerics it was built from.
+    const withProfile: NetworkState = {
+      ...network(),
+      whois: new Map([
+        [
+          'jonquil',
+          {
+            nick: 'jonquil',
+            user: '~j',
+            host: 'host.example',
+            realname: 'Jonquil',
+            account: 'jonquil',
+            server: 'irc.libera.chat',
+            serverInfo: 'Libera.Chat Server',
+            actualHost: '203.0.113.7',
+            channels: ['@#marmotter', '+#irc'],
+            idleSeconds: 8_130,
+            signonAt: at(0),
+            away: undefined,
+            isOperator: false,
+            isBot: false,
+            secure: true,
+            complete: true,
+          },
+        ],
+      ]),
+    };
+
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          View details
+        </button>
+        <WhoisCard
+          open={open}
+          nick="jonquil"
+          network={withProfile}
+          onClose={() => setOpen(false)}
+          onMessage={() => setOpen(false)}
         />
       </>
     );

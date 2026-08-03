@@ -159,6 +159,40 @@ export function formatDay(at: Date, today: Date = new Date()): string {
   });
 }
 
+/**
+ * A span of idle time as words, for the profile card.
+ *
+ * WHOIS gives idle as a raw second count; "idle 8124 seconds" is exactly the
+ * kind of protocol residue the interface is meant to spare people, so it becomes
+ * "2 hours, 15 minutes". Only the two largest units are shown — past a couple of
+ * hours nobody cares about the seconds.
+ */
+export function formatIdle(seconds: number): string {
+  if (seconds < 60) {
+    return seconds === 1 ? '1 second' : `${seconds} seconds`;
+  }
+
+  const units: readonly [label: string, size: number][] = [
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+  ];
+
+  const parts: string[] = [];
+  let remaining = Math.floor(seconds);
+  for (const [label, size] of units) {
+    const value = Math.floor(remaining / size);
+    if (value > 0) {
+      parts.push(value === 1 ? `1 ${label}` : `${value} ${label}s`);
+      remaining -= value * size;
+    }
+    if (parts.length === 2) {
+      break;
+    }
+  }
+  return parts.join(', ');
+}
+
 /** Truncates a nick to the column width, so the message edge stays straight. */
 export function fitNick(nick: string, width: number): string {
   return nick.length <= width ? nick : `${nick.slice(0, Math.max(1, width - 1))}…`;

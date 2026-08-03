@@ -3,7 +3,15 @@ import { makeSource } from '@marmotter/protocol';
 import { describe, expect, it } from 'vitest';
 import { findCommand, parseInput, suggestCommands } from './commands.js';
 import { complete, wordAt } from './completion.js';
-import { fitNick, formatDay, formatTime, linkify, segment, stripFormatting } from './format.js';
+import {
+  fitNick,
+  formatDay,
+  formatIdle,
+  formatTime,
+  linkify,
+  segment,
+  stripFormatting,
+} from './format.js';
 import { buildRows, summarise } from './rows.js';
 import { isHighlight, orderNetworks } from './view-store.js';
 
@@ -131,6 +139,25 @@ describe('the nick column', () => {
   it('truncates a long nick so the message edge stays straight', () => {
     expect(fitNick('averyverylongnickname', 12)).toBe('averyverylo…');
     expect(fitNick('short', 12)).toBe('short');
+  });
+});
+
+describe('idle time', () => {
+  it('counts seconds when that is all there is', () => {
+    expect(formatIdle(1)).toBe('1 second');
+    expect(formatIdle(45)).toBe('45 seconds');
+  });
+
+  it('reads out the two largest units in words', () => {
+    expect(formatIdle(60)).toBe('1 minute');
+    expect(formatIdle(3_600)).toBe('1 hour');
+    expect(formatIdle(3_660)).toBe('1 hour, 1 minute');
+    expect(formatIdle(8_130)).toBe('2 hours, 15 minutes');
+    expect(formatIdle(90_000)).toBe('1 day, 1 hour');
+  });
+
+  it('skips a unit that is zero rather than saying "0 minutes"', () => {
+    expect(formatIdle(86_400)).toBe('1 day');
   });
 });
 

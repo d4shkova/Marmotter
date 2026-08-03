@@ -25,6 +25,7 @@ import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
+import { WhoisCard } from './WhoisCard.js';
 import { parseInput } from './commands.js';
 import { memberActions } from './member-actions.js';
 import type { MenuItem } from '../primitives/ContextMenu.js';
@@ -73,6 +74,8 @@ export function Marmotter({
   const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
   /** A network waiting for a channel name from the "Join a channel" prompt. */
   const [joiningNetwork, setJoiningNetwork] = useState<string | undefined>(undefined);
+  /** Whose profile card is open, if any. */
+  const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
 
   const toast = useCallback((text: string, tone: ToastMessage['tone'] = 'info') => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -196,6 +199,14 @@ export function Marmotter({
     }
   };
 
+  // "View details" asks the network who somebody is and opens the profile card.
+  // The card fills in as the reply arrives, so nobody sees the numerics behind
+  // it — which is the whole point of the abstraction layer.
+  const openProfile = (nick: string): void => {
+    session?.send(`WHOIS ${nick} ${nick}`);
+    setProfileNick(nick);
+  };
+
   // The right-click / ⋯ menu for a member, built from what the user is actually
   // allowed to do on this network. This is the abstraction layer: the person
   // picks "Make an operator" and the MODE goes out underneath.
@@ -209,7 +220,7 @@ export function Marmotter({
       ourNick: network.nick,
       callbacks: {
         onMessage: messageMember,
-        onWhois: (nick) => session.send(`WHOIS ${nick}`),
+        onWhois: openProfile,
         onIgnore: (nick) => {
           session.addIgnore(nick);
           toast(`Ignoring ${nick}. You won't see their messages.`);
@@ -416,7 +427,7 @@ export function Marmotter({
               channel={conversation}
               menuFor={memberMenu}
               onMessage={messageMember}
-              onOpenProfile={(nick) => session?.send(`WHOIS ${nick}`)}
+              onOpenProfile={openProfile}
             />
           )
         }
@@ -447,6 +458,16 @@ export function Marmotter({
         onConfirm={joinChannel}
         onCancel={() => setJoiningNetwork(undefined)}
       />
+
+      {profileNick === undefined || network === undefined ? null : (
+        <WhoisCard
+          open
+          nick={profileNick}
+          network={network}
+          onClose={() => setProfileNick(undefined)}
+          onMessage={messageMember}
+        />
+      )}
 
       <ToastRegion
         toasts={toasts}
