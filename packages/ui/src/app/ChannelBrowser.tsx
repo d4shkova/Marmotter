@@ -12,6 +12,13 @@ export interface ChannelBrowserProps {
   /** Asks the network for its list. The pattern goes to the server as typed. */
   readonly onRefresh: (pattern?: string) => void;
   readonly onJoin: (channel: string) => void;
+  /**
+   * Opens the "create a channel" form.
+   *
+   * Beside the browser rather than buried in a menu: looking for a channel and
+   * finding nothing is exactly the moment somebody decides to make one.
+   */
+  readonly onCreate?: () => void;
   /** Channels already joined, so the row says so instead of offering to join. */
   readonly joined?: ReadonlySet<string>;
   readonly className?: string;
@@ -40,6 +47,7 @@ export function ChannelBrowser({
   network,
   onRefresh,
   onJoin,
+  onCreate,
   joined,
   className,
 }: ChannelBrowserProps): ReactNode {
@@ -116,6 +124,15 @@ export function ChannelBrowser({
           >
             Name
           </Button>
+
+          {onCreate === undefined ? null : (
+            <>
+              <span aria-hidden="true" className="mx-1 h-4 w-px bg-[var(--separator)]" />
+              <Button size="small" variant="secondary" onClick={onCreate}>
+                Create channel
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -143,9 +160,18 @@ export function ChannelBrowser({
               ? 'This network listed no channels.'
               : `Nothing here is called ${query.trim()}, or mentions it in a topic.`
           }
-          {...(query.trim() === ''
-            ? {}
-            : { action: <Button onClick={() => setQuery('')}>Clear the search</Button> })}
+          action={
+            <div className="flex gap-2">
+              {query.trim() === '' ? null : (
+                <Button onClick={() => setQuery('')}>Clear the search</Button>
+              )}
+              {onCreate === undefined ? null : (
+                <Button variant="primary" onClick={onCreate}>
+                  Create it
+                </Button>
+              )}
+            </div>
+          }
         />
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">

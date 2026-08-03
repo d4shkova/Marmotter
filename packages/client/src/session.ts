@@ -310,6 +310,12 @@ export function createSession(options: SessionOptions): Session {
   const onRegistered = (): void => {
     const lines: string[] = [];
 
+    // Before the autojoins, so a channel that only lets in signed-in people has
+    // the best chance of the sign-in having landed first.
+    if (profile.auth?.type === 'nickserv') {
+      void identifyWithService(profile.auth.account, profile.auth.password);
+    }
+
     for (const entry of profile.autojoin) {
       // Keys are resolved asynchronously, so a keyed channel joins a moment
       // later rather than holding up the rest.
@@ -370,6 +376,30 @@ export function createSession(options: SessionOptions): Session {
       return;
     }
     write([key === undefined ? `JOIN ${target}` : `JOIN ${target} ${key}`]);
+  };
+
+  /**
+   * The legacy sign-in: a private message to the account service.
+   *
+   * CLAUDE.md prefers SASL everywhere it exists, and this is what is left for
+   * the networks that do not offer it. It goes out after registration rather
+   * than during it, because there is no service to talk to until the connection
+   * is up — which is also why it cannot fail the way SASL can. Nothing replies
+   * in a form worth waiting on, so the notice from the service lands in the
+   * conversation with it, where somebody can read what happened.
+   */
+  const identifyWithService = async (account: string, ref: SecretRef): Promise<void> => {
+    const password = await options.resolveSecret?.(ref);
+    if (destroyed || password === undefined) {
+      if (!destroyed) {
+        events.emit({
+          kind: 'auth-failed',
+          reason: 'No password was stored for this network, so signing in was skipped.',
+        });
+      }
+      return;
+    }
+    write([`PRIVMSG NickServ :IDENTIFY ${account} ${password}`]);
   };
 
   const failAuth = (reason: string): void => {

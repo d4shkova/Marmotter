@@ -29,6 +29,13 @@ export interface ComposerProps {
    * conversation to send to but every command still works.
    */
   readonly commandsOnly?: boolean;
+  /**
+   * Whether this network's operator commands are offered in the list.
+   *
+   * Set from the network profile. Typing one in full still works either way —
+   * this decides what is suggested, not what is permitted.
+   */
+  readonly operatorCommands?: boolean;
   readonly className?: string;
 }
 
@@ -58,6 +65,7 @@ export function Composer({
   disabled = false,
   disabledReason,
   commandsOnly = false,
+  operatorCommands = false,
   className,
 }: ComposerProps): ReactNode {
   const field = useRef<HTMLTextAreaElement>(null);
@@ -75,8 +83,14 @@ export function Composer({
   const [browsing, setBrowsing] = useState(false);
 
   const suggestions = useMemo(
-    () => (dismissed ? undefined : computeSuggestions(value, caret, { offerCommands: browsing })),
-    [value, caret, dismissed, browsing],
+    () =>
+      dismissed
+        ? undefined
+        : computeSuggestions(value, caret, {
+            offerCommands: browsing,
+            operator: operatorCommands,
+          }),
+    [value, caret, dismissed, browsing, operatorCommands],
   );
   const active = suggestions?.items[Math.min(highlighted, suggestions.items.length - 1)];
 

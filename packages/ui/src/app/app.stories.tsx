@@ -25,6 +25,7 @@ import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { InviteBanner } from './Invites.js';
+import { CreateChannel } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { PeoplePanel } from './PeoplePanel.js';
@@ -578,6 +579,25 @@ export const EditingANetwork: StoryObj = {
           }}
           onClose={() => setOpen(false)}
           onAdd={() => setOpen(false)}
+        />
+      </>
+    );
+  },
+};
+
+export const CreatingAChannel: StoryObj = {
+  render: function CreatingAChannel() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Create channel
+        </button>
+        <CreateChannel
+          open={open}
+          networkName="Libera.Chat"
+          onCreate={() => setOpen(false)}
+          onCancel={() => setOpen(false)}
         />
       </>
     );

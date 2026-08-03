@@ -51,6 +51,8 @@ export interface SuggestOptions {
    * this list yet, so it is not cut short the way the typed one is.
    */
   readonly offerCommands?: boolean;
+  /** Whether this network's operator commands are offered. */
+  readonly operator?: boolean;
 }
 
 /**
@@ -66,8 +68,10 @@ export function computeSuggestions(
 ): Suggestions | undefined {
   const before = value.slice(0, caret);
 
+  const operator = { operator: options.operator === true };
+
   if (options.offerCommands === true && value === '') {
-    const items = suggestCommands('').map(commandItem);
+    const items = suggestCommands('', operator).map(commandItem);
     return items.length === 0 ? undefined : { kind: 'command', items, from: 0, to: caret };
   }
 
@@ -76,7 +80,7 @@ export function computeSuggestions(
   const command = /^\/([a-z0-9]*)$/i.exec(before);
   if (command !== null) {
     const prefix = command[1] ?? '';
-    const items = suggestCommands(prefix).slice(0, LIMIT).map(commandItem);
+    const items = suggestCommands(prefix, operator).slice(0, LIMIT).map(commandItem);
     return items.length === 0 ? undefined : { kind: 'command', items, from: 0, to: caret };
   }
 

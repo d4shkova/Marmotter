@@ -32,6 +32,7 @@ import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
 import { Settings } from './app/Settings.js';
 import { Sidebar } from './app/Sidebar.js';
+import { CreateChannel } from './app/CreateChannel.js';
 import { ListPrompt } from './app/ListPrompt.js';
 import { TextPrompt } from './app/TextPrompt.js';
 import { buildRows } from './app/rows.js';
@@ -474,6 +475,10 @@ describe('every component passes axe', () => {
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
+    [
+      'CreateChannel',
+      <CreateChannel key="cc" open networkName="Libera.Chat" onCreate={noop} onCancel={noop} />,
+    ],
     [
       'ListPrompt',
       <ListPrompt

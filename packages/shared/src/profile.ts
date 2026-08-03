@@ -71,6 +71,16 @@ export interface NetworkProfile {
   identity: Identity;
   auth?: AuthConfig;
   autojoin: AutojoinTarget[];
+  /**
+   * Whether this network's operator commands are offered in the command bar.
+   *
+   * Off by default, because `/oper`, `/kill` and `/wallops` are meaningless to
+   * everybody who is not a server operator and actively alarming in a list of
+   * ordinary things to do. It gates discovery only: a command typed in full
+   * still runs, as `/quote` always has, since a client that refuses to send
+   * what it was asked to send is worse than one that hides a menu entry.
+   */
+  operatorCommands?: boolean;
   /** Raw lines sent after registration completes. */
   connectCommands: string[];
   /** Defaults to 'utf-8'; overridable for legacy networks. */

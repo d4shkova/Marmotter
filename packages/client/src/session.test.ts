@@ -697,6 +697,62 @@ describe('losing the connection', () => {
   });
 });
 
+describe('signing in to the account service', () => {
+  // The legacy path, for networks without SASL. It was in the profile schema
+  // from the start and never acted on, so a profile configured this way
+  // connected and quietly stayed signed out.
+  const build = (resolved: string | undefined) => {
+    const transport = new FakeTransport();
+    const session = createSession({
+      profile: profile({
+        auth: { type: 'nickserv', account: 'marmot', password: secret('nickserv') },
+      }),
+      transport,
+      now,
+      resolveSecret: async () => resolved,
+    });
+    return { transport, session };
+  };
+
+  it('identifies once the connection is up, not during registration', async () => {
+    const { transport, session } = build('hunter2');
+    await session.connect();
+    // The MOTD's end is what says registration finished; 001 only says hello.
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent).toContain('PRIVMSG NickServ :IDENTIFY marmot hunter2');
+    // Nothing about it belongs in registration, where there is no service yet.
+    const welcome = transport.sent.indexOf('NICK marmot');
+    expect(transport.sent.indexOf('PRIVMSG NickServ :IDENTIFY marmot hunter2')).toBeGreaterThan(
+      welcome,
+    );
+  });
+
+  it('says so rather than sending a blank password', async () => {
+    const { transport, session } = build(undefined);
+    const events: SessionEvent[] = [];
+    session.on((event) => events.push(event));
+
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent.some((line) => line.startsWith('PRIVMSG NickServ'))).toBe(false);
+    expect(events.some((event) => event.kind === 'auth-failed')).toBe(true);
+  });
+
+  it('leaves a profile with no login alone', async () => {
+    const transport = new FakeTransport();
+    const session = createSession({ profile: profile(), transport, now });
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent.some((line) => line.startsWith('PRIVMSG NickServ'))).toBe(false);
+  });
+});
+
 describe('a flood of replies', () => {
   // A bare LIST on a large network is tens of thousands of numerics in a few
   // seconds. One announcement each is one render of the whole interface each,

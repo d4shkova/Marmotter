@@ -6,6 +6,15 @@ export interface SelectOption {
   readonly value: string;
   readonly label: string;
   readonly disabled?: boolean;
+  /**
+   * Heading this option is filed under.
+   *
+   * Options carrying one are grouped in the order the groups first appear.
+   * A list long enough to need headings — a directory of networks, say — is
+   * unreadable without them, and the native `optgroup` is what screen readers
+   * and the mobile picker already know how to announce.
+   */
+  readonly group?: string;
 }
 
 export interface SelectProps extends Omit<
@@ -57,12 +66,40 @@ export function Select({
         aria-describedby={describedBy(fieldId, hint, error)}
         className={cn(inputClasses(error !== undefined), 'appearance-none pr-8')}
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
+        {groupsOf(options).map(([group, entries]) =>
+          group === undefined ? (
+            entries.map((option) => (
+              <option key={option.value} value={option.value} disabled={option.disabled}>
+                {option.label}
+              </option>
+            ))
+          ) : (
+            <optgroup key={group} label={group}>
+              {entries.map((option) => (
+                <option key={option.value} value={option.value} disabled={option.disabled}>
+                  {option.label}
+                </option>
+              ))}
+            </optgroup>
+          ),
+        )}
       </select>
     </Field>
   );
+}
+
+/** Options in their groups, in the order each group first appears. */
+function groupsOf(
+  options: readonly SelectOption[],
+): readonly (readonly [string | undefined, readonly SelectOption[]])[] {
+  const groups: [string | undefined, SelectOption[]][] = [];
+  for (const option of options) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last[0] === option.group) {
+      last[1].push(option);
+    } else {
+      groups.push([option.group, [option]]);
+    }
+  }
+  return groups;
 }

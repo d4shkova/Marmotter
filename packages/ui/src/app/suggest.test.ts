@@ -50,9 +50,26 @@ describe('what the composer offers', () => {
   // does not already know that `/` produces one.
   it('offers every command on an empty line when asked outright', () => {
     const suggestions = computeSuggestions('', 0, { offerCommands: true });
+    const everyday = COMMANDS.filter((command) => command.operator !== true);
     expect(suggestions?.kind).toBe('command');
-    expect(suggestions?.items.length).toBe(COMMANDS.length);
+    expect(suggestions?.items.length).toBe(everyday.length);
     expect(suggestions?.items.map((item) => item.label)).toContain('/join');
+  });
+
+  // Discovery, not permission: `/oper` typed in full still parses and runs on
+  // any network. It simply is not proposed to somebody it means nothing to.
+  it('keeps the operator commands out of the list until the network says otherwise', () => {
+    const ordinary = computeSuggestions('/op', 3);
+    expect(ordinary).toBeUndefined();
+
+    const operator = computeSuggestions('/op', 3, { operator: true });
+    expect(operator?.items.map((item) => item.label)).toEqual(['/oper']);
+  });
+
+  it('offers the operator commands in the browsed list too, once enabled', () => {
+    const browsed = computeSuggestions('', 0, { offerCommands: true, operator: true });
+    expect(browsed?.items.map((item) => item.label)).toContain('/wallops');
+    expect(browsed?.items.length).toBe(COMMANDS.length);
   });
 
   it('cuts the typed list short but not the browsed one', () => {

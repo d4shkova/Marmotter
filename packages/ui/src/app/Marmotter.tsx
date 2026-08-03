@@ -25,8 +25,10 @@ import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { InviteBanner } from './Invites.js';
+import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
 import { describeWait, listReadiness } from './list-guard.js';
+import { readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -97,6 +99,8 @@ export function Marmotter({
   const [adding, setAdding] = useState(false);
   /** The network whose saved settings are open for changing, if any. */
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
+  /** The network a channel is being created on, if the form is open. */
+  const [creatingOn, setCreatingOn] = useState<string | undefined>(undefined);
   /** The network waiting to be asked for its channel list, and with what. */
   const [listing, setListing] = useState<{ networkId: string; pattern: string } | undefined>(
     undefined,
@@ -131,6 +135,7 @@ export function Marmotter({
   const editingProfile = editingId === undefined ? undefined : registry.profiles.get(editingId);
   const listingNetwork =
     listing === undefined ? undefined : registry.networks.get(listing.networkId);
+  const creatingNetwork = creatingOn === undefined ? undefined : registry.networks.get(creatingOn);
 
   const selection = view.selection;
   const network = selection === undefined ? undefined : registry.networks.get(selection.networkId);
@@ -241,7 +246,10 @@ export function Marmotter({
         profile,
         transport: createTransport(profile),
         ctcp: useView.getState().ctcp,
-        ...(resolveSecret === undefined ? {} : { resolveSecret }),
+        // The platform's own store first, where it has one, and the session
+        // store behind it. A password typed into the form this run is in the
+        // second and not yet in the first, and has to work either way.
+        resolveSecret: async (ref) => (await resolveSecret?.(ref)) ?? readSecret(ref),
       });
 
       built.on((sessionEvent) => {
@@ -347,6 +355,22 @@ export function Marmotter({
       return;
     }
     setListing({ networkId, pattern: '' });
+  };
+
+  // Making a channel. There is no CREATE on IRC — a channel exists because
+  // somebody is in it — so this joins a name nobody is using and then sets what
+  // was asked for, which the join itself gives us the standing to do.
+  const createChannel = (options: Parameters<typeof createChannelLines>[0]): void => {
+    const networkId = creatingOn;
+    setCreatingOn(undefined);
+    if (networkId === undefined) {
+      return;
+    }
+    const target = registry.sessionOf(networkId);
+    for (const line of createChannelLines(options)) {
+      target?.send(line);
+    }
+    view.select({ networkId, target: options.name });
   };
 
   const joinFromBrowser = (channel: string): void => {
@@ -663,6 +687,7 @@ export function Marmotter({
           network={network}
           onRefresh={(pattern) => askForList(network.id, pattern)}
           onJoin={joinFromBrowser}
+          onCreate={() => setCreatingOn(network.id)}
           joined={
             new Set(
               [...network.channels.values()]
@@ -733,6 +758,7 @@ export function Marmotter({
             }
             channels={[...network.channels.values()].map((entry) => entry.name)}
             fold={(text) => fold(text, network.support.caseMapping)}
+            operatorCommands={registry.profiles.get(network.id)?.operatorCommands === true}
             disabled={network.phase !== 'registered'}
             disabledReason="Not connected yet"
           />
@@ -827,6 +853,17 @@ export function Marmotter({
             registry.sessionOf(listing.networkId)?.listChannels(pattern);
             setListing(undefined);
           }}
+        />
+      )}
+
+      {creatingNetwork === undefined ? null : (
+        <CreateChannel
+          open
+          networkName={creatingNetwork.name}
+          prefix={creatingNetwork.support.chanTypes[0] ?? '#'}
+          supportsSecret={creatingNetwork.support.chanModes.flag.includes('s')}
+          onCreate={createChannel}
+          onCancel={() => setCreatingOn(undefined)}
         />
       )}
 
