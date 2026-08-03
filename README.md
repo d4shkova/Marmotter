@@ -67,6 +67,40 @@ itself:
 pnpm e2e
 ```
 
+## Building an installable app
+
+One command, from a clean checkout:
+
+```sh
+pnpm install
+pnpm tauri build
+```
+
+The bundler produces whatever the machine you are on can make. On Windows that
+is an MSI and an NSIS installer, in
+`target\release\bundle\msi\` and `target\release\bundle\nsis\`; on Linux a
+`.deb`, an `.rpm` and an AppImage under `target/release/bundle/`.
+
+Windows needs three things installed first, none of which are Marmotter's:
+
+| Needed                                                    | Why                                                   |
+| --------------------------------------------------------- | ----------------------------------------------------- |
+| [Rust](https://rustup.rs/), MSVC toolchain                | The transport is Rust; the shell is Tauri.            |
+| Visual Studio Build Tools, "Desktop development with C++" | What Rust links against on Windows.                   |
+| WebView2 runtime                                          | Already present on Windows 11 and current Windows 10. |
+
+For a build without installing any of that, push a tag and let CI do it:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The release workflow builds Windows and Linux and attaches the installers to a
+draft release.
+
+While working on the app itself, `pnpm tauri dev` is faster — it runs the same
+shell with the frontend hot-reloading, and no bundle step.
+
 ## Requirements
 
 | Tool | Version | Needed for                     |
