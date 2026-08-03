@@ -230,6 +230,18 @@ function NetworkGroup({
           </span>
         </button>
 
+        {/* Both live in the header rather than in the empty state, because
+            somebody who has already joined one channel is exactly the person
+            who wants to find a second. */}
+        {onBrowseChannels === undefined || network.phase !== 'registered' ? null : (
+          <IconButton
+            label={`Browse channels on ${network.name}`}
+            size="small"
+            icon={<span aria-hidden="true">⌕</span>}
+            onClick={onBrowseChannels}
+          />
+        )}
+
         {onJoinChannel === undefined || network.phase !== 'registered' ? null : (
           <IconButton
             label={`Join a channel on ${network.name}`}

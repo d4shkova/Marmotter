@@ -49,6 +49,47 @@ jobs:
         # rendered components rather than against the built site.
         run: pnpm --filter @marmotter/ui build-storybook
 
+  e2e:
+    name: End to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install ergo
+        # The acceptance criteria for phases 5 and 6 are about behaviour against
+        # a real ircd, which is the one thing a unit test cannot stand in for.
+        run: |
+          curl -sSL -o ergo.tar.gz \
+            https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
+          tar xzf ergo.tar.gz
+          sudo install ergo-2.15.0-linux-x86_64/ergo /usr/local/bin/ergo
+          ergo initdb --conf e2e/ergo.yaml
+
+      - name: Install Playwright's browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build the packages and the web app
+        run: pnpm -r --filter=./packages/* build && pnpm --filter @marmotter/web build
+
+      - name: Run
+        run: pnpm e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

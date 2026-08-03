@@ -263,6 +263,19 @@ numeric. Playwright covers this path end to end against local ergo.
 > them while typing), and the Playwright run against local ergo. The acceptance
 > criterion above is therefore not yet met and Phase 6 must not start.
 >
+> **Phase 5 complete, 2026-08-03.** The Playwright run against a local ergo now
+> exists and passes, which closes the last item. It drives the *browser* build,
+> because ergo speaks WebSocket and a browser is far cheaper to automate than a
+> Tauri window — and both builds mount the same `Marmotter` component, so what
+> is under test is the desktop client's own interface with a different socket
+> under it. The acceptance sentence is asserted in two halves: the whole path is
+> driven through the interface with no slash command, and the message list is
+> then scanned for numerics and mode strings.
+>
+> Setting it up found a real hole. The "Add a network" form had no way to enter
+> a WebSocket endpoint, so the web build could not add a network it was capable
+> of reaching — the one transport it has. It has one now.
+>
 > **Progress, 2026-08-03.** The settings screen landed earlier; this pass adds
 > the remaining four. What is left of Phase 5 is the Playwright run against a
 > local ergo, and nothing else.
@@ -343,11 +356,32 @@ human sentence, not a numeric — assert this in tests.
 
 > **Progress, 2026-08-03. Every row of the abstraction table is now built.**
 >
-> The acceptance criterion above is *not* met, and the gap is specific: none of
-> this has been run against a local ergo or an Atheme-backed InspIRCd. Every
-> panel is unit-tested over its pure translation layer and checked with axe, but
-> the round trip is exactly the thing unit tests cannot stand in for. Phase 7
-> should not start until it has been done.
+> Half the acceptance criterion is now met: the panels round-trip against a
+> local ergo, in `e2e/`. A channel setting is changed through the settings panel
+> and read back from what the server actually applied; the browser lists what
+> the network has; a second real client joins, speaks, and leaves, and the
+> member list follows. The other half — the same run against an Atheme-backed
+> InspIRCd, which is what proves the services translation works across two
+> packages — is still outstanding, and Phase 7 should not start until it is done.
+>
+> Two things the end-to-end run turned up, both worth recording:
+>
+> - **The browse-channels action was unreachable once you had joined a channel.**
+>   It lived only in the sidebar's empty state, so the person most likely to want
+>   it — somebody looking for a second channel — could not find it. It is in the
+>   network header now, beside "join".
+> - **`echo-message` made the client answer its own CTCP requests.** Our own
+>   outgoing request comes back as an echo, and the reducer treated it as a
+>   question from ourselves: a spurious reply on the wire and a notice claiming
+>   we had been asked something. Found by watching the raw log during an
+>   end-to-end run, which is exactly what CLAUDE.md says the raw log is for.
+>
+> One limitation, recorded because it looks like a bug and is not ours: **ergo's
+> WebSocket listener doubles the `\u0001` CTCP delimiter** when relaying from a
+> TCP client. It reproduces with a raw WebSocket and no Marmotter code in the
+> loop. Accepting a doubled delimiter would mean a parser that disagrees with
+> the CTCP spec, so the request path is covered by unit tests instead and the
+> desktop build's TCP transport is unaffected.
 >
 > Four decisions worth recording:
 >

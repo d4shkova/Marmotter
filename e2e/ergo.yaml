@@ -1,0 +1,91 @@
+# A throwaway ergo, for the end-to-end run only.
+#
+# Plaintext on both listeners deliberately: the point of this harness is to
+# exercise Marmotter against a real ircd, and a self-signed certificate would
+# add a browser trust prompt that tests nothing about the client. TLS is
+# covered by the transport integration tests in `crates/marmotter-transport`.
+network:
+  name: MarmotterTest
+
+server:
+  name: irc.test
+  listeners:
+    ':6667':
+    ':8097':
+      websocket: true
+  casemapping: 'ascii'
+  enforce-utf8: true
+  lookup-hostnames: false
+  check-ident: false
+  motd: e2e/ergo.motd
+  max-sendq: 96k
+  ip-limits:
+    count: false
+    throttle: false
+  websockets:
+    allowed-origins:
+      - 'http://localhost:4173'
+      - 'http://127.0.0.1:4173'
+
+accounts:
+  authentication-enabled: true
+  registration:
+    enabled: true
+    allow-before-connect: true
+    verify-timeout: 32h
+    email-verification:
+      enabled: false
+    throttling:
+      enabled: false
+  require-sasl:
+    enabled: false
+  login-via-pass-command: true
+  nick-reservation:
+    enabled: false
+  multiclient:
+    enabled: true
+
+channels:
+  registration:
+    enabled: true
+
+datastore:
+  path: e2e/.ergo.db
+  autoupgrade: true
+
+limits:
+  nicklen: 32
+  channellen: 64
+  awaylen: 390
+  kicklen: 390
+  topiclen: 390
+  monitor-entries: 100
+  whowas-entries: 100
+  chan-list-modes: 60
+  registration-messages: 1024
+
+history:
+  enabled: true
+  channel-length: 2048
+  client-length: 256
+  autoresize-window: 3d
+  autoreplay-on-join: 0
+  chathistory-maxmessages: 100
+  znc-maxmessages: 2048
+  restrictions:
+    expire-time: 1w
+    query-cutoff: 'none'
+    grace-period: 1h
+  retention:
+    allow-individual-delete: false
+    enable-account-indexing: false
+  tagmsg-storage:
+    default: false
+    whitelist:
+      - '+draft/react'
+      - '+react'
+
+logging:
+  - method: stderr
+    type: '* -userinput -useroutput'
+    level: warn

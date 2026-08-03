@@ -21,10 +21,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev:web": "pnpm --filter @marmotter/web dev",
     "tauri": "pnpm --filter @marmotter/desktop tauri",
-    "prepare": "husky"
+    "prepare": "husky",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.19.1",
     "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.39.1",

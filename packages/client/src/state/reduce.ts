@@ -789,7 +789,11 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
       // as a quiet notice, never as a message in the channel. A CTCP *reply*
       // (which arrives as a NOTICE) is somebody answering us, and is a notice
       // in the same way.
-      const ctcp = action === undefined ? decodeCtcp(body) : undefined;
+      // Our own outgoing request comes back through `echo-message`, and
+      // answering it would mean sending ourselves a reply to a question we
+      // asked somebody else — visible spurious traffic, and a notice claiming
+      // we had been asked something.
+      const ctcp = action === undefined && !isSelf(state, sender) ? decodeCtcp(body) : undefined;
       if (ctcp !== undefined && sender !== '') {
         const policy = context.ctcp ?? DEFAULT_CTCP_POLICY;
         const answer = msg.command === 'PRIVMSG' ? ctcpReply(ctcp, policy, now()) : undefined;
