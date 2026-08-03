@@ -1,6 +1,6 @@
 import type { NetworkProfile, ServerEndpoint, TlsConfig } from '@marmotter/shared';
 import { defaultLoggingPolicy } from '@marmotter/shared';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../primitives/Button.js';
 import { RadioGroup } from '../primitives/Radio.js';
 import { Sheet } from '../primitives/Sheet.js';
@@ -52,16 +52,56 @@ const TLS_FOR: Record<Exclude<Security, 'websocket'>, TlsConfig> = {
   off: { mode: 'off' },
 };
 
+/**
+ * The port each kind of connection conventionally listens on.
+ *
+ * Every network on the planet agrees on these two numbers, so making somebody
+ * change 6697 to 6667 by hand after saying "not encrypted" is asking them to
+ * know a fact the form already knows. The field stays editable: agreement is
+ * not universality, and a network on 7000 is not unusual.
+ */
+const PORT_FOR: Record<Security, number> = {
+  verified: 6697,
+  pinned: 6697,
+  off: 6667,
+  websocket: 443,
+};
+
+/** Which security choice an existing endpoint was saved with. */
+const securityOf = (endpoint: ServerEndpoint | undefined): Security => {
+  const tls = endpoint?.tls;
+  if (tls === undefined) {
+    return 'verified';
+  }
+  switch (tls.mode) {
+    case 'off':
+      return 'off';
+    case 'websocket':
+      return 'websocket';
+    case 'tls':
+      return tls.verifyCert ? 'verified' : 'pinned';
+  }
+};
+
 export interface AddNetworkProps {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onAdd: (profile: NetworkProfile) => void;
+  /**
+   * The network being changed, when this is an edit rather than an addition.
+   *
+   * Everything the form does not show — the autojoin list, connect commands,
+   * the logging policy, the saved credential — is carried through untouched, so
+   * editing an address cannot quietly discard the rest of somebody's setup.
+   */
+  readonly editing?: NetworkProfile;
   /** Generates the profile ID. Injected so tests are deterministic. */
   readonly newId?: () => string;
 }
 
 /**
- * The "Add a network" flow.
+ * The "Add a network" flow, and the "Edit network" flow, which are the same
+ * form asked at two different times.
  *
  * The security choice is made here, per endpoint, at profile-creation time —
  * and each option says what it means for the person rather than naming a
@@ -69,26 +109,112 @@ export interface AddNetworkProps {
  * the password, because that is the consequence and nobody should have to
  * already know it.
  */
-export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): ReactNode {
+export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkProps): ReactNode {
   const [preset, setPreset] = useState<string>('libera');
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
   const [port, setPort] = useState('6697');
+  /** Whether the port is the person's number or the form's, which decides
+      whether changing the security setting may replace it. */
+  const [portEdited, setPortEdited] = useState(false);
   const [nick, setNick] = useState('');
   const [security, setSecurity] = useState<Security>('verified');
   const [socketUrl, setSocketUrl] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
 
+  // Opening the sheet loads whatever it is opening onto: a blank form for a new
+  // network, the saved values for one being edited.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setError(undefined);
+    if (editing === undefined) {
+      setPreset('libera');
+      setName('');
+      setHost('');
+      setPort(String(PORT_FOR.verified));
+      setPortEdited(false);
+      setNick('');
+      setSecurity('verified');
+      setSocketUrl('');
+      return;
+    }
+
+    const endpoint = editing.servers[0];
+    const mode = securityOf(endpoint);
+    setPreset('custom');
+    setName(editing.name);
+    setHost(endpoint?.host ?? '');
+    setPort(String(endpoint?.port ?? PORT_FOR[mode]));
+    // A saved port is somebody's decision, whatever it is.
+    setPortEdited(true);
+    setNick(editing.identity.nick);
+    setSecurity(mode);
+    setSocketUrl(endpoint?.tls.mode === 'websocket' ? endpoint.tls.url : '');
+  }, [open, editing]);
+
   const chosen = PRESETS.find((entry) => entry.id === preset);
-  const custom = preset === 'custom';
+  // An edit always shows the fields directly: the presets are a shortcut for
+  // filling in a blank form, not a description of a network already saved.
+  const custom = preset === 'custom' || editing !== undefined;
 
   const effective = {
     name: custom ? name : (chosen?.name ?? ''),
     host: custom ? host : (chosen?.host ?? ''),
-    port: custom ? Number.parseInt(port, 10) : (chosen?.port ?? 6697),
+    port: custom ? Number.parseInt(port, 10) : (chosen?.port ?? PORT_FOR.verified),
   };
 
   const usesSocket = security === 'websocket';
+
+  const changeSecurity = (next: string): void => {
+    const value = next as Security;
+    setSecurity(value);
+    if (!portEdited) {
+      setPort(String(PORT_FOR[value]));
+    }
+  };
+
+  /** What to keep from an edited profile, or the defaults for a new one. */
+  const carried = {
+    autojoin: editing?.autojoin ?? [],
+    connectCommands: editing?.connectCommands ?? [],
+    encoding: editing?.encoding ?? 'utf-8',
+    autoReconnect: editing?.autoReconnect ?? true,
+    logging: editing?.logging ?? defaultLoggingPolicy,
+    ...(editing?.auth === undefined ? {} : { auth: editing.auth }),
+  };
+
+  /**
+   * The identity for a nick.
+   *
+   * On an edit the alternates, username and real name are the user's own and
+   * are kept — except the alternates we generated ourselves for the previous
+   * nick, which would otherwise leave somebody called `marmot` falling back to
+   * a name they have never used.
+   */
+  const identityFor = (chosenNick: string): NetworkProfile['identity'] => {
+    const derived = [`${chosenNick}_`, `${chosenNick}__`];
+    if (editing === undefined) {
+      return {
+        nick: chosenNick,
+        // A second and third try, so a taken name does not stop the connection.
+        altNicks: derived,
+        username: chosenNick,
+        realname: chosenNick,
+      };
+    }
+    const previous = editing.identity;
+    const wasGenerated =
+      previous.altNicks.length === 2 &&
+      previous.altNicks[0] === `${previous.nick}_` &&
+      previous.altNicks[1] === `${previous.nick}__`;
+    return {
+      ...previous,
+      nick: chosenNick,
+      altNicks: wasGenerated ? derived : previous.altNicks,
+    };
+  };
 
   const submit = (): void => {
     if (usesSocket) {
@@ -115,21 +241,11 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
     };
 
     onAdd({
-      id: newId?.() ?? crypto.randomUUID(),
+      id: editing?.id ?? newId?.() ?? crypto.randomUUID(),
       name: effective.name.trim() === '' ? endpoint.host : effective.name.trim(),
       servers: [endpoint],
-      identity: {
-        nick: nick.trim(),
-        // A second and third try, so a taken name does not stop the connection.
-        altNicks: [`${nick.trim()}_`, `${nick.trim()}__`],
-        username: nick.trim(),
-        realname: nick.trim(),
-      },
-      autojoin: [],
-      connectCommands: [],
-      encoding: 'utf-8',
-      autoReconnect: true,
-      logging: defaultLoggingPolicy,
+      identity: identityFor(nick.trim()),
+      ...carried,
     });
 
     setError(undefined);
@@ -162,7 +278,7 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
     }
 
     onAdd({
-      id: newId?.() ?? crypto.randomUUID(),
+      id: editing?.id ?? newId?.() ?? crypto.randomUUID(),
       name: effective.name.trim() === '' ? parsed.hostname : effective.name.trim(),
       servers: [
         {
@@ -171,17 +287,8 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
           tls: { mode: 'websocket', url },
         },
       ],
-      identity: {
-        nick: nick.trim(),
-        altNicks: [`${nick.trim()}_`, `${nick.trim()}__`],
-        username: nick.trim(),
-        realname: nick.trim(),
-      },
-      autojoin: [],
-      connectCommands: [],
-      encoding: 'utf-8',
-      autoReconnect: true,
-      logging: defaultLoggingPolicy,
+      identity: identityFor(nick.trim()),
+      ...carried,
     });
 
     setError(undefined);
@@ -192,30 +299,37 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
     <Sheet
       open={open}
       onClose={onClose}
-      title="Add a network"
+      title={editing === undefined ? 'Add a network' : `Edit ${editing.name}`}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={submit}>
-            Add network
+            {editing === undefined ? 'Add network' : 'Save changes'}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-5 pt-2">
-        <RadioGroup
-          legend="Which network?"
-          value={preset}
-          onChange={setPreset}
-          options={[
-            ...PRESETS.map((entry) => ({
-              value: entry.id,
-              label: entry.name,
-              description: entry.description,
-            })),
-            { value: 'custom', label: 'Somewhere else', description: 'Enter a server yourself.' },
-          ]}
-        />
+        {editing === undefined ? (
+          <RadioGroup
+            legend="Which network?"
+            value={preset}
+            onChange={setPreset}
+            options={[
+              ...PRESETS.map((entry) => ({
+                value: entry.id,
+                label: entry.name,
+                description: entry.description,
+              })),
+              { value: 'custom', label: 'Somewhere else', description: 'Enter a server yourself.' },
+            ]}
+          />
+        ) : (
+          <p className="text-subhead text-[var(--label-secondary)]">
+            These take effect on the next connection. If this network is connected now, saving
+            reconnects it so it is running on what you saved.
+          </p>
+        )}
 
         {custom && usesSocket ? (
           <>
@@ -251,8 +365,15 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
               label="Port"
               value={port}
               inputMode="numeric"
-              onChange={(event) => setPort(event.target.value)}
-              hint="6697 for an encrypted connection, 6667 for an unencrypted one."
+              onChange={(event) => {
+                setPortEdited(true);
+                setPort(event.target.value);
+              }}
+              hint={
+                portEdited
+                  ? 'Your own number. Changing the security setting leaves it alone.'
+                  : `Set to ${PORT_FOR[security]} to match the security setting. Change it and it stays as you leave it.`
+              }
             />
           </>
         ) : null}
@@ -269,7 +390,7 @@ export function AddNetwork({ open, onClose, onAdd, newId }: AddNetworkProps): Re
         <RadioGroup
           legend="Connection security"
           value={security}
-          onChange={setSecurity}
+          onChange={changeSecurity}
           options={[
             {
               value: 'verified',

@@ -92,8 +92,11 @@ function commandItem(spec: CommandSpec): SuggestionItem {
     detail: spec.summary,
     ...(spec.alsoAt === undefined ? {} : { alsoAt: spec.alsoAt }),
     // The trailing space is the point: accepting a command leaves the caret
-    // ready for its first argument rather than jammed against the name.
-    insert: `/${spec.name} `,
+    // ready for its first argument rather than jammed against the name. Where
+    // the argument always starts with a particular character, that goes in too
+    // — picking `/join` should leave `/join #` and a caret, not a command the
+    // user has to already know how to finish.
+    insert: `/${spec.name} ${spec.argPrefix ?? ''}`,
   };
 }
 

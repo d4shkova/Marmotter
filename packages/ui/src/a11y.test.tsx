@@ -32,6 +32,7 @@ import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
 import { Settings } from './app/Settings.js';
 import { Sidebar } from './app/Sidebar.js';
+import { ListPrompt } from './app/ListPrompt.js';
 import { TextPrompt } from './app/TextPrompt.js';
 import { buildRows } from './app/rows.js';
 import { Decoder } from './decoder/Decoder.js';
@@ -467,11 +468,24 @@ describe('every component passes axe', () => {
         onCtcpChange={noop}
         onReconnect={noop}
         onDisconnect={noop}
+        onEdit={noop}
         onRemove={noop}
         onAddNetwork={noop}
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
+    [
+      'ListPrompt',
+      <ListPrompt
+        key="lp"
+        open
+        networkName="Libera.Chat"
+        channelCount={23_871}
+        limit={20_000}
+        onConfirm={noop}
+        onCancel={noop}
+      />,
+    ],
     [
       'TextPrompt',
       <TextPrompt

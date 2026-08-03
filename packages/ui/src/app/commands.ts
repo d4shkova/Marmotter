@@ -19,6 +19,15 @@ export interface CommandSpec {
   /** Where the same thing lives in the interface, when it does. */
   readonly alsoAt?: string;
   readonly aliases?: readonly string[];
+  /**
+   * A character the first argument always starts with.
+   *
+   * Typed for the user when the command is picked from the list. `/join` on its
+   * own is not a command anybody can finish without knowing that a channel name
+   * begins with a `#` — which is precisely the piece of IRC arcana this client
+   * exists to stop teaching people.
+   */
+  readonly argPrefix?: string;
   /** Builds the line to send. Undefined means the app handles it itself. */
   readonly build?: (args: string, context: CommandContext) => string | undefined;
 }
@@ -40,6 +49,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: 'Joins a channel, creating it if nobody is there.',
     alsoAt: 'Browse channels',
     aliases: ['j'],
+    argPrefix: '#',
     build: (args) => `JOIN ${rest(args)}`,
   },
   {

@@ -277,6 +277,28 @@ describe('messages', () => {
     expect(channelOf(session, '#test').messages.at(-1)?.kind).toBe('notice');
   });
 
+  // Three sidebar rows for one network — the network, a row named after the
+  // server, and a row called `*` — is what filing these as conversation looks
+  // like from the outside.
+  it('files what the server says on the network tab, not in a conversation', () => {
+    const session = feed(registeredSession(), [
+      ':irc.test NOTICE marmot :*** You are connecting from 10.0.0.1',
+    ]);
+    expect(session.state.queries.size).toBe(0);
+    expect(session.state.serverNotices.at(-1)?.text).toBe('*** You are connecting from 10.0.0.1');
+  });
+
+  it('does not open a conversation called * for a pre-registration notice', () => {
+    const session = feed(newSession(), [':irc.test NOTICE * :*** Looking up your hostname']);
+    expect(session.state.queries.size).toBe(0);
+    expect(session.state.serverNotices.at(-1)?.text).toBe('*** Looking up your hostname');
+  });
+
+  it('still treats a notice from a person as a conversation', () => {
+    const session = feed(registeredSession(), [':bramble!~b@host NOTICE marmot :are you there']);
+    expect(queryOf(session, 'bramble').messages.at(-1)?.kind).toBe('notice');
+  });
+
   it('files a private message under the sender, not under our own nick', () => {
     const session = feed(registeredSession(), [':bramble!~b@host PRIVMSG marmot :are you there']);
     expect(queryOf(session, 'bramble').messages.at(-1)?.text).toBe('are you there');

@@ -697,6 +697,48 @@ describe('losing the connection', () => {
   });
 });
 
+describe('a flood of replies', () => {
+  // A bare LIST on a large network is tens of thousands of numerics in a few
+  // seconds. One announcement each is one render of the whole interface each,
+  // which is what made the channel browser stop responding.
+  it('is announced in batches rather than one row at a time', async () => {
+    const { transport, session } = build();
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome');
+
+    session.listChannels();
+
+    let announcements = 0;
+    session.subscribe(() => (announcements += 1));
+    for (let index = 0; index < 500; index += 1) {
+      transport.receive(`:irc.test 322 marmot #channel${index} 12 :a topic`);
+    }
+
+    // Five hundred rows, no announcement yet — but the state is already right
+    // for anybody who asks.
+    expect(announcements).toBe(0);
+    expect(session.state.directory.entries).toHaveLength(500);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(announcements).toBe(1);
+  });
+
+  it('announces the end of the list at once', async () => {
+    const { transport, session } = build();
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome');
+    session.listChannels();
+    transport.receive(':irc.test 322 marmot #one 3 :a topic');
+
+    let announcements = 0;
+    session.subscribe(() => (announcements += 1));
+    transport.receive(':irc.test 323 marmot :End of /LIST');
+
+    expect(announcements).toBe(1);
+    expect(session.state.directory.complete).toBe(true);
+  });
+});
+
 describe('teardown', () => {
   it('stops listening and disconnects', async () => {
     const { transport, session } = build();

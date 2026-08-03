@@ -45,6 +45,9 @@ describe('what the composer offers', () => {
     expect(computeSuggestions('https://example.com', 19)).toBeUndefined();
   });
 
+  // `/join` carries the `#` its argument always starts with, so picking it out
+  // of the list leaves something that can be finished by typing a name rather
+  // than by knowing what a channel name looks like.
   it('splices a command in with the caret ready for its first argument', () => {
     const suggestions = computeSuggestions('/jo', 3);
     const item = suggestions?.items[0];
@@ -53,7 +56,18 @@ describe('what the composer offers', () => {
     if (suggestions === undefined || item === undefined) {
       return;
     }
-    expect(applySuggestion('/jo', suggestions, item)).toEqual({ text: '/join ', caret: 6 });
+    expect(applySuggestion('/jo', suggestions, item)).toEqual({ text: '/join #', caret: 7 });
+  });
+
+  it('leaves a command whose argument has no fixed shape at a bare space', () => {
+    const suggestions = computeSuggestions('/whoi', 5);
+    const item = suggestions?.items[0];
+    expect(suggestions).toBeDefined();
+    expect(item).toBeDefined();
+    if (suggestions === undefined || item === undefined) {
+      return;
+    }
+    expect(applySuggestion('/whoi', suggestions, item)).toEqual({ text: '/whois ', caret: 7 });
   });
 
   it('replaces the whole shortcode, colon included, and keeps what follows', () => {

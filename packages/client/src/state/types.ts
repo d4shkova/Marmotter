@@ -242,6 +242,15 @@ export interface NetworkState {
   readonly support: ISupport;
   readonly caps: CapState;
   readonly serverName: string;
+  /**
+   * How many channels the network says it has, from its sign-in summary.
+   *
+   * Undefined on a server that does not say. Kept because it is the one figure
+   * that lets the interface warn about a channel list *before* asking for it —
+   * "this network has 24,000 channels" is a reason somebody can act on, where
+   * "this might be large" is a hedge they will click past.
+   */
+  readonly channelCount: number | undefined;
   /** MOTD lines, collapsed into one expandable item by the interface. */
   readonly motd: readonly string[];
   /** Server-info numerics, shown in the server tab. */
