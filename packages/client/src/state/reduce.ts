@@ -115,6 +115,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     rawLog: [],
     directory: emptyDirectory(),
     invites: [],
+    ctcpVersions: new Map(),
   };
 }
 
@@ -813,8 +814,20 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
           now,
         );
 
+        // A version reply is the one piece of CTCP worth keeping: it is how the
+        // account panel learns which services package this network runs, and
+        // nothing in registration says.
+        const versions =
+          msg.command === 'NOTICE' && ctcp.command === 'VERSION' && ctcp.params !== ''
+            ? new Map(state.ctcpVersions).set(fold(sender, mapping), ctcp.params)
+            : state.ctcpVersions;
+
         return result(
-          { ...state, serverNotices: [...state.serverNotices, notice] },
+          {
+            ...state,
+            serverNotices: [...state.serverNotices, notice],
+            ctcpVersions: versions,
+          },
           answer === undefined ? [] : [`NOTICE ${sender} :${encodeCtcp(...splitReply(answer))}`],
         );
       }

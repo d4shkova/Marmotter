@@ -274,6 +274,15 @@ export interface NetworkState {
   readonly directory: ChannelDirectory;
 
   /**
+   * Version strings people have answered with, keyed by casemapped nick.
+   *
+   * Kept because it is the only reliable way to tell which services package a
+   * network runs: nothing in registration says so, and the account panel has to
+   * know before it can send the right commands.
+   */
+  readonly ctcpVersions: ReadonlyMap<string, string>;
+
+  /**
    * Invitations received and not yet acted on.
    *
    * Kept as state rather than only as a message, because CLAUDE.md asks for an

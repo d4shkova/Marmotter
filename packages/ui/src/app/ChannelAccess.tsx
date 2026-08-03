@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../primitives/Button.js';
 import { Checkbox } from '../primitives/Checkbox.js';
 import { EmptyState } from '../primitives/EmptyState.js';
+import { Spinner } from '../primitives/Spinner.js';
 import { Select } from '../primitives/Select.js';
 import { TextField } from '../primitives/TextField.js';
 import {
@@ -13,7 +14,7 @@ import {
   flagDiff,
   parseAccessListing,
 } from './chanserv.js';
-import { detectServices } from './services.js';
+import { detectServices, probeServices, servicesProbed } from './services.js';
 
 export interface ChannelAccessProps {
   readonly network: NetworkState;
@@ -64,14 +65,37 @@ export function ChannelAccess({
 
   // Asked for once when the panel opens. Refreshing on every render would send
   // a FLAGS query per keystroke elsewhere in the sheet.
+  // Which package this is has to be settled before the right list command can
+  // be sent, so the version question goes first and the list follows once the
+  // answer has arrived.
+  const probed = servicesProbed(network);
+  const askedVersion = useRef(false);
+  useEffect(() => {
+    if (probed || askedVersion.current) {
+      return;
+    }
+    askedVersion.current = true;
+    onSend(probeServices());
+  }, [probed, onSend]);
+
   const asked = useRef(false);
   useEffect(() => {
-    if (asked.current || commands.model === 'unsupported') {
+    if (asked.current || !probed || commands.model === 'unsupported') {
       return;
     }
     asked.current = true;
     onSend(commands.list(channel.name));
-  }, [commands, channel.name, onSend]);
+  }, [commands, channel.name, onSend, probed]);
+
+  if (!probed) {
+    return (
+      <div className={className}>
+        <div className="flex justify-center py-8">
+          <Spinner label="Asking the network how it stores permissions" />
+        </div>
+      </div>
+    );
+  }
 
   if (commands.model === 'unsupported') {
     return (

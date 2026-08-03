@@ -57,6 +57,16 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
+      // The Anope half of Phase 6's acceptance. InspIRCd's client port is what
+      // is polled; `run.sh` starts services behind it in the right order.
+      command: './e2e/anope/run.sh',
+      port: 6668,
+      reuseExistingServer: process.env['CI'] === undefined,
+      stdout: 'ignore',
+      stderr: 'pipe',
+      timeout: 60_000,
+    },
+    {
       command: 'pnpm --filter @marmotter/web preview --port 4173 --strictPort',
       port: 4173,
       reuseExistingServer: process.env['CI'] === undefined,

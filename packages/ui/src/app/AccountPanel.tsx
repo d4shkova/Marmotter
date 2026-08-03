@@ -1,11 +1,17 @@
 import type { NetworkState } from '@marmotter/client';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ListGroup } from '../layout/ListGroup.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { Tabs } from '../primitives/Tabs.js';
 import { TextField } from '../primitives/TextField.js';
-import { accountStatus, detectServices, servicesCommands } from './services.js';
+import {
+  accountStatus,
+  detectServices,
+  probeServices,
+  servicesCommands,
+  servicesProbed,
+} from './services.js';
 
 export interface AccountPanelProps {
   readonly network: NetworkState;
@@ -38,6 +44,18 @@ export function AccountPanel({ network, onSend, className }: AccountPanelProps):
   const status = accountStatus(network);
 
   const connected = network.phase === 'registered';
+
+  // Nothing a client sees during registration names the services package, so
+  // the panel asks once when it opens. Doing it here rather than on connect
+  // means somebody who never opens this never sends it.
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!connected || asked.current || servicesProbed(network)) {
+      return;
+    }
+    asked.current = true;
+    onSend(probeServices());
+  }, [connected, network, onSend]);
 
   return (
     <div className={className}>

@@ -1,7 +1,7 @@
 import { type NetworkState, initialNetworkState } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport } from '@marmotter/protocol';
 import { describe, expect, it } from 'vitest';
-import { detectServices, servicesCommands } from './services.js';
+import { detectServices, probeServices, servicesCommands, servicesProbed } from './services.js';
 
 const network = (overrides: Partial<NetworkState> = {}): NetworkState => ({
   ...initialNetworkState('n', 'TestNet', 'marmot'),
@@ -11,18 +11,31 @@ const network = (overrides: Partial<NetworkState> = {}): NetworkState => ({
 
 const withMotd = (...lines: string[]) => network({ motd: lines });
 
+/** A network that has answered a version question from NickServ. */
+const answered = (version: string) => network({ ctcpVersions: new Map([['nickserv', version]]) });
+
 describe('working out which account system a network runs', () => {
-  it('recognises Atheme from what the network says about itself', () => {
-    expect(detectServices(withMotd('Services provided by Atheme IRC Services'))).toBe('atheme');
+  // The authoritative source, and the only one that works on a network which
+  // never mentions its services in prose — which, tested against a real
+  // Anope-on-InspIRCd, is every network by default.
+  it('reads the package out of the services version reply', () => {
+    expect(
+      detectServices(
+        answered('Anope-2.0.12 services.example :InspIRCd 3 - (enc_sha256) -- build #1'),
+      ),
+    ).toBe('anope');
+    expect(detectServices(answered('atheme-services-7.2.12. services.example'))).toBe('atheme');
   });
 
-  it('recognises Anope', () => {
-    expect(detectServices(withMotd('This network runs Anope 2.0'))).toBe('anope');
+  it('asks NickServ, and only once', () => {
+    expect(probeServices()).toBe('PRIVMSG NickServ :\u0001VERSION\u0001');
+    expect(servicesProbed(network())).toBe(false);
+    expect(servicesProbed(answered('Anope-2.0.12'))).toBe(true);
   });
 
-  // ergo names itself in ISUPPORT, which arrives before anybody has spoken —
-  // the only signal available at connect time.
-  it('recognises ergo from ISUPPORT before any notice arrives', () => {
+  // ergo is its own ircd as well as its own services, and says so in `005`
+  // before anybody has spoken.
+  it('recognises ergo from ISUPPORT without asking', () => {
     expect(
       detectServices(
         network({ support: applyISupport(DEFAULT_ISUPPORT, ['ERGO', 'CHANTYPES=#']) }),
@@ -30,7 +43,9 @@ describe('working out which account system a network runs', () => {
     ).toBe('ergo');
   });
 
-  it('recognises ergo under its old name', () => {
+  it('still reads a network that names its services in the MOTD', () => {
+    expect(detectServices(withMotd('Services provided by Atheme IRC Services'))).toBe('atheme');
+    expect(detectServices(withMotd('This network runs Anope 2.0'))).toBe('anope');
     expect(detectServices(withMotd('Powered by oragono'))).toBe('ergo');
   });
 
@@ -40,6 +55,14 @@ describe('working out which account system a network runs', () => {
     expect(detectServices(withMotd('Welcome to a network that says nothing useful'))).toBe(
       'unknown',
     );
+  });
+
+  it('lets the version reply overrule what the MOTD happened to say', () => {
+    const confusing = {
+      ...withMotd('Welcome. This channel is about Atheme development.'),
+      ctcpVersions: new Map([['nickserv', 'Anope-2.0.12 services.example']]),
+    };
+    expect(detectServices(confusing)).toBe('anope');
   });
 });
 

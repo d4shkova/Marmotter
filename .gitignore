@@ -33,3 +33,5 @@ e2e/.ergo.db
 e2e/*.pem
 test-results/
 playwright-report/
+e2e/anope/.run/
+core

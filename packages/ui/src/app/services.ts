@@ -15,6 +15,7 @@
  */
 
 import type { NetworkState } from '@marmotter/client';
+import { fold } from '@marmotter/protocol';
 
 export type ServicesPackage = 'atheme' | 'anope' | 'ergo' | 'unknown';
 
@@ -38,38 +39,66 @@ export interface ServicesCommands {
 }
 
 /**
- * What a network's own words say about its services.
+ * Which package a network runs, from its services' own version reply.
  *
- * Read from server notices, which is where services introduce themselves — the
- * MOTD and the greeting NickServ sends on connect both name the package on
- * every implementation that has a name worth matching. ISUPPORT is checked
- * first for ergo, which is the one package that says so there.
+ * BUILD_PLAN says "detected from version replies", and testing against a real
+ * Anope showed why nothing else will do: **nothing a client sees during
+ * registration names the services package.** Not the MOTD, not `RPL_MYINFO`,
+ * not ISUPPORT. Asking NickServ for its version answers plainly —
+ * `Anope-2.0.12 services.example :InspIRCd 3 ...` — and is the one source that
+ * works on a network that has never mentioned its services in prose.
+ *
+ * `probeServices` sends that question; this reads the answer. Where no answer
+ * has arrived the fallbacks are tried, because a network that *does* say so in
+ * its MOTD should not have to be asked.
  */
 export function detectServices(network: NetworkState): ServicesPackage {
-  // ergo advertises its own name in `005`, which is both the most reliable
-  // signal available and the only one that arrives before anybody speaks.
+  const answered = network.ctcpVersions.get(fold('NickServ', network.support.caseMapping));
+  const fromVersion = answered === undefined ? undefined : packageIn(answered);
+  if (fromVersion !== undefined) {
+    return fromVersion;
+  }
+
+  // ergo is its own ircd as well as its own services, and says so in `005`
+  // before anybody has spoken — the only signal that arrives that early.
   const raw = [...network.support.raw.keys()].join(' ').toLowerCase();
-  if (raw.includes('ergo')) {
-    return 'ergo';
-  }
-  if (network.serverName.toLowerCase().includes('ergo')) {
+  if (raw.includes('ergo') || network.serverName.toLowerCase().includes('ergo')) {
     return 'ergo';
   }
 
-  const said = [...network.motd, ...network.serverNotices.map((notice) => notice.text)]
-    .join('\n')
-    .toLowerCase();
+  const said = [...network.motd, ...network.serverNotices.map((notice) => notice.text)].join('\n');
+  return packageIn(said) ?? 'unknown';
+}
 
-  if (said.includes('atheme')) {
+/** The package named in a piece of text, if one is. */
+function packageIn(text: string): ServicesPackage | undefined {
+  const lower = text.toLowerCase();
+  if (lower.includes('atheme')) {
     return 'atheme';
   }
-  if (said.includes('anope')) {
+  if (lower.includes('anope')) {
     return 'anope';
   }
-  if (said.includes('ergo') || said.includes('oragono')) {
+  if (lower.includes('ergo') || lower.includes('oragono')) {
     return 'ergo';
   }
-  return 'unknown';
+  return undefined;
+}
+
+/**
+ * The line that asks the account service what it is.
+ *
+ * A CTCP to a service is unusual but harmless, and it is answered by every
+ * package worth detecting. The panels send it once when they open rather than
+ * on connect, so a person who never opens them never asks.
+ */
+export function probeServices(): string {
+  return `PRIVMSG NickServ :\u0001VERSION\u0001`;
+}
+
+/** Whether the version answer has already arrived, so nobody asks twice. */
+export function servicesProbed(network: NetworkState): boolean {
+  return network.ctcpVersions.has(fold('NickServ', network.support.caseMapping));
 }
 
 /**

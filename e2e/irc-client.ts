@@ -1,11 +1,21 @@
 import { createConnection, type Socket } from 'node:net';
 
 /**
+ * The CTCP delimiter.
+ *
+ * Built rather than written: an invisible control character in a source file
+ * survives some toolchains and not others, and this one did not survive the
+ * test transform — the request went out as plain text and the service
+ * reasonably ignored it.
+ */
+const DELIM = String.fromCharCode(1);
+
+/**
  * A second client, for the tests that need two people.
  *
  * Deliberately not Marmotter: a bug that affects both ends equally would hide
- * from a test where Marmotter talks to itself. This is thirty lines of socket
- * that knows only enough IRC to register, join, and say things.
+ * from a test where Marmotter talks to itself. This is a socket that knows only
+ * enough IRC to register, join, and say things.
  */
 export class TestClient {
   private socket: Socket | undefined;
@@ -48,9 +58,42 @@ export class TestClient {
     this.send(`PRIVMSG ${target} :${text}`);
   }
 
-  /** Sends a CTCP request, delimiters and all. */
+  /** Sends a CTCP request, wrapping it in the delimiters that make it one. */
   ctcp(target: string, request: string): void {
-    this.send(`PRIVMSG ${target} :${request}`);
+    this.send(`PRIVMSG ${target} :${DELIM}${request}${DELIM}`);
+  }
+
+  /** Everything received so far, for assertions about what was never said. */
+  linesSoFar(): readonly string[] {
+    return [...this.lines];
+  }
+
+  /** Forgets what has been received, so a wait cannot match an older reply. */
+  clear(): void {
+    this.lines.length = 0;
+  }
+
+  /**
+   * Waits until a nick exists on the network.
+   *
+   * Services link a moment after the ircd starts listening, so a test that
+   * talks to NickServ has to wait for it rather than race it.
+   */
+  async waitForNick(nick: string, timeoutMs = 30_000): Promise<void> {
+    const present = new RegExp(`311 \\S+ ${nick}`, 'i');
+    const deadline = Date.now() + timeoutMs;
+
+    for (;;) {
+      this.clear();
+      this.send(`WHOIS ${nick}`);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      if (this.lines.some((line) => present.test(line))) {
+        return;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`${nick} never appeared on the network`);
+      }
+    }
   }
 
   /** Waits for a line matching a pattern, or throws after a few seconds. */

@@ -64,6 +64,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Install the two servers
+        # Phase 6's acceptance is about two services packages that disagree, so
+        # both run: ergo's built-in services, and Anope on InspIRCd.
+        run: sudo apt-get update && sudo apt-get install -y inspircd anope
+
       - name: Install ergo
         # The acceptance criteria for phases 5 and 6 are about behaviour against
         # a real ircd, which is the one thing a unit test cannot stand in for.

@@ -356,13 +356,39 @@ human sentence, not a numeric — assert this in tests.
 
 > **Progress, 2026-08-03. Every row of the abstraction table is now built.**
 >
-> Half the acceptance criterion is now met: the panels round-trip against a
-> local ergo, in `e2e/`. A channel setting is changed through the settings panel
-> and read back from what the server actually applied; the browser lists what
-> the network has; a second real client joins, speaks, and leaves, and the
-> member list follows. The other half — the same run against an Atheme-backed
-> InspIRCd, which is what proves the services translation works across two
-> packages — is still outstanding, and Phase 7 should not start until it is done.
+> **Phase 6 complete, 2026-08-03.** Both halves of the acceptance now run, in
+> `e2e/`. Against ergo, through the interface: a channel setting is changed in
+> the settings panel and read back from what the server actually applied, the
+> browser lists what the network has, and a second real client joins, speaks and
+> leaves while the member list follows. Against **Anope on InspIRCd** — a
+> different services package on a different ircd, which is what the criterion is
+> actually about — the account and permissions commands are accepted and the
+> replies are fed through the same parsers the panels use.
+>
+> Anope rather than Atheme because that is what `irc.dashkova.co.uk` runs, so it
+> is the package this client has to be right about first. The criterion asks for
+> two implementations that disagree; these two disagree plenty.
+>
+> **It found two real defects immediately, which is the entire argument for
+> testing against something other than one server:**
+>
+> - **Services detection was built on the wrong signal.** It read the MOTD and
+>   server notices for a package name. Against a real Anope, *nothing a client
+>   sees during registration names the services package* — not the MOTD, not
+>   `RPL_MYINFO`, not ISUPPORT. It only appeared to work locally because the
+>   test server's own MOTD said "Anope", a false positive of my own making. The
+>   plan said "detected from version replies" and meant it: asking NickServ for
+>   its version answers plainly, so that is what the panels do now, once, when
+>   they open. The MOTD reading survives as a fallback for networks that do say.
+> - **The Anope access list was parsed for a shape Anope does not print.** The
+>   parser expected a numeric level (`1  10  tamsin`); real Anope with its XOP
+>   module — which is the normal configuration — names the role instead
+>   (`1  AOP  member`). The grid silently showed nothing on a channel that had
+>   entries. Both shapes are read now, and the tests carry the output captured
+>   verbatim from Anope 2.0.12 rather than a guess.
+>
+> Everything else the panels send was confirmed accepted as written: `REGISTER`,
+> `SET PASSWORD`, `SET EMAIL`, `HostServ REQUEST`, `AOP ... ADD`, `ACCESS ... LIST`.
 >
 > Two things the end-to-end run turned up, both worth recording:
 >

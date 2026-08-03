@@ -55,12 +55,47 @@ describe('reading a service’s reply', () => {
     ]);
   });
 
-  it('reads an Anope access listing, showing the role rather than a bare number', () => {
+  // Captured verbatim from Anope 2.0.12 with its XOP module loaded, which is
+  // what a real network runs. The level column holds the role's own name here,
+  // not a number — reading it as a number found nothing at all, and the panel
+  // showed an empty grid on a channel that had entries.
+  it('reads an Anope access listing that names the role', () => {
+    const entries = parseAccessListing(
+      [
+        'Access list for #marmotter:',
+        'Number  Level  Mask',
+        '1       AOP    tamsin',
+        '2       VOP    jonquil',
+        'End of access list',
+      ],
+      'roles',
+    );
+    expect(entries).toEqual([
+      { target: 'tamsin', flags: '', role: 'AOP', founder: false },
+      { target: 'jonquil', flags: '', role: 'VOP', founder: false },
+    ]);
+  });
+
+  // The same command prints a bare number where access is kept by level rather
+  // than by XOP, and a number on its own means nothing to anybody.
+  it('reads an Anope access listing that gives a bare level', () => {
     const entries = parseAccessListing(
       ['Access list for #marmotter:', '  Num   Level    Mask', '  1     10       tamsin'],
       'roles',
     );
     expect(entries).toEqual([{ target: 'tamsin', flags: '', role: 'SOP', founder: false }]);
+  });
+
+  // Anope brackets the name in bold when it confirms a change, and a mask read
+  // with the code still on it would be sent back as a name it does not have.
+  it('strips the formatting services put in their tables', () => {
+    expect(parseAccessListing(['1       AOP    \u0002tamsin\u0002'], 'roles')).toEqual([
+      { target: 'tamsin', flags: '', role: 'AOP', founder: false },
+    ]);
+  });
+
+  it('does not read the header row as somebody’s access', () => {
+    expect(parseAccessListing(['Number  Level  Mask', 'End of access list'], 'roles')).toEqual([]);
   });
 
   it('reads an ergo AMODE listing', () => {
@@ -83,6 +118,8 @@ describe('reading a service’s reply', () => {
     expect(roleForLevel(4)).toBe('HOP');
     expect(roleForLevel(5)).toBe('AOP');
     expect(roleForLevel(10)).toBe('SOP');
+    // Anope's founder level, which is a rank rather than a role.
+    expect(roleForLevel(10_000)).toBe('QOP');
   });
 });
 

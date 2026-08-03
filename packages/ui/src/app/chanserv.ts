@@ -14,6 +14,7 @@
  * same panel and the same commands underneath.
  */
 
+import { stripFormatting } from './format.js';
 import type { ServicesPackage } from './services.js';
 
 export type AccessModel = 'flags' | 'roles' | 'unsupported';
@@ -58,7 +59,11 @@ export const ANOPE_ROLES: readonly Role[] = [
   { value: 'HOP', label: 'Half-op', detail: 'Can remove people and set the topic.' },
   { value: 'AOP', label: 'Operator', detail: 'Runs the channel day to day.' },
   { value: 'SOP', label: 'Senior operator', detail: 'Can also change who else can do what.' },
+  { value: 'QOP', label: 'Owner', detail: 'Everything, including who else can do what.' },
 ];
+
+/** Role names Anope prints in the level column when its XOP module is loaded. */
+const ANOPE_ROLE_NAMES: ReadonlySet<string> = new Set(ANOPE_ROLES.map((role) => role.value));
 
 export const ERGO_ROLES: readonly Role[] = [
   { value: '+v', label: 'Voiced', detail: 'Speaks when the channel is moderated.' },
@@ -160,7 +165,13 @@ export function parseAccessListing(
 ): readonly AccessEntry[] {
   const entries: AccessEntry[] = [];
 
-  for (const line of lines) {
+  for (const raw of lines) {
+    // Services bracket names in bold. A mask read with the code still attached
+    // would be sent back as a name the service does not have, so the shapes
+    // below are matched against what a person sees rather than what the wire
+    // carried.
+    const line = stripFormatting(raw);
+
     if (model === 'flags') {
       // Atheme: `1     tamsin                 +AFORefiorstv (FOUNDER)`
       const match = /^\s*\d+\s+(\S+)\s+\+(\S+)/.exec(line);
@@ -176,17 +187,26 @@ export function parseAccessListing(
       continue;
     }
 
-    // Anope: `1     10       tamsin` — the level is a number, and the panel
-    // shows the nearest role rather than the raw level, which means nothing.
-    const numbered = /^\s*\d+\s+(\d+)\s+(\S+)/.exec(line);
-    if (numbered !== null) {
-      entries.push({
-        target: numbered[2] ?? '',
-        flags: '',
-        role: roleForLevel(Number.parseInt(numbered[1] ?? '0', 10)),
-        founder: Number.parseInt(numbered[1] ?? '0', 10) >= 10_000,
-      });
-      continue;
+    // Anope: `Number  Level  Mask`, and the level column is either the role's
+    // own name (`AOP`) where the XOP module is loaded — which is what a real
+    // Anope prints — or a bare number where access is kept by level. Both
+    // shapes appear in the wild, so both are read; a number is shown as the
+    // role it corresponds to, because the number on its own means nothing to
+    // anybody.
+    const row = /^\s*\d+\s+(\S+)\s+(\S+)/.exec(line);
+    if (row !== null) {
+      const level = row[1] ?? '';
+      const named = ANOPE_ROLE_NAMES.has(level.toUpperCase());
+      const numeric = /^\d+$/.test(level);
+      if (named || numeric) {
+        entries.push({
+          target: row[2] ?? '',
+          flags: '',
+          role: named ? level.toUpperCase() : roleForLevel(Number.parseInt(level, 10)),
+          founder: numeric ? Number.parseInt(level, 10) >= 10_000 : level.toUpperCase() === 'QOP',
+        });
+        continue;
+      }
     }
 
     // ergo: `+o  tamsin`
@@ -207,6 +227,9 @@ export function parseAccessListing(
  * shows the service's own reply alongside.
  */
 export function roleForLevel(level: number): string {
+  if (level >= 10_000) {
+    return 'QOP';
+  }
   if (level >= 10) {
     return 'SOP';
   }
