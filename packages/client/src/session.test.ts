@@ -105,6 +105,38 @@ describe('registration', () => {
     expect(transport.connected?.endpoint.host).toBe('irc.test');
   });
 
+  it('reports the connecting phase before the socket resolves', async () => {
+    const transport = new FakeTransport();
+    let phaseWhileConnecting: string | undefined;
+    // A transport whose connect never resolves, so the phase can be read while
+    // the handshake is still in flight.
+    transport.connect = () =>
+      new Promise<void>(() => {
+        phaseWhileConnecting = session.state.phase;
+      });
+    const session = createSession({ profile: profile(), transport, now });
+
+    void session.connect();
+    await settle();
+    expect(phaseWhileConnecting).toBe('connecting');
+    expect(session.state.phase).toBe('connecting');
+  });
+
+  it('records why a connection that never opened failed', async () => {
+    const transport = new FakeTransport();
+    transport.connect = () => Promise.reject(new Error('connection refused'));
+    const session = createSession({ profile: profile(), transport, now });
+
+    await expect(session.connect()).rejects.toThrow('connection refused');
+    // The phase returns to disconnected with the reason attached, rather than
+    // sitting on `connecting` forever.
+    expect(session.state.phase).toBe('disconnected');
+    expect(session.state.lastClose).toEqual({
+      kind: 'network-error',
+      message: 'connection refused',
+    });
+  });
+
   it('sends a server password before anything else', async () => {
     const transport = new FakeTransport();
     const session = createSession({

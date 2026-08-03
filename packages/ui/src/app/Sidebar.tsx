@@ -18,6 +18,8 @@ export interface SidebarProps {
   readonly onReorder: (order: readonly string[]) => void;
   readonly onAddNetwork: () => void;
   readonly onOpenSettings: () => void;
+  /** Whether the settings pane is the one showing, so the gear reads as pressed. */
+  readonly settingsOpen?: boolean;
   readonly onBrowseChannels?: (networkId: string) => void;
   readonly className?: string;
 }
@@ -56,6 +58,7 @@ export function Sidebar({
   onReorder,
   onAddNetwork,
   onOpenSettings,
+  settingsOpen = false,
   onBrowseChannels,
   className,
 }: SidebarProps): ReactNode {
@@ -96,6 +99,7 @@ export function Sidebar({
           <IconButton
             label="Settings"
             size="small"
+            pressed={settingsOpen}
             icon={<span aria-hidden="true">⚙</span>}
             onClick={onOpenSettings}
           />

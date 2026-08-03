@@ -17,6 +17,7 @@ import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
+import { Settings } from './app/Settings.js';
 import { Sidebar } from './app/Sidebar.js';
 import { buildRows } from './app/rows.js';
 import { Decoder } from './decoder/Decoder.js';
@@ -409,6 +410,27 @@ describe('every component passes axe', () => {
       />,
     ],
     ['RawLog', <RawLog key="rl" network={networkFixture()} onCopy={noop} />],
+    [
+      'Settings',
+      <Settings
+        key="set"
+        networks={[networkFixture()]}
+        appearance={{
+          nickColumnWidth: 12,
+          alignNicksRight: true,
+          foldEvents: true,
+          showTimestamps: true,
+          unfurlLinks: false,
+          highlightWords: [],
+          notificationsEnabled: true,
+        }}
+        onAppearanceChange={noop}
+        onReconnect={noop}
+        onDisconnect={noop}
+        onRemove={noop}
+        onAddNetwork={noop}
+      />,
+    ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
   ])('%s', async (_name, ui) => {
     await expectNoViolations(ui);

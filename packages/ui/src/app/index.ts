@@ -19,5 +19,6 @@ export * from './MessageList.js';
 export * from './MessageRow.js';
 export * from './RawLog.js';
 export * from './rows.js';
+export * from './Settings.js';
 export * from './Sidebar.js';
 export * from './view-store.js';

@@ -464,13 +464,33 @@ export function createSession(options: SessionOptions): Session {
     on: (callback) => events.add(callback),
 
     async connect() {
-      await transport.connect({
-        endpoint: profile.servers[0] ?? {
-          host: '',
-          port: 6697,
-          tls: { mode: 'tls', verifyCert: true },
-        },
-      });
+      // Announced before the socket is even attempted, so the interface can
+      // show "connecting" rather than an indefinite blank. Without this the
+      // phase sits at `disconnected` throughout the TCP and TLS handshake, and
+      // a failure is indistinguishable from still trying.
+      publish({ ...state, phase: 'connecting', lastClose: undefined });
+
+      try {
+        await transport.connect({
+          endpoint: profile.servers[0] ?? {
+            host: '',
+            port: 6697,
+            tls: { mode: 'tls', verifyCert: true },
+          },
+        });
+      } catch (error) {
+        // A transport that rejects its connect — a refused socket, a TLS
+        // failure surfaced synchronously — never emits a close event, so the
+        // phase would otherwise stay stuck at `connecting`.
+        const message = error instanceof Error ? error.message : String(error);
+        publish({
+          ...state,
+          phase: 'disconnected',
+          lastClose: { kind: 'network-error', message },
+        });
+        throw error;
+      }
+
       events.emit({ kind: 'connected' });
 
       const opening = startRegistration(state, profile.identity);

@@ -17,6 +17,7 @@ import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { MessageRow } from './MessageRow.js';
 import { RawLog } from './RawLog.js';
+import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
 import { buildRows } from './rows.js';
 import type { TargetRef, Unread } from './view-store.js';
@@ -116,6 +117,12 @@ const network = (): NetworkState => ({
       line: ':jonquil!~j@host.example PRIVMSG #marmotter :morning all',
     },
   ],
+});
+
+const failedNetwork = (): NetworkState => ({
+  ...initialNetworkState('dashkova', 'dashkova.co.uk', 'marmot'),
+  phase: 'disconnected',
+  lastClose: { kind: 'network-error', message: 'connection refused' },
 });
 
 const noUnread = (): Unread => ({ count: 0, highlight: false });
@@ -365,4 +372,33 @@ export const FirstRun: StoryObj = {
       />
     </div>
   ),
+};
+
+export const SettingsScreen: StoryObj = {
+  render: function SettingsScreen() {
+    const [appearance, setAppearance] = useState({
+      nickColumnWidth: 12,
+      alignNicksRight: true,
+      foldEvents: true,
+      showTimestamps: true,
+      unfurlLinks: false,
+      highlightWords: [] as readonly string[],
+      notificationsEnabled: true,
+    });
+
+    return (
+      <div className="h-[36rem] w-[40rem] overflow-hidden rounded-card border border-[var(--separator)]">
+        <Settings
+          className="h-full overflow-y-auto"
+          networks={[network(), failedNetwork()]}
+          appearance={appearance}
+          onAppearanceChange={(changes) => setAppearance((current) => ({ ...current, ...changes }))}
+          onReconnect={() => {}}
+          onDisconnect={() => {}}
+          onRemove={() => {}}
+          onAddNetwork={() => {}}
+        />
+      </div>
+    );
+  },
 };

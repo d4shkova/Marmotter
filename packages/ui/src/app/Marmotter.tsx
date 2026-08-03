@@ -21,6 +21,7 @@ import { Composer } from './Composer.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { RawLog } from './RawLog.js';
+import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
 import { parseInput } from './commands.js';
 import {
@@ -118,29 +119,55 @@ export function Marmotter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networks]);
 
+  // Building the session, registering it, and dialling out. Shared by adding a
+  // network and reconnecting one, so a reconnect gets a fresh transport rather
+  // than reusing a spent socket.
+  const startSession = useCallback(
+    (profile: NetworkProfile): void => {
+      const built: Session = createSession({
+        profile,
+        transport: createTransport(profile),
+        ...(resolveSecret === undefined ? {} : { resolveSecret }),
+      });
+
+      built.on((sessionEvent) => {
+        if (sessionEvent.kind === 'auth-failed') {
+          toast(sessionEvent.reason, 'error');
+        } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind === 'tls-error') {
+          toast(
+            `Could not verify ${profile.name}'s certificate. Check the network's security setting.`,
+            'error',
+          );
+        }
+      });
+
+      registry.addProfile(profile, built);
+      void built.connect().catch((error: unknown) => {
+        toast(`Could not reach ${profile.name}. ${describe(error)}`, 'error');
+      });
+    },
+    [createTransport, resolveSecret, registry, toast],
+  );
+
   const addNetwork = (profile: NetworkProfile): void => {
-    const built: Session = createSession({
-      profile,
-      transport: createTransport(profile),
-      ...(resolveSecret === undefined ? {} : { resolveSecret }),
-    });
-
-    built.on((sessionEvent) => {
-      if (sessionEvent.kind === 'auth-failed') {
-        toast(sessionEvent.reason, 'error');
-      } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind === 'tls-error') {
-        toast(
-          `Could not verify ${profile.name}'s certificate. Check the network's security setting.`,
-          'error',
-        );
-      }
-    });
-
-    registry.addProfile(profile, built);
+    startSession(profile);
     view.select({ networkId: profile.id, target: undefined });
-    void built.connect().catch((error: unknown) => {
-      toast(`Could not reach ${profile.name}. ${describe(error)}`, 'error');
-    });
+  };
+
+  const reconnect = (networkId: string): void => {
+    const profile = registry.profiles.get(networkId);
+    if (profile !== undefined) {
+      startSession(profile);
+    }
+  };
+
+  const removeNetwork = (networkId: string): void => {
+    registry.removeProfile(networkId);
+    view.forgetNetwork(networkId);
+  };
+
+  const disconnect = (networkId: string): void => {
+    registry.sessionOf(networkId)?.disconnect();
   };
 
   const send = (text: string): void => {
@@ -228,7 +255,18 @@ export function Marmotter({
         }
       />
 
-      {view.pane === 'raw-log' && network !== undefined ? (
+      {view.pane === 'settings' ? (
+        <Settings
+          className="flex-1 overflow-y-auto"
+          networks={networks}
+          appearance={view.appearance}
+          onAppearanceChange={view.updateAppearance}
+          onReconnect={reconnect}
+          onDisconnect={disconnect}
+          onRemove={removeNetwork}
+          onAddNetwork={() => setAdding(true)}
+        />
+      ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
       ) : network === undefined || selection === undefined ? (
         <EmptyState
@@ -244,7 +282,11 @@ export function Marmotter({
       ) : (
         <>
           {conversation === undefined ? (
-            <ServerPane network={network} />
+            <ServerPane
+              network={network}
+              onReconnect={() => reconnect(network.id)}
+              onOpenRawLog={() => view.setPane('raw-log')}
+            />
           ) : (
             <MessageList
               network={network}
@@ -313,7 +355,8 @@ export function Marmotter({
             onToggleCollapsed={view.toggleCollapsed}
             onReorder={view.reorderNetworks}
             onAddNetwork={() => setAdding(true)}
-            onOpenSettings={() => view.setPane('settings')}
+            onOpenSettings={() => view.setPane(view.pane === 'settings' ? 'chat' : 'settings')}
+            settingsOpen={view.pane === 'settings'}
           />
         }
         aside={
@@ -353,17 +396,69 @@ export function Marmotter({
 }
 
 /** The server tab: the network's own notices and MOTD. */
-function ServerPane({ network }: { network: NetworkState }): ReactNode {
+function ServerPane({
+  network,
+  onReconnect,
+  onOpenRawLog,
+}: {
+  network: NetworkState;
+  onReconnect: () => void;
+  onOpenRawLog?: () => void;
+}): ReactNode {
+  // A dropped or refused connection is shown as what it is, with the reason and
+  // a way to try again — not as an indefinite "connecting" that never resolves,
+  // which is what the server tab used to do for every failure.
+  if (network.phase === 'disconnected' && network.lastClose?.kind !== 'user') {
+    return (
+      <EmptyState
+        className="flex-1"
+        title={`Couldn't connect to ${network.name}`}
+        description={describeClose(network)}
+        action={
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={onReconnect}>
+              Try again
+            </Button>
+            {onOpenRawLog === undefined ? null : (
+              <Button variant="secondary" onClick={onOpenRawLog}>
+                See what happened
+              </Button>
+            )}
+          </div>
+        }
+      />
+    );
+  }
+
+  if (network.phase === 'connecting' || network.phase === 'registering') {
+    return (
+      <EmptyState
+        className="flex-1"
+        title={network.phase === 'connecting' ? 'Connecting…' : 'Signing in…'}
+        description={`Reaching ${network.name}.`}
+      />
+    );
+  }
+
   if (network.serverNotices.length === 0 && network.motd.length === 0) {
     return (
       <EmptyState
         className="flex-1"
-        title={network.phase === 'registered' ? 'Connected' : 'Connecting'}
+        title={network.phase === 'registered' ? 'Connected' : 'Not connected'}
         description={
           network.phase === 'registered'
-            ? 'Join a channel from the sidebar to start talking.'
-            : 'Waiting for the server.'
+            ? 'Join a channel from the sidebar, or type /join #channel below.'
+            : 'This network is not connected.'
         }
+        {...(network.phase === 'registered'
+          ? {}
+          : {
+              action: (
+                <Button variant="primary" onClick={onReconnect}>
+                  Connect
+                </Button>
+              ),
+            })}
       />
     );
   }
@@ -401,3 +496,23 @@ function ServerPane({ network }: { network: NetworkState }): ReactNode {
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : 'The connection could not be opened.';
+
+/** A close reason as a sentence, for the server tab. */
+function describeClose(network: NetworkState): string {
+  const close = network.lastClose;
+  if (close === undefined || close.kind === 'user') {
+    return 'Not connected.';
+  }
+  switch (close.kind) {
+    case 'tls-error':
+      return `The server's certificate could not be verified: ${close.message}. If this is your own server, change its security setting when you add it.`;
+    case 'timeout':
+      return 'The server did not respond in time. It may be down, or the address or port may be wrong.';
+    case 'server':
+      return 'The server closed the connection before sign-in finished.';
+    case 'network-error':
+      return close.message === ''
+        ? 'The server could not be reached. Check the address and port.'
+        : `The server could not be reached: ${close.message}`;
+  }
+}
