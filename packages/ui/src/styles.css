@@ -10,6 +10,19 @@
 @import 'tailwindcss';
 @import './tokens.css';
 
+/*
+ * Where the class names live.
+ *
+ * Stated rather than left to Tailwind's automatic detection, which roots
+ * itself at whatever imports this stylesheet — the desktop app, the web app,
+ * or Storybook. Every component is in this package, so none of those roots
+ * finds them, and the result is a stylesheet with tokens and a reset in it and
+ * no utilities at all: the interface renders as a column of unstyled text.
+ *
+ * Each app adds its own `@source` for its own files.
+ */
+@source "./";
+
 @theme inline {
   --color-bg-base: var(--bg-base);
   --color-bg-elevated: var(--bg-elevated);
