@@ -91,12 +91,75 @@ pnpm install
 pnpm tauri build
 ```
 
-The bundler produces whatever the machine you are on can make. On Windows that
-is an MSI and an NSIS installer, in
-`target\release\bundle\msi\` and `target\release\bundle\nsis\`; on Linux a
-`.deb`, an `.rpm` and an AppImage under `target/release/bundle/`.
+The bundler produces whatever the machine you are on can make. There is no
+cross-compiling here: a Linux build has to run on Linux and a Windows build on
+Windows.
 
-Windows needs three things installed first, none of which are Marmotter's:
+### Linux
+
+Three things first, none of which are Marmotter's. On Debian or Ubuntu:
+
+```sh
+# 1. The Tauri system libraries. WebKitGTK is the webview the shell renders in.
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libayatana-appindicator3-dev librsvg2-dev patchelf
+
+# 2. Rust, for the transport crate and the shell.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# 3. Node 22+ and pnpm 10+, however you normally install them.
+corepack enable && corepack prepare pnpm@10 --activate
+```
+
+Then:
+
+```sh
+pnpm install
+pnpm tauri build
+```
+
+That produces all three Linux formats:
+
+```
+target/release/bundle/deb/Marmotter_0.1.0_amd64.deb
+target/release/bundle/rpm/Marmotter-0.1.0-1.x86_64.rpm
+target/release/bundle/appimage/Marmotter_0.1.0_amd64.AppImage
+```
+
+with the unbundled binary at `target/release/marmotter-desktop`, which runs on
+its own if you would rather not install anything.
+
+Pick a subset when you do not want all three — the AppImage takes the longest
+and is by far the largest, because it carries its own GTK and WebKit:
+
+```sh
+pnpm tauri build --bundles deb           # deb only
+pnpm tauri build --bundles deb,rpm       # both packages, no AppImage
+```
+
+Two things worth knowing. The AppImage bundler downloads `linuxdeploy` and its
+GTK plugin on first use, so that one format needs network access at bundle
+time; `deb` and `rpm` do not. And the `.deb` declares `libwebkit2gtk-4.1-0` and
+`libgtk-3-0` as its runtime dependencies, so it installs on Debian 12 and
+Ubuntu 22.04 or newer, but not on anything still shipping the WebKitGTK 4.0
+series.
+
+Install and run what you built:
+
+```sh
+sudo apt install ./target/release/bundle/deb/Marmotter_0.1.0_amd64.deb
+marmotter-desktop
+```
+
+It also lands in the applications menu as Marmotter.
+
+Verified on Ubuntu 22.04 in CI and on Ubuntu 24.04 by hand. For other distros,
+the equivalent packages are listed in
+[Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+### Windows
 
 | Needed                                                    | Why                                                   |
 | --------------------------------------------------------- | ----------------------------------------------------- |
@@ -104,7 +167,12 @@ Windows needs three things installed first, none of which are Marmotter's:
 | Visual Studio Build Tools, "Desktop development with C++" | What Rust links against on Windows.                   |
 | WebView2 runtime                                          | Already present on Windows 11 and current Windows 10. |
 
-For a build without installing any of that, push a tag and let CI do it:
+`pnpm tauri build` then produces an MSI and an NSIS installer, in
+`target\release\bundle\msi\` and `target\release\bundle\nsis\`.
+
+### Or let CI do it
+
+For a build without installing any of the above, push a tag:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
@@ -125,12 +193,10 @@ shell with the frontend hot-reloading, and no bundle step.
 | Rust | stable  | desktop shell, transport crate |
 | Go   | 1.24+   | the web relay                  |
 
-On Debian or Ubuntu the desktop shell also needs the Tauri system libraries:
-
-```sh
-sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libayatana-appindicator3-dev librsvg2-dev patchelf
-```
+The desktop shell also needs its platform's system libraries — WebKitGTK and
+friends on Linux, the MSVC toolchain and WebView2 on Windows. Both are in
+[Building an installable app](#building-an-installable-app), which is the one
+place they are written down.
 
 ## Getting started
 
