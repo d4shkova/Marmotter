@@ -59,9 +59,22 @@ tar xzf ergo.tar.gz && sudo install -m 755 ergo-*/ergo /usr/local/bin/ergo
 ergo initdb --conf e2e/ergo.yaml
 ```
 
-Without it the transport tests skip rather than fail. The end-to-end run drives
-the browser build against that ergo, and starts both the server and the app
-itself:
+Without it the transport tests skip rather than fail.
+
+The end-to-end run also exercises the panels against a second services package
+— Anope on InspIRCd — because the translation layer is only proven by two
+implementations that disagree:
+
+```sh
+sudo apt-get install -y inspircd anope
+# Anope's packaged config is root:irc 0640, and the suite reads it as you.
+sudo chmod a+r /etc/anope/*.conf
+# InspIRCd's AppArmor profile confines it to /etc/inspircd; the suite runs a
+# throwaway server from a generated config in the workspace.
+sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.inspircd
+```
+
+Then, which starts every server it needs and the app itself:
 
 ```sh
 pnpm e2e

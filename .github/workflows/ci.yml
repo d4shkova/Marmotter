@@ -78,6 +78,11 @@ jobs:
           # Debian ships Anope's configuration as root:irc 0640, and the suite
           # reads it as an ordinary user to build the service definitions from.
           sudo chmod a+r /etc/anope/*.conf
+          # InspIRCd ships an AppArmor profile confining it to /etc/inspircd,
+          # which is right for the packaged daemon and wrong for a throwaway
+          # server reading a generated config out of the workspace. Unloading
+          # it affects this runner only.
+          sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.inspircd || true
 
       - name: Install ergo
         # The acceptance criteria for phases 5 and 6 are about behaviour against

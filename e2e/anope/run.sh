@@ -36,6 +36,12 @@ for _ in $(seq 1 40); do
   fi
   if ! kill -0 "$ircd" 2>/dev/null; then
     echo "e2e: InspIRCd exited before it started listening" >&2
+    if [ -e /etc/apparmor.d/usr.sbin.inspircd ]; then
+      echo "     If it could not read its config: the packaged InspIRCd has an" >&2
+      echo "     AppArmor profile confining it to /etc/inspircd, and this one" >&2
+      echo "     reads a generated config from the workspace. Unload it with:" >&2
+      echo "     sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.inspircd" >&2
+    fi
     wait "$ircd"
     exit 1
   fi
