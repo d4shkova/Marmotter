@@ -26,7 +26,7 @@ async function addNetwork(page: Page, nick: string): Promise<void> {
   await sheet.getByRole('radio', { name: 'Somewhere else' }).check();
   await sheet.getByRole('radio', { name: 'A web address' }).check();
   await sheet.getByLabel('Name', { exact: true }).fill('Test network');
-  await sheet.getByLabel('Web address', { exact: true }).fill('ws://127.0.0.1:8097/');
+  await sheet.getByLabel('Web address', { exact: true }).fill('ws://127.0.0.1:18097/');
   await sheet.getByLabel('Your name on this network').fill(nick);
 
   await sheet.getByRole('button', { name: 'Add network' }).click();

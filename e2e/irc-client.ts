@@ -24,7 +24,7 @@ export class TestClient {
 
   constructor(readonly nick: string) {}
 
-  async connect(port = 6667): Promise<void> {
+  async connect(port = 16667): Promise<void> {
     this.socket = createConnection({ host: '127.0.0.1', port });
     this.socket.setEncoding('utf8');
     this.socket.on('data', (chunk: string) => {

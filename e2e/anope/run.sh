@@ -17,7 +17,7 @@ trap 'kill $ircd 2>/dev/null || true' EXIT
 
 # Wait for the ircd's server port before starting services.
 for _ in $(seq 1 30); do
-  if (exec 3<>/dev/tcp/127.0.0.1/7001) 2>/dev/null; then
+  if (exec 3<>/dev/tcp/127.0.0.1/17001) 2>/dev/null; then
     exec 3<&- 3>&-
     break
   fi

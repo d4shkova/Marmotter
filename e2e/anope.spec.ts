@@ -25,7 +25,7 @@ const suffix = (): number => Math.floor(Math.random() * 1_000_000);
 // run waits for NickServ rather than racing it.
 test.beforeAll(async () => {
   const probe = new TestClient(`wait${suffix()}`);
-  await probe.connect(6668);
+  await probe.connect(16668);
   await probe.waitForNick('NickServ');
   probe.close();
 });
@@ -33,7 +33,7 @@ test.beforeAll(async () => {
 /** Registers an account and returns the client holding it. */
 async function registered(nick: string): Promise<TestClient> {
   const client = new TestClient(nick);
-  await client.connect(6668);
+  await client.connect(16668);
   client.send(`PRIVMSG NickServ :REGISTER pass12345 ${nick}@example.invalid`);
   await client.waitFor(/registered/i);
   return client;
@@ -49,7 +49,7 @@ const noticesFrom = (client: TestClient): readonly string[] =>
 test.describe('against Anope', () => {
   test('says what it is when asked, which is the only way to tell', async () => {
     const probe = new TestClient(`probe${suffix()}`);
-    await probe.connect(6668);
+    await probe.connect(16668);
 
     // Checked rather than assumed, because detection used to depend on it:
     // nothing a client is told during registration names the package.

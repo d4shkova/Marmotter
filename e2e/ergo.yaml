@@ -1,5 +1,10 @@
 # A throwaway ergo, for the end-to-end run only.
 #
+# The ports are deliberately not IRC's well-known ones. The end-to-end job
+# installs an ircd for its binaries, and that package starts a daemon holding
+# 6667 — so the suite collided with something CI had installed on its behalf.
+# Anyone running an ircd on their own machine hit the same thing.
+#
 # Plaintext on both listeners deliberately: the point of this harness is to
 # exercise Marmotter against a real ircd, and a self-signed certificate would
 # add a browser trust prompt that tests nothing about the client. TLS is
@@ -10,8 +15,8 @@ network:
 server:
   name: irc.test
   listeners:
-    ':6667':
-    ':8097':
+    ':16667':
+    ':18097':
       websocket: true
   casemapping: 'ascii'
   enforce-utf8: true

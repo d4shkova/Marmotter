@@ -67,7 +67,14 @@ jobs:
       - name: Install the two servers
         # Phase 6's acceptance is about two services packages that disagree, so
         # both run: ergo's built-in services, and Anope on InspIRCd.
-        run: sudo apt-get update && sudo apt-get install -y inspircd anope
+        #
+        # The packages start daemons on install, and those are not the ones
+        # under test — the suite runs its own with its own configuration. Only
+        # the binaries are wanted here.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y inspircd anope
+          sudo systemctl disable --now inspircd anope || true
 
       - name: Install ergo
         # The acceptance criteria for phases 5 and 6 are about behaviour against

@@ -51,7 +51,7 @@ export default defineConfig({
       // `run` rather than a pre-started daemon, so a failed test run cannot
       // leave a server holding the port for the next one.
       command: 'ergo run --conf e2e/ergo.yaml',
-      port: 8097,
+      port: 18097,
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'ignore',
       stderr: 'pipe',
@@ -60,7 +60,7 @@ export default defineConfig({
       // The Anope half of Phase 6's acceptance. InspIRCd's client port is what
       // is polled; `run.sh` starts services behind it in the right order.
       command: './e2e/anope/run.sh',
-      port: 6668,
+      port: 16668,
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'ignore',
       stderr: 'pipe',
