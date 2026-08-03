@@ -13,8 +13,10 @@ rules. Read [`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phase-by-phase plan.
 
 ## Status
 
-Phases 0 (scaffold), 1 (protocol core), and 2 (transport) are complete. Phase 3
-builds the client state layer.
+Phases 0 through 5 are complete. Phase 6 — the abstraction layer — is built and
+passes against ergo; it is not finished until it has also been run against an
+Atheme-backed InspIRCd, which is what proves the services translation works
+across two packages.
 
 `packages/protocol` implements the line parser and serializer, IRCv3 capability
 negotiation, SASL (PLAIN, EXTERNAL, SCRAM-SHA-256), ISUPPORT, casemapping, the
@@ -27,15 +29,42 @@ with certificate verification full, off, or pinned to a SHA-256 fingerprint,
 client certificates for CertFP, SNI, and connection timeouts. It frames lines
 and nothing more. `packages/client` adds the `TauriTransport` and
 `WebSocketTransport` implementations plus reconnection with exponential backoff,
-jitter, and endpoint failover.
+jitter, and endpoint failover, and reduces the event stream into per-network
+state.
 
-The transport integration tests connect to a real ergo instance. Install one to
-run them; without it they skip rather than fail:
+`packages/ui` holds the design system and the application shell — both apps
+mount the same `Marmotter` component, so desktop and web cannot drift. What a
+person can do without typing a command: connect, join, talk, browse the
+network's channels, change a channel's settings and its ban, mute, invite and
+allow lists, build a ban by scope with a preview of who it would catch, remove
+somebody with a reason, register and manage a network account, request a cloak,
+set who can do what in a channel, keep a friends list and a mute list, go away
+and come back, and send and receive invitations. Every raw command still works,
+and the raw log shows both directions of the wire.
+
+## Testing
+
+Unit and component tests run without anything installed:
+
+```sh
+pnpm test
+```
+
+The transport integration tests and the end-to-end run both need a real ergo:
 
 ```sh
 curl -sSL -o ergo.tar.gz \
   https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
 tar xzf ergo.tar.gz && sudo install -m 755 ergo-*/ergo /usr/local/bin/ergo
+ergo initdb --conf e2e/ergo.yaml
+```
+
+Without it the transport tests skip rather than fail. The end-to-end run drives
+the browser build against that ergo, and starts both the server and the app
+itself:
+
+```sh
+pnpm e2e
 ```
 
 ## Requirements
