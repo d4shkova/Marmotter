@@ -1,0 +1,27 @@
+{
+  "name": "@marmotter/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Connection state machine and event-to-state reduction. No React.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@marmotter/protocol": "workspace:*",
+    "@marmotter/shared": "workspace:*",
+    "zustand": "^5.0.8"
+  }
+}

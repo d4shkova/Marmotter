@@ -1,0 +1,45 @@
+# Libera.Chat registration with SASL PLAIN, IRCv3 caps, and a channel join.
+# Hand-written from a real session shape. Lines beginning with # are comments;
+# > is client to server, < is server to client.
+
+> CAP LS 302
+< :lithium.libera.chat CAP * LS :account-notify account-tag away-notify batch cap-notify chghost draft/chathistory echo-message extended-join invite-notify message-tags multi-prefix sasl=PLAIN,EXTERNAL,SCRAM-SHA-256 server-time setname solanum.chat/identify-msg standard-replies
+> CAP REQ :sasl server-time echo-message message-tags batch multi-prefix extended-join away-notify account-notify account-tag chghost setname invite-notify standard-replies draft/chathistory cap-notify
+< :lithium.libera.chat CAP * ACK :sasl server-time echo-message message-tags batch multi-prefix extended-join away-notify account-notify account-tag chghost setname invite-notify standard-replies draft/chathistory cap-notify
+> AUTHENTICATE PLAIN
+< AUTHENTICATE +
+> AUTHENTICATE AGQ0c2hrb3ZhAGh1bnRlcjI=
+< :lithium.libera.chat 900 d4shkova d4shkova!~marmot@user/d4shkova d4shkova :You are now logged in as d4shkova
+< :lithium.libera.chat 903 d4shkova :SASL authentication successful
+> CAP END
+> NICK d4shkova
+> USER marmot 0 * :Marmotter user
+< :lithium.libera.chat 001 d4shkova :Welcome to the Libera.Chat Internet Relay Chat Network d4shkova
+< :lithium.libera.chat 002 d4shkova :Your host is lithium.libera.chat[2001:db8::1/6697], running version solanum-1.0.3
+< :lithium.libera.chat 003 d4shkova :This server was created Tue May 21 2024 at 09:12:41 UTC
+< :lithium.libera.chat 004 d4shkova lithium.libera.chat solanum-1.0.3 DGQRSZaghilopsuwz CFILMPQSbcefgijklmnopqrstuvz bkloveqjfI
+< :lithium.libera.chat 005 d4shkova ACCOUNT-NOTIFY AWAYLEN=390 BOT=B CALLERID=g CASEMAPPING=rfc1459 CHANLIMIT=#:250 CHANMODES=eIbq,k,flj,CFLMPQScgimnprstuz CHANNELLEN=50 CHANTYPES=# CLIENTVER=3.0 CPRIVMSG DEAF=D :are supported by this server
+< :lithium.libera.chat 005 d4shkova ELIST=CMNTU ESILENCE=CcdiInPpsw ETRACE EXCEPTS=e EXTBAN=$,ajrxz FNC INVEX=I KICKLEN=490 KNOCK MAXLIST=bqeI:100 MODES=4 MONITOR=100 :are supported by this server
+< :lithium.libera.chat 005 d4shkova NAMESX NETWORK=Libera.Chat NICKLEN=16 PREFIX=(ov)@+ QUIETLEN=390 REMOVE SAFELIST SILENCE=32 STATUSMSG=@+ TARGMAX=NAMES:1,LIST:1,KICK:1,WHOIS:1,PRIVMSG:4,NOTICE:4,ACCEPT:,MONITOR: TOPICLEN=390 UTF8ONLY WHOX :are supported by this server
+< :lithium.libera.chat 251 d4shkova :There are 62 users and 41823 invisible on 27 servers
+< :lithium.libera.chat 252 d4shkova 32 :IRC Operators online
+< :lithium.libera.chat 253 d4shkova 4 :unknown connection(s)
+< :lithium.libera.chat 254 d4shkova 23891 :channels formed
+< :lithium.libera.chat 255 d4shkova :I have 2103 clients and 1 servers
+< :lithium.libera.chat 265 d4shkova 2103 2400 :Current local users 2103, max 2400
+< :lithium.libera.chat 266 d4shkova 41885 44011 :Current global users 41885, max 44011
+< :lithium.libera.chat 375 d4shkova :- lithium.libera.chat Message of the Day -
+< :lithium.libera.chat 372 d4shkova :- Welcome to Libera.Chat, the IRC network for
+< :lithium.libera.chat 372 d4shkova :- free and open-source software communities.
+< :lithium.libera.chat 376 d4shkova :End of /MOTD command.
+< :d4shkova MODE d4shkova :+Ziw
+> JOIN #marmotter
+< @time=2026-07-30T09:14:02.101Z :d4shkova!~marmot@user/d4shkova JOIN #marmotter * :Marmotter user
+< :lithium.libera.chat 332 d4shkova #marmotter :Building a GUI IRC client | docs at marmotter.dev
+< :lithium.libera.chat 333 d4shkova #marmotter jonquil!~jq@user/jonquil 1753858800
+< :lithium.libera.chat 353 d4shkova = #marmotter :@jonquil +emilyp tamsin d4shkova rho
+< :lithium.libera.chat 366 d4shkova #marmotter :End of /NAMES list.
+< @time=2026-07-30T09:14:05.882Z;msgid=8f2c1a :emilyp!~em@user/emilyp PRIVMSG #marmotter :morning
+< @time=2026-07-30T09:14:11.004Z;msgid=8f2c1b :rho!~rho@user/rho PRIVMSG #marmotter :\x01ACTION puts the kettle on\x01
+< @time=2026-07-30T09:14:19.550Z :jonquil!~jq@user/jonquil MODE #marmotter +o-v tamsin emilyp
+< @time=2026-07-30T09:14:31.100Z :dunlin!~d@example.net QUIT :Ping timeout: 252 seconds

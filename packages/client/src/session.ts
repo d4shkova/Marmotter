@@ -1,0 +1,575 @@
+/**
+ * A session: one network profile, one transport, one reduced state.
+ *
+ * The reducer is pure and synchronous, which is what makes it testable — but a
+ * real connection is neither. This is where the two meet. Everything async
+ * lives here: the socket, the SASL exchange, the optimistic send that has to be
+ * reconciled later.
+ *
+ * SASL is the reason this layer exists at all. SCRAM-SHA-256 derives keys with
+ * WebCrypto, which is a promise, and a promise cannot live inside a pure
+ * reducer. So the reducer says "start SASL" and this drives the exchange,
+ * feeding each `AUTHENTICATE` back through as it resolves.
+ */
+
+import {
+  AuthenticateReassembler,
+  type CryptoProvider,
+  type IrcMessage,
+  type SaslMechanism,
+  type SaslMechanismName,
+  createMechanism,
+  encodeAction,
+  fold,
+  isChannel,
+  makeSource,
+  parseMechanisms,
+  parseMessage,
+  selectMechanism,
+  webCryptoProvider,
+} from '@marmotter/protocol';
+import type {
+  CloseReason,
+  NetworkProfile,
+  SecretRef,
+  Transport,
+  Unsubscribe,
+} from '@marmotter/shared';
+import { Listeners } from './transport/listeners.js';
+import type { ReconnectingTransport } from './transport/reconnecting.js';
+import { type AddIgnoreOptions, addIgnore, pruneIgnores, removeIgnore } from './state/ignore.js';
+import { backfillJoinedChannels, requestOlder } from './state/history.js';
+import { addToNotify, removeFromNotify, resyncNotify } from './state/notify.js';
+import { derivedId, insertMessage } from './state/messages.js';
+import {
+  type Effect,
+  type ReduceContext,
+  initialNetworkState,
+  reduce,
+  startRegistration,
+} from './state/reduce.js';
+import { type Message, type NetworkState, RAW_LOG_LIMIT, emptyChannel } from './state/types.js';
+
+/** Resolves a secret handle to the secret itself, or undefined if it is gone. */
+export type SecretResolver = (ref: SecretRef) => Promise<string | undefined>;
+
+export interface SessionOptions {
+  readonly profile: NetworkProfile;
+  /** Already built for this profile's endpoints. The session never picks one. */
+  readonly transport: Transport | ReconnectingTransport;
+  /**
+   * Reads secrets from the platform's store.
+   *
+   * Omitted on a profile with no authentication. A profile that needs one and
+   * has none fails authentication rather than sending an empty password.
+   */
+  readonly resolveSecret?: SecretResolver;
+  /** WebCrypto, for SCRAM. Defaults to the platform's when it has one. */
+  readonly crypto?: CryptoProvider;
+  readonly now?: () => Date;
+  /** Messages per history request. Clamped to what the server allows. */
+  readonly historyPageSize?: number;
+}
+
+/** Something the session did that the interface may want to react to. */
+export type SessionEvent =
+  | { readonly kind: 'state'; readonly state: NetworkState }
+  | { readonly kind: 'connected' }
+  | { readonly kind: 'registered' }
+  | { readonly kind: 'closed'; readonly reason: CloseReason }
+  /** Authentication failed. The connection continues, unauthenticated. */
+  | { readonly kind: 'auth-failed'; readonly reason: string };
+
+export interface Session {
+  readonly id: string;
+  readonly state: NetworkState;
+  subscribe(callback: (state: NetworkState) => void): Unsubscribe;
+  on(callback: (event: SessionEvent) => void): Unsubscribe;
+
+  connect(): Promise<void>;
+  disconnect(reason?: string): void;
+
+  /** Sends a raw line, as `/quote` does. */
+  send(line: string): void;
+  /** Sends a message, rendered immediately and reconciled against the echo. */
+  sendMessage(target: string, text: string): void;
+  sendAction(target: string, text: string): void;
+
+  join(target: string, key?: string): void;
+  part(target: string, reason?: string): void;
+
+  /** Loads the page before what is shown, for scrolling upward. */
+  loadOlder(target: string): void;
+
+  addIgnore(mask: string, options?: AddIgnoreOptions): void;
+  removeIgnore(mask: string): void;
+  addNotify(nicks: readonly string[]): readonly string[];
+  removeNotify(nicks: readonly string[]): void;
+
+  /** Releases every listener. The transport is disconnected too. */
+  destroy(): void;
+}
+
+const MECHANISM_FOR: ReadonlyMap<string, SaslMechanismName> = new Map<string, SaslMechanismName>([
+  ['sasl-plain', 'PLAIN'],
+  ['sasl-external', 'EXTERNAL'],
+  ['sasl-scram', 'SCRAM-SHA-256'],
+]);
+
+/** The mechanism this profile is configured for, if any. */
+function configuredMechanism(profile: NetworkProfile): SaslMechanismName | undefined {
+  return profile.auth === undefined ? undefined : MECHANISM_FOR.get(profile.auth.type);
+}
+
+const defaultCrypto = (): CryptoProvider | undefined => {
+  const platform = (globalThis as { crypto?: { subtle?: unknown } }).crypto;
+  return platform?.subtle === undefined
+    ? undefined
+    : webCryptoProvider(platform as Parameters<typeof webCryptoProvider>[0]);
+};
+
+export function createSession(options: SessionOptions): Session {
+  const { profile, transport } = options;
+  const now = options.now ?? (() => new Date());
+  const states = new Listeners<NetworkState>();
+  const events = new Listeners<SessionEvent>();
+
+  const context: ReduceContext = {
+    altNicks: profile.identity.altNicks,
+    wantsSasl: configuredMechanism(profile) !== undefined,
+    now,
+  };
+
+  let state = initialNetworkState(profile.id, profile.name, profile.identity.nick);
+  let mechanism: SaslMechanism | undefined;
+  /** Whether the mechanism has produced its initial response yet. */
+  let mechanismStarted = false;
+  let reassembler = new AuthenticateReassembler();
+  let subscriptions: Unsubscribe[] = [];
+  let destroyed = false;
+
+  const publish = (next: NetworkState): void => {
+    state = next;
+    states.emit(next);
+    events.emit({ kind: 'state', state: next });
+  };
+
+  const recordRaw = (
+    current: NetworkState,
+    direction: 'in' | 'out',
+    line: string,
+  ): NetworkState => {
+    const appended = [...current.rawLog, { at: now(), direction, line }];
+    return {
+      ...current,
+      rawLog:
+        appended.length > RAW_LOG_LIMIT
+          ? appended.slice(appended.length - RAW_LOG_LIMIT)
+          : appended,
+    };
+  };
+
+  /** Sends lines and records them in the raw log. */
+  const write = (lines: readonly string[]): void => {
+    if (lines.length === 0) {
+      return;
+    }
+    let next = state;
+    for (const line of lines) {
+      transport.send(line);
+      next = recordRaw(next, 'out', line);
+    }
+    publish(next);
+  };
+
+  const handleEffects = (effects: readonly Effect[]): void => {
+    for (const effect of effects) {
+      switch (effect.kind) {
+        case 'start-sasl':
+          void beginSasl();
+          break;
+        case 'registered':
+          onRegistered();
+          break;
+        case 'capabilities-lost':
+          // Nothing to undo in state: every feature reads `caps.enabled` at the
+          // point of use, so losing one takes effect on the next read.
+          break;
+      }
+    }
+  };
+
+  const onRegistered = (): void => {
+    const lines: string[] = [];
+
+    for (const entry of profile.autojoin) {
+      // Keys are resolved asynchronously, so a keyed channel joins a moment
+      // later rather than holding up the rest.
+      if (entry.key === undefined) {
+        lines.push(`JOIN ${entry.target}`);
+      } else {
+        void joinWithKey(entry.target, entry.key);
+      }
+    }
+    lines.push(...profile.connectCommands.filter((line) => line !== ''));
+
+    // MONITOR and WATCH lists live on the server and do not survive a
+    // reconnect, so the list is re-registered rather than assumed.
+    const resync = resyncNotify(state);
+    publish({ ...state, notify: resync.notify });
+    write([...lines, ...resync.send]);
+
+    // Anything that happened while we were gone, then the newest page for
+    // channels that were already open.
+    const backfill = backfillJoinedChannels(state, options.historyPageSize);
+    publish(backfill.state);
+    write(backfill.send);
+
+    events.emit({ kind: 'registered' });
+  };
+
+  const joinWithKey = async (target: string, ref: SecretRef): Promise<void> => {
+    const key = await options.resolveSecret?.(ref);
+    if (destroyed) {
+      return;
+    }
+    write([key === undefined ? `JOIN ${target}` : `JOIN ${target} ${key}`]);
+  };
+
+  const failAuth = (reason: string): void => {
+    mechanism = undefined;
+    mechanismStarted = false;
+    events.emit({ kind: 'auth-failed', reason });
+    // Registration must not stall on a failed exchange; the connection
+    // continues unauthenticated and the interface says so.
+    write(['AUTHENTICATE *', 'CAP END']);
+  };
+
+  const credentialsFor = async (): Promise<{ account?: string; password?: string } | undefined> => {
+    const auth = profile.auth;
+    if (auth === undefined) {
+      return undefined;
+    }
+    switch (auth.type) {
+      case 'sasl-external':
+        return {};
+      case 'sasl-plain':
+      case 'sasl-scram': {
+        const password = await options.resolveSecret?.(auth.password);
+        return password === undefined ? undefined : { account: auth.account, password };
+      }
+      default:
+        return undefined;
+    }
+  };
+
+  const beginSasl = async (): Promise<void> => {
+    const configured = configuredMechanism(profile);
+    if (configured === undefined) {
+      write(['CAP END']);
+      return;
+    }
+
+    const advertised = parseMechanisms(state.caps.available.get('sasl') ?? '');
+    const chosen = selectMechanism(advertised, [configured]);
+    if (chosen === undefined) {
+      failAuth(`This network does not offer ${configured} authentication.`);
+      return;
+    }
+
+    const credentials = await credentialsFor();
+    if (credentials === undefined || destroyed) {
+      if (!destroyed) {
+        failAuth('The saved password could not be read.');
+      }
+      return;
+    }
+
+    const built = createMechanism(chosen, credentials, options.crypto ?? defaultCrypto());
+    if (built === undefined) {
+      failAuth(`${chosen} is not available on this platform.`);
+      return;
+    }
+
+    mechanism = built;
+    mechanismStarted = false;
+    reassembler = new AuthenticateReassembler();
+
+    // Only the mechanism name goes out now. The initial response waits for the
+    // server's empty challenge: sending it early is a protocol violation, and a
+    // server that has not finished setting the mechanism up will reject it.
+    write([`AUTHENTICATE ${chosen}`]);
+  };
+
+  const applyStep = (step: Awaited<ReturnType<SaslMechanism['start']>>): void => {
+    switch (step.kind) {
+      case 'send':
+        write(step.payload.map((chunk) => `AUTHENTICATE ${chunk}`));
+        break;
+      case 'await-outcome':
+        break;
+      case 'failed':
+        failAuth(step.reason);
+        break;
+    }
+  };
+
+  /**
+   * Drives the SASL exchange.
+   *
+   * `AUTHENTICATE` is handled here rather than in the reducer because each
+   * response may need WebCrypto, and the reducer cannot await anything.
+   */
+  const handleAuthenticate = async (msg: IrcMessage): Promise<void> => {
+    const active = mechanism;
+    if (active === undefined) {
+      return;
+    }
+
+    const payload = reassembler.push(msg.params[0] ?? '');
+    if (payload === undefined) {
+      return; // More chunks to come.
+    }
+
+    // The first challenge is the server's empty `+`, which is the cue to send
+    // the initial response. Everything after it is a real challenge.
+    const started = mechanismStarted;
+    mechanismStarted = true;
+    const step = started ? await active.respond(payload) : await active.start();
+
+    if (destroyed || mechanism !== active) {
+      return;
+    }
+    applyStep(step);
+  };
+
+  const handleLine = (line: string): void => {
+    const parsed = parseMessage(line);
+    let next = recordRaw(state, 'in', line);
+
+    if (!parsed.ok) {
+      // An unparseable line is still evidence, so it stays in the raw log; it
+      // just cannot mean anything to the reducer.
+      publish(next);
+      return;
+    }
+
+    const msg = parsed.message;
+    if (msg.command === 'AUTHENTICATE') {
+      publish(next);
+      void handleAuthenticate(msg);
+      return;
+    }
+
+    // Lapsed mutes stop matching without anyone having to remove them.
+    const ignores = pruneIgnores(next.ignores, now());
+    if (ignores !== next.ignores) {
+      next = { ...next, ignores };
+    }
+
+    const step = reduce(next, msg, context);
+    publish(step.state);
+    write(step.send);
+    handleEffects(step.effects);
+
+    if (step.state.phase === 'registered') {
+      mechanism = undefined;
+      mechanismStarted = false;
+    }
+  };
+
+  const handleClose = (reason: CloseReason): void => {
+    mechanism = undefined;
+    mechanismStarted = false;
+    // Batches do not survive a connection, and a half-open one would silently
+    // absorb the first messages of the next.
+    publish({
+      ...state,
+      phase: 'disconnected',
+      lastClose: reason,
+      batches: new Map(),
+      channels: new Map(
+        [...state.channels].map(([key, channel]) => [
+          key,
+          { ...channel, historyPending: undefined },
+        ]),
+      ),
+    });
+    events.emit({ kind: 'closed', reason });
+  };
+
+  /**
+   * Listens from the moment the session exists, not from `connect`.
+   *
+   * A reconnecting transport re-establishes on its own schedule and starts
+   * delivering lines again without anyone calling `connect`. A session that
+   * only listened while it thought it was connected would miss them.
+   */
+  subscriptions.push(transport.onLine(handleLine));
+  subscriptions.push(transport.onClose(handleClose));
+
+  const detach = (): void => {
+    for (const stop of subscriptions) {
+      stop();
+    }
+    subscriptions = [];
+  };
+
+  /** Builds a message we are about to send, shown before the server confirms. */
+  const optimistic = (target: string, text: string, kind: 'privmsg' | 'action'): Message => {
+    const at = now();
+    const base = {
+      kind,
+      at,
+      fromServerTime: false,
+      source: makeSource(state.nick),
+      target,
+      text,
+      account: state.account,
+      replyTo: undefined,
+      // Cleared when echo-message returns it. Without that capability it stays
+      // set, and the interface shows the un-acknowledged indicator.
+      pending: true,
+      tags: new Map<string, string>(),
+    };
+    return { ...base, id: derivedId(base) };
+  };
+
+  const showOwn = (target: string, message: Message): void => {
+    const key = fold(target, state.support.caseMapping);
+    const toChannel = isChannel(target, state.support);
+    const existing = (toChannel ? state.channels : state.queries).get(key);
+    const channel = existing ?? emptyChannel(target);
+    const updated = { ...channel, messages: insertMessage(channel.messages, message) };
+
+    if (toChannel) {
+      const channels = new Map(state.channels);
+      channels.set(key, updated);
+      publish({ ...state, channels });
+    } else {
+      const queries = new Map(state.queries);
+      queries.set(key, updated);
+      publish({ ...state, queries });
+    }
+  };
+
+  return {
+    id: profile.id,
+
+    get state() {
+      return state;
+    },
+
+    subscribe: (callback) => states.add(callback),
+    on: (callback) => events.add(callback),
+
+    async connect() {
+      // Announced before the socket is even attempted, so the interface can
+      // show "connecting" rather than an indefinite blank. Without this the
+      // phase sits at `disconnected` throughout the TCP and TLS handshake, and
+      // a failure is indistinguishable from still trying.
+      publish({ ...state, phase: 'connecting', lastClose: undefined });
+
+      try {
+        await transport.connect({
+          endpoint: profile.servers[0] ?? {
+            host: '',
+            port: 6697,
+            tls: { mode: 'tls', verifyCert: true },
+          },
+        });
+      } catch (error) {
+        // A transport that rejects its connect — a refused socket, a TLS
+        // failure surfaced synchronously — never emits a close event, so the
+        // phase would otherwise stay stuck at `connecting`.
+        const message = error instanceof Error ? error.message : String(error);
+        publish({
+          ...state,
+          phase: 'disconnected',
+          lastClose: { kind: 'network-error', message },
+        });
+        throw error;
+      }
+
+      events.emit({ kind: 'connected' });
+
+      const opening = startRegistration(state, profile.identity);
+      publish(opening.state);
+
+      // A server password is not SASL and goes before NICK, so it is prepended
+      // rather than sent alongside the rest.
+      if (profile.auth?.type === 'server-password') {
+        const password = await options.resolveSecret?.(profile.auth.password);
+        if (password !== undefined && !destroyed) {
+          write([`PASS ${password}`]);
+        }
+      }
+      write(opening.send);
+    },
+
+    disconnect(reason) {
+      if (state.phase !== 'disconnected') {
+        write([reason === undefined ? 'QUIT' : `QUIT :${reason}`]);
+      }
+      transport.disconnect();
+    },
+
+    send: (line) => write([line]),
+
+    sendMessage(target, text) {
+      for (const part of text.split('\n').filter((line) => line !== '')) {
+        showOwn(target, optimistic(target, part, 'privmsg'));
+        write([`PRIVMSG ${target} :${part}`]);
+      }
+    },
+
+    sendAction(target, text) {
+      showOwn(target, optimistic(target, text, 'action'));
+      write([`PRIVMSG ${target} :${encodeAction(text)}`]);
+    },
+
+    join: (target, key) => write([key === undefined ? `JOIN ${target}` : `JOIN ${target} ${key}`]),
+    part: (target, reason) =>
+      write([reason === undefined ? `PART ${target}` : `PART ${target} :${reason}`]),
+
+    loadOlder(target) {
+      const result = requestOlder(state, target, options.historyPageSize);
+      if (result.ok) {
+        publish(result.state);
+        write(result.send);
+      }
+    },
+
+    addIgnore(mask, ignoreOptions) {
+      publish({
+        ...state,
+        ignores: addIgnore(state.ignores, mask, { now: now(), ...ignoreOptions }),
+      });
+    },
+
+    removeIgnore(mask) {
+      publish({ ...state, ignores: removeIgnore(state.ignores, mask) });
+    },
+
+    addNotify(nicks) {
+      const change = addToNotify(state, nicks);
+      publish({ ...state, notify: change.notify });
+      write(change.send);
+      return change.rejected;
+    },
+
+    removeNotify(nicks) {
+      const change = removeFromNotify(state, nicks);
+      publish({ ...state, notify: change.notify });
+      write(change.send);
+    },
+
+    destroy() {
+      destroyed = true;
+      detach();
+      states.clear();
+      events.clear();
+      transport.disconnect();
+    },
+  };
+}

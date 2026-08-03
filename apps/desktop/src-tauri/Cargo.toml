@@ -1,0 +1,19 @@
+[package]
+name = "marmotter-desktop"
+description = "Marmotter desktop shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "marmotter_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+marmotter-transport = { path = "../../../crates/marmotter-transport" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }

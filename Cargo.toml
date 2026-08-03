@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/marmotter-transport", "apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/d4shkova/marmotter"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

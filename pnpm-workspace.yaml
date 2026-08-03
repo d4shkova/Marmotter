@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# pnpm 10 requires build scripts to be allowed explicitly. These are the native
+# toolchain binaries Vite and Tailwind need; nothing else may run install hooks.
+onlyBuiltDependencies:
+  - esbuild
+  - '@tailwindcss/oxide'

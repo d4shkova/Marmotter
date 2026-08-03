@@ -1,0 +1,198 @@
+/**
+ * Marmotter design tokens.
+ *
+ * Two layers, deliberately:
+ *
+ *   1. Primitives — the raw ramp. Every literal colour in the product lives
+ *      here and nowhere else.
+ *   2. Semantic aliases — what the interface actually references. These point
+ *      at primitives with `var()`, never at literals.
+ *
+ * A future theme redefines the primitives and the aliases follow. That is the
+ * structure CLAUDE.md asks for: a token swap, not a refactor.
+ *
+ * The palette is a single blue family. Hue carries no meaning on its own, so
+ * red is reserved: it appears only for errors, alerts, and destructive actions,
+ * and reading red anywhere in the interface always means the same thing.
+ */
+
+:root {
+  /* ======================================================= 1. primitives */
+
+  /* The blue ramp. 050 is near-white, 900 is near-black. */
+  --blue-050: #f2f8ff;
+  --blue-100: #dcecff;
+  --blue-200: #bfddff;
+  --blue-300: #8cc4ff;
+  --blue-400: #5aabff;
+  --blue-500: #0a84ff;
+  --blue-600: #0a6fd8;
+  --blue-700: #0a5ab0;
+  --blue-800: #0b4586;
+  --blue-900: #0a2f5c;
+
+  /* The cool and warm ends of the same family, for nick variety. */
+  --cyan-300: #7fe2f5;
+  --cyan-400: #4fd1e8;
+  --cyan-500: #40c8e0;
+  --periwinkle-300: #c3ccff;
+  --periwinkle-400: #a9b6ff;
+  --indigo-400: #8280ff;
+
+  /* Blue-biased neutrals. A pure grey beside a blue accent reads as unplanned. */
+  --ink-000: #000000;
+  --ink-900: #101720;
+  --ink-800: #1a2430;
+  --ink-700: #26333f;
+  --ink-600: #33414f;
+
+  /* The one colour outside the family, and the only one that carries alarm. */
+  --red-400: #ff6961;
+  --red-500: #ff453a;
+  --red-900: #3a0f0c;
+
+  /* ================================================== 2. semantic aliases */
+
+  /* Surfaces */
+  --bg-base: var(--ink-000);
+  --bg-elevated: var(--ink-900);
+  --bg-elevated-2: var(--ink-800);
+  --bg-elevated-3: var(--ink-700);
+
+  --fill-primary: rgba(120, 141, 168, 0.36);
+  --fill-secondary: rgba(120, 141, 168, 0.32);
+  --fill-tertiary: rgba(118, 139, 166, 0.24);
+  --fill-quaternary: rgba(116, 137, 164, 0.18);
+
+  /* Text */
+  --label-primary: #ffffff;
+  --label-secondary: rgba(214, 230, 245, 0.62);
+  --label-tertiary: rgba(214, 230, 245, 0.32);
+  --label-quaternary: rgba(214, 230, 245, 0.17);
+
+  --separator: rgba(70, 90, 112, 0.65);
+  --separator-opaque: var(--ink-700);
+
+  /* Action */
+  --accent: var(--blue-500);
+  --accent-hover: var(--blue-400);
+  --accent-pressed: var(--blue-600);
+  --accent-muted: rgba(10, 132, 255, 0.14);
+  --on-accent: #ffffff;
+
+  /* The dimming layer behind a sheet or modal. Dark rather than tinted, so a
+     sheet reads as depth rather than as a coloured state. */
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  /* The knob of a switch, and anything else that sits on top of the accent
+     fill. Named rather than written as `white` at the call site, so a light
+     theme redefines it in one place along with everything else. */
+  --control-knob: #ffffff;
+
+  /* Alarm. Reserved: errors, alerts, and destructive actions only. */
+  --danger: var(--red-500);
+  --danger-hover: var(--red-400);
+  --danger-muted: rgba(255, 69, 58, 0.14);
+
+  /* Connection state. Blue is healthy, dimmer blue is in progress, red is
+     broken — never green, so red keeps its single meaning. */
+  --status-connected: var(--blue-400);
+  --status-connecting: var(--blue-700);
+  --status-failed: var(--red-500);
+
+  /* Nick colours, hashed from the normalised nick. Every one clears 4.5:1
+     against --bg-base; packages/ui/src/tokens.test.ts asserts it. Within one
+     hue family they separate mostly by lightness, so the ramp is spread wide. */
+  --nick-1: var(--cyan-300);
+  --nick-2: var(--cyan-500);
+  --nick-3: var(--blue-200);
+  --nick-4: var(--blue-300);
+  --nick-5: var(--blue-400);
+  --nick-6: var(--blue-500);
+  --nick-7: var(--periwinkle-400);
+  --nick-8: var(--indigo-400);
+
+  /* ------------------------------------------------------------ typography */
+  /* Named outside Tailwind's --font-* / --radius-* namespaces so the @theme
+     mapping in styles.css is not self-referential. */
+  --font-ui-stack: -apple-system, 'SF Pro Text', 'Inter var', system-ui, sans-serif;
+  --font-mono-stack: 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  --text-large-title-size: 34px;
+  --text-large-title-line: 41px;
+  --text-large-title-weight: 700;
+
+  --text-title-1-size: 28px;
+  --text-title-1-line: 34px;
+  --text-title-1-weight: 700;
+
+  --text-title-2-size: 22px;
+  --text-title-2-line: 28px;
+  --text-title-2-weight: 700;
+
+  --text-title-3-size: 20px;
+  --text-title-3-line: 25px;
+  --text-title-3-weight: 600;
+
+  --text-headline-size: 17px;
+  --text-headline-line: 22px;
+  --text-headline-weight: 600;
+
+  --text-body-size: 17px;
+  --text-body-line: 22px;
+  --text-body-weight: 400;
+
+  --text-callout-size: 16px;
+  --text-callout-line: 21px;
+  --text-callout-weight: 400;
+
+  --text-subhead-size: 15px;
+  --text-subhead-line: 20px;
+  --text-subhead-weight: 400;
+
+  --text-footnote-size: 13px;
+  --text-footnote-line: 18px;
+  --text-footnote-weight: 400;
+
+  --text-caption-1-size: 12px;
+  --text-caption-1-line: 16px;
+  --text-caption-1-weight: 400;
+
+  --text-caption-2-size: 11px;
+  --text-caption-2-line: 13px;
+  --text-caption-2-weight: 400;
+
+  /* -------------------------------------------------- geometry and motion */
+  /* 4px spacing grid, 16px screen margins. */
+  --space-unit: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --screen-margin: 16px;
+
+  --corner-control: 10px;
+  --corner-card: 14px;
+  --corner-sheet: 20px;
+
+  --hairline: 0.5px;
+  --blur-vibrancy: blur(20px) saturate(180%);
+
+  --duration-sheet: 200ms;
+  --easing-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-press: 120ms;
+  --easing-press: ease-out;
+}
+
+/**
+ * Reduced motion: cut transforms, keep opacity changes only, per CLAUDE.md.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-sheet: 0ms;
+    --duration-press: 0ms;
+  }
+}

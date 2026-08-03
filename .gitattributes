@@ -1,0 +1,24 @@
+# Check every text file out with LF endings, on every platform.
+#
+# Prettier is configured with `endOfLine: "lf"`, so a Windows checkout under the
+# default `core.autocrlf=true` would rewrite every file to CRLF and then fail
+# `pnpm format:check` on all of them. Pinning it here fixes that for everyone
+# rather than asking each contributor to configure Git correctly.
+* text=auto eol=lf
+
+# Binaries must not be touched.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+
+# Generated; keep it out of language stats and diffs.
+pnpm-lock.yaml linguist-generated=true -diff
+Cargo.lock linguist-generated=true -diff

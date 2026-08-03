@@ -1,0 +1,128 @@
+/**
+ * Marmotter global stylesheet. Apps import this once.
+ *
+ * Tailwind v4 is configured entirely in CSS. `@theme inline` republishes the
+ * tokens from tokens.css into Tailwind's namespaces so utilities such as
+ * `bg-elevated`, `text-label-secondary` and `rounded-card` resolve to the same
+ * custom properties components reference directly.
+ */
+
+@import 'tailwindcss';
+@import './tokens.css';
+
+/*
+ * Where the class names live.
+ *
+ * Stated rather than left to Tailwind's automatic detection, which roots
+ * itself at whatever imports this stylesheet — the desktop app, the web app,
+ * or Storybook. Every component is in this package, so none of those roots
+ * finds them, and the result is a stylesheet with tokens and a reset in it and
+ * no utilities at all: the interface renders as a column of unstyled text.
+ *
+ * Each app adds its own `@source` for its own files.
+ */
+@source "./";
+
+@theme inline {
+  --color-bg-base: var(--bg-base);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-elevated-2: var(--bg-elevated-2);
+  --color-bg-elevated-3: var(--bg-elevated-3);
+
+  --color-fill-primary: var(--fill-primary);
+  --color-fill-secondary: var(--fill-secondary);
+  --color-fill-tertiary: var(--fill-tertiary);
+  --color-fill-quaternary: var(--fill-quaternary);
+
+  --color-label-primary: var(--label-primary);
+  --color-label-secondary: var(--label-secondary);
+  --color-label-tertiary: var(--label-tertiary);
+  --color-label-quaternary: var(--label-quaternary);
+
+  --color-separator: var(--separator);
+  --color-separator-opaque: var(--separator-opaque);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-muted: var(--accent-muted);
+  --color-on-accent: var(--on-accent);
+  --color-control-knob: var(--control-knob);
+  --color-scrim: var(--scrim);
+
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-muted: var(--danger-muted);
+
+  --color-status-connected: var(--status-connected);
+  --color-status-connecting: var(--status-connecting);
+  --color-status-failed: var(--status-failed);
+
+  --color-nick-1: var(--nick-1);
+  --color-nick-2: var(--nick-2);
+  --color-nick-3: var(--nick-3);
+  --color-nick-4: var(--nick-4);
+  --color-nick-5: var(--nick-5);
+  --color-nick-6: var(--nick-6);
+  --color-nick-7: var(--nick-7);
+  --color-nick-8: var(--nick-8);
+
+  --font-sans: var(--font-ui-stack);
+  --font-mono: var(--font-mono-stack);
+
+  --text-large-title: var(--text-large-title-size);
+  --text-large-title--line-height: var(--text-large-title-line);
+  --text-title-1: var(--text-title-1-size);
+  --text-title-1--line-height: var(--text-title-1-line);
+  --text-title-2: var(--text-title-2-size);
+  --text-title-2--line-height: var(--text-title-2-line);
+  --text-title-3: var(--text-title-3-size);
+  --text-title-3--line-height: var(--text-title-3-line);
+  --text-headline: var(--text-headline-size);
+  --text-headline--line-height: var(--text-headline-line);
+  --text-body: var(--text-body-size);
+  --text-body--line-height: var(--text-body-line);
+  --text-callout: var(--text-callout-size);
+  --text-callout--line-height: var(--text-callout-line);
+  --text-subhead: var(--text-subhead-size);
+  --text-subhead--line-height: var(--text-subhead-line);
+  --text-footnote: var(--text-footnote-size);
+  --text-footnote--line-height: var(--text-footnote-line);
+  --text-caption-1: var(--text-caption-1-size);
+  --text-caption-1--line-height: var(--text-caption-1-line);
+  --text-caption-2: var(--text-caption-2-size);
+  --text-caption-2--line-height: var(--text-caption-2-line);
+
+  --radius-control: var(--corner-control);
+  --radius-card: var(--corner-card);
+  --radius-sheet: var(--corner-sheet);
+
+  --spacing: var(--space-unit);
+
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1024px;
+}
+
+@layer base {
+  html {
+    /* Text must scale to 200% without loss of function; never lock font-size. */
+    background-color: var(--bg-base);
+    color: var(--label-primary);
+    font-family: var(--font-ui-stack);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg-base);
+    font-size: var(--text-body-size);
+    line-height: var(--text-body-line);
+  }
+
+  /* Accessibility floor: focus must always be visible. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--corner-control);
+  }
+}
