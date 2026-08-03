@@ -1,4 +1,5 @@
 import {
+  type Member,
   type NetworkState,
   type Session,
   type SessionOptions,
@@ -23,7 +24,10 @@ import { MessageList } from './MessageList.js';
 import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
+import { TextPrompt } from './TextPrompt.js';
 import { parseInput } from './commands.js';
+import { memberActions } from './member-actions.js';
+import type { MenuItem } from '../primitives/ContextMenu.js';
 import {
   type TargetRef,
   draftFor,
@@ -67,6 +71,8 @@ export function Marmotter({
   const [adding, setAdding] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
+  /** A network waiting for a channel name from the "Join a channel" prompt. */
+  const [joiningNetwork, setJoiningNetwork] = useState<string | undefined>(undefined);
 
   const toast = useCallback((text: string, tone: ToastMessage['tone'] = 'info') => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -168,6 +174,49 @@ export function Marmotter({
 
   const disconnect = (networkId: string): void => {
     registry.sessionOf(networkId)?.disconnect();
+  };
+
+  // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
+  // the session sends the JOIN, so nobody has to know the command exists.
+  const joinChannel = (name: string): void => {
+    const target = joiningNetwork;
+    setJoiningNetwork(undefined);
+    if (target === undefined) {
+      return;
+    }
+    const channelName = /^[#&]/.test(name) ? name : `#${name}`;
+    registry.sessionOf(target)?.join(channelName);
+    view.select({ networkId: target, target: channelName });
+  };
+
+  /** Opens a direct message with someone, creating the conversation. */
+  const messageMember = (nick: string): void => {
+    if (network !== undefined) {
+      view.select({ networkId: network.id, target: nick });
+    }
+  };
+
+  // The right-click / ⋯ menu for a member, built from what the user is actually
+  // allowed to do on this network. This is the abstraction layer: the person
+  // picks "Make an operator" and the MODE goes out underneath.
+  const memberMenu = (member: Member): readonly MenuItem[] => {
+    if (network === undefined || conversation === undefined || session === undefined) {
+      return [];
+    }
+    return memberActions(member, {
+      network,
+      channel: conversation,
+      ourNick: network.nick,
+      callbacks: {
+        onMessage: messageMember,
+        onWhois: (nick) => session.send(`WHOIS ${nick}`),
+        onIgnore: (nick) => {
+          session.addIgnore(nick);
+          toast(`Ignoring ${nick}. You won't see their messages.`);
+        },
+        onSend: (line) => session.send(line),
+      },
+    });
   };
 
   const send = (text: string): void => {
@@ -357,11 +406,18 @@ export function Marmotter({
             onAddNetwork={() => setAdding(true)}
             onOpenSettings={() => view.setPane(view.pane === 'settings' ? 'chat' : 'settings')}
             settingsOpen={view.pane === 'settings'}
+            onJoinChannel={(networkId) => setJoiningNetwork(networkId)}
           />
         }
         aside={
           conversation === undefined || network === undefined ? undefined : (
-            <MemberList network={network} channel={conversation} />
+            <MemberList
+              network={network}
+              channel={conversation}
+              menuFor={memberMenu}
+              onMessage={messageMember}
+              onOpenProfile={(nick) => session?.send(`WHOIS ${nick}`)}
+            />
           )
         }
         tabBar={
@@ -380,6 +436,17 @@ export function Marmotter({
       />
 
       <AddNetwork open={adding} onClose={() => setAdding(false)} onAdd={addNetwork} />
+
+      <TextPrompt
+        open={joiningNetwork !== undefined}
+        title="Join a channel"
+        label="Channel name"
+        placeholder="#marmotter"
+        hint="The # is added for you if you leave it off."
+        confirmLabel="Join"
+        onConfirm={joinChannel}
+        onCancel={() => setJoiningNetwork(undefined)}
+      />
 
       <ToastRegion
         toasts={toasts}

@@ -19,6 +19,7 @@ import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
 import { Settings } from './app/Settings.js';
 import { Sidebar } from './app/Sidebar.js';
+import { TextPrompt } from './app/TextPrompt.js';
 import { buildRows } from './app/rows.js';
 import { Decoder } from './decoder/Decoder.js';
 import { ListGroup, SectionHeader } from './layout/ListGroup.js';
@@ -432,6 +433,28 @@ describe('every component passes axe', () => {
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
+    [
+      'TextPrompt',
+      <TextPrompt
+        key="tp"
+        open
+        title="Join a channel"
+        label="Channel name"
+        confirmLabel="Join"
+        onConfirm={noop}
+        onCancel={noop}
+      />,
+    ],
+    [
+      'MemberList with actions',
+      <MemberList
+        key="mla"
+        network={networkFixture()}
+        channel={channelFixture()}
+        onMessage={noop}
+        menuFor={() => [{ id: 'm', label: 'Send a message', onSelect: noop }]}
+      />,
+    ],
   ])('%s', async (_name, ui) => {
     await expectNoViolations(ui);
   });

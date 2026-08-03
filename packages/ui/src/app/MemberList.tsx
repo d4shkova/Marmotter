@@ -13,6 +13,8 @@ export interface MemberListProps {
   readonly channel: ChannelState;
   /** Built by the caller, which knows what the user is allowed to do. */
   readonly menuFor?: (member: Member) => readonly MenuItem[];
+  /** Double-clicking a name messages them, as in most chat apps. */
+  readonly onMessage?: (nick: string) => void;
   readonly onOpenProfile?: (nick: string) => void;
   readonly className?: string;
 }
@@ -28,6 +30,7 @@ export function MemberList({
   network,
   channel,
   menuFor,
+  onMessage,
   onOpenProfile,
   className,
 }: MemberListProps): ReactNode {
@@ -70,46 +73,74 @@ export function MemberList({
       </div>
 
       <ul className="flex-1 overflow-y-auto pb-2">
-        {filtered.map((member) => (
-          <li key={member.nick}>
-            <button
-              type="button"
-              onClick={() => onOpenProfile?.(member.nick)}
-              onContextMenu={(event) => {
-                if (menuFor === undefined) {
-                  return;
-                }
-                event.preventDefault();
-                setMenu({ member, x: event.clientX, y: event.clientY });
-              }}
-              className={cn(
-                'flex w-full items-center gap-2 px-3 py-1 text-left',
-                'hover:bg-[var(--fill-quaternary)]',
-                member.away && 'opacity-50',
-              )}
-            >
-              <RoleGlyph member={member} network={network} />
-              <span
-                className="min-w-0 flex-1 truncate font-mono text-footnote"
-                style={{
-                  color: `var(${nickColorVar(member.nick, fold(member.nick, network.support.caseMapping))})`,
+        {filtered.map((member) => {
+          const openMenu = (x: number, y: number): void => {
+            if (menuFor !== undefined) {
+              setMenu({ member, x, y });
+            }
+          };
+
+          return (
+            <li key={member.nick} className="group/member relative">
+              <button
+                type="button"
+                // Double-click messages them — the convention the interface
+                // copy calls out. A single click opens their details.
+                onDoubleClick={() => onMessage?.(member.nick)}
+                onClick={() => onOpenProfile?.(member.nick)}
+                onContextMenu={(event) => {
+                  if (menuFor === undefined) {
+                    return;
+                  }
+                  event.preventDefault();
+                  openMenu(event.clientX, event.clientY);
                 }}
+                className={cn(
+                  'flex w-full items-center gap-2 px-3 py-1 text-left',
+                  'hover:bg-[var(--fill-quaternary)]',
+                  member.away && 'opacity-50',
+                )}
               >
-                {member.nick}
-              </span>
-              {member.bot ? <Badge>Bot</Badge> : null}
-              {member.account === undefined ? null : (
+                <RoleGlyph member={member} network={network} />
                 <span
-                  title={`Logged in as ${member.account}`}
-                  className="text-caption-2 text-[var(--label-quaternary)]"
+                  className="min-w-0 flex-1 truncate font-mono text-footnote"
+                  style={{
+                    color: `var(${nickColorVar(member.nick, fold(member.nick, network.support.caseMapping))})`,
+                  }}
                 >
-                  <span aria-hidden="true">✓</span>
-                  <span className="sr-only">Logged in as {member.account}</span>
+                  {member.nick}
                 </span>
+                {member.bot ? <Badge>Bot</Badge> : null}
+                {member.account === undefined ? null : (
+                  <span
+                    title={`Logged in as ${member.account}`}
+                    className="text-caption-2 text-[var(--label-quaternary)]"
+                  >
+                    <span aria-hidden="true">✓</span>
+                    <span className="sr-only">Logged in as {member.account}</span>
+                  </span>
+                )}
+              </button>
+
+              {/* A visible way to reach the actions, since right-click is not
+                  discoverable and touch has no right-click at all. */}
+              {menuFor === undefined ? null : (
+                <button
+                  type="button"
+                  aria-label={`Actions for ${member.nick}`}
+                  onClick={(event) => openMenu(event.clientX, event.clientY)}
+                  className={cn(
+                    'absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-full',
+                    'text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]',
+                    'opacity-0 group-hover/member:opacity-100 focus:opacity-100',
+                  )}
+                >
+                  <span aria-hidden="true">⋯</span>
+                </button>
               )}
-            </button>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
 
       {menu === undefined || menuFor === undefined ? null : (

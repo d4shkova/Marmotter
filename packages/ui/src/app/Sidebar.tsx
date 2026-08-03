@@ -20,6 +20,8 @@ export interface SidebarProps {
   readonly onOpenSettings: () => void;
   /** Whether the settings pane is the one showing, so the gear reads as pressed. */
   readonly settingsOpen?: boolean;
+  /** Opens the "join a channel" prompt for a network. */
+  readonly onJoinChannel?: (networkId: string) => void;
   readonly onBrowseChannels?: (networkId: string) => void;
   readonly className?: string;
 }
@@ -59,6 +61,7 @@ export function Sidebar({
   onAddNetwork,
   onOpenSettings,
   settingsOpen = false,
+  onJoinChannel,
   onBrowseChannels,
   className,
 }: SidebarProps): ReactNode {
@@ -143,6 +146,9 @@ export function Sidebar({
                 }
                 setDragging(undefined);
               }}
+              {...(onJoinChannel === undefined
+                ? {}
+                : { onJoinChannel: () => onJoinChannel(network.id) })}
               {...(onBrowseChannels === undefined
                 ? {}
                 : { onBrowseChannels: () => onBrowseChannels(network.id) })}
@@ -166,6 +172,7 @@ interface NetworkGroupProps {
   readonly onDragStart: () => void;
   readonly onDragEnd: () => void;
   readonly onDropOn: () => void;
+  readonly onJoinChannel?: () => void;
   readonly onBrowseChannels?: () => void;
 }
 
@@ -181,6 +188,7 @@ function NetworkGroup({
   onDragStart,
   onDragEnd,
   onDropOn,
+  onJoinChannel,
   onBrowseChannels,
 }: NetworkGroupProps): ReactNode {
   const channels = [...network.channels.values()].filter((channel) => channel.joined);
@@ -221,6 +229,15 @@ function NetworkGroup({
             {collapsed ? '▸' : '▾'}
           </span>
         </button>
+
+        {onJoinChannel === undefined || network.phase !== 'registered' ? null : (
+          <IconButton
+            label={`Join a channel on ${network.name}`}
+            size="small"
+            icon={<span aria-hidden="true">＋</span>}
+            onClick={onJoinChannel}
+          />
+        )}
       </div>
 
       {collapsed ? null : (

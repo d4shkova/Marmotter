@@ -19,6 +19,7 @@ import { MessageRow } from './MessageRow.js';
 import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
+import { TextPrompt } from './TextPrompt.js';
 import { buildRows } from './rows.js';
 import type { TargetRef, Unread } from './view-store.js';
 
@@ -399,6 +400,29 @@ export const SettingsScreen: StoryObj = {
           onAddNetwork={() => {}}
         />
       </div>
+    );
+  },
+};
+
+export const JoinAChannel: StoryObj = {
+  render: function JoinAChannel() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Join a channel
+        </button>
+        <TextPrompt
+          open={open}
+          title="Join a channel"
+          label="Channel name"
+          placeholder="#marmotter"
+          hint="The # is added for you if you leave it off."
+          confirmLabel="Join"
+          onConfirm={() => setOpen(false)}
+          onCancel={() => setOpen(false)}
+        />
+      </>
     );
   },
 };
