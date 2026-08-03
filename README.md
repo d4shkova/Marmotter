@@ -84,6 +84,9 @@ pnpm e2e
 
 ## Building an installable app
 
+For the commands alone, with nothing between them, see the
+[build cheat sheet](./docs/BUILDING.md).
+
 One command, from a clean checkout:
 
 ```sh
