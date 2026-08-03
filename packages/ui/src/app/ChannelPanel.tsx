@@ -19,6 +19,7 @@ import {
   settingsFrom,
   unexplainedModes,
 } from './channel-settings.js';
+import { ChannelAccess } from './ChannelAccess.js';
 import { membersMatching } from './mask.js';
 
 export interface ChannelPanelProps {
@@ -74,7 +75,7 @@ const LIST_TABS: readonly {
   },
 ];
 
-type TabValue = 'settings' | ListKind;
+type TabValue = 'settings' | 'access' | ListKind;
 
 /**
  * Everything about a channel that is not its messages.
@@ -176,6 +177,7 @@ export function ChannelPanel({
         onChange={setTab}
         tabs={[
           { value: 'settings' as const, label: 'Settings' },
+          { value: 'access' as const, label: 'Permissions' },
           ...available.map((entry) => ({
             value: entry.kind,
             label: entry.label,
@@ -326,6 +328,8 @@ export function ChannelPanel({
               )}
             </ListGroup>
           </div>
+        ) : tab === 'access' ? (
+          <ChannelAccess className="py-2" network={network} channel={channel} onSend={onSend} />
         ) : listTab === undefined ? null : (
           <MaskList
             network={network}

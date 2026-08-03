@@ -19,6 +19,7 @@ import {
 import { AccountMenu } from './app/AccountMenu.js';
 import { AccountPanel } from './app/AccountPanel.js';
 import { AddNetwork } from './app/AddNetwork.js';
+import { ChannelAccess } from './app/ChannelAccess.js';
 import { ChannelBrowser } from './app/ChannelBrowser.js';
 import { ChannelPanel } from './app/ChannelPanel.js';
 import { Composer } from './app/Composer.js';
@@ -508,6 +509,36 @@ describe('every component passes axe', () => {
         }}
         onRefresh={noop}
         onJoin={noop}
+      />,
+    ],
+    [
+      'ChannelAccess',
+      <ChannelAccess
+        key="ca"
+        network={{
+          ...networkFixture(),
+          motd: ['Services provided by Atheme IRC Services'],
+          queries: new Map([
+            [
+              'chanserv',
+              {
+                ...emptyChannel('ChanServ'),
+                messages: [
+                  {
+                    ...messageFixture('c1', '1     tamsin                 +AFORefiorstv (FOUNDER)'),
+                    kind: 'notice' as const,
+                  },
+                  {
+                    ...messageFixture('c2', '2     jonquil                +AVvo'),
+                    kind: 'notice' as const,
+                  },
+                ],
+              },
+            ],
+          ]),
+        }}
+        channel={moderatedFixture()}
+        onSend={noop}
       />,
     ],
     [

@@ -341,18 +341,13 @@ a local Atheme-backed InspIRCd instance, verifying the abstraction works across
 two different services implementations. Every error path in the panels shows a
 human sentence, not a numeric — assert this in tests.
 
-> **Progress, 2026-08-03. The channel surface is in; the account surface is not.**
+> **Progress, 2026-08-03. Every row of the abstraction table is now built.**
 >
-> **In:** the channel settings panel driven by `CHANMODES`; the moderation
-> tables for bans, mutes, invite exceptions and ban exceptions, each with a
-> mask builder and Remove; the ban builder with scope, mask preview and
-> remove-with-reason; removal with a reason; the user profile card and the
-> channel browser, both landed earlier.
->
-> **Not yet in:** the account panel, the ChanServ permissions grid, the notify
-> list, client-side ignore's mask builder and expiry, the away control, invite
-> send and receive, and configurable CTCP replies. The acceptance criterion is
-> therefore not yet met.
+> The acceptance criterion above is *not* met, and the gap is specific: none of
+> this has been run against a local ergo or an Atheme-backed InspIRCd. Every
+> panel is unit-tested over its pure translation layer and checked with axe, but
+> the round trip is exactly the thing unit tests cannot stand in for. Phase 7
+> should not start until it has been done.
 >
 > Four decisions worth recording:
 >
@@ -377,6 +372,40 @@ human sentence, not a numeric — assert this in tests.
 > - **List modes are fetched when their tab is opened**, not on join. Four
 >   `MODE +b` queries per channel at join time is a burst of traffic for tables
 >   most people never open, and some networks rate-limit it.
+>
+> **The people surface.** Away is a switch with a message beside it, and coming
+> back is a thing you press — the state moves when the server says so, never
+> when we ask. The friends list runs on MONITOR, WATCH, or a slow WHOIS poll and
+> never says which, because it changes nothing a person can act on. Ignoring
+> somebody gets scope checkboxes and a duration rather than a timestamp.
+> Invitations became state, not a line that scrolls away: an `invite-notify`
+> about somebody else is not ours to accept, walking in answers the invitation
+> however the join happened, and dismissing sends nothing, because IRC has no
+> way to decline and a button that claimed otherwise would be lying.
+>
+> **The account surface.** Services are the least discoverable part of IRC, and
+> the packages disagree about everything. Detection reads ISUPPORT first (the
+> only signal that arrives before anyone speaks) then the network's own words,
+> and an unrecognised package still gets a working panel on the forms Atheme and
+> Anope share — while saying it is guessing. This matters more than it sounds:
+> ergo takes the email *before* the password, so sending Atheme's `REGISTER`
+> form would register somebody's password as their email address.
+>
+> **CTCP replies** finally exist. The protocol layer has been ready since Phase
+> 1; the reducer was not. `PING` echoes the asker's own payload because they are
+> timing it, `CLIENTINFO` advertises only what is switched on, a CTCP reply is
+> never itself answered, and none of it reaches the message list — a request is
+> a quiet notice naming what was asked in plain English.
+>
+> **The permissions grid follows the package rather than the spec.** CLAUDE.md
+> asks for members down the side and capabilities across the top, which is the
+> right shape for Atheme — and a lie on Anope and ergo, which store roles and
+> levels. A grid there would round somebody's choices to the nearest role and
+> silently discard the rest, so those packages get a role per person instead.
+> Two further rules: the grid diffs only the columns it displays, so it can
+> never strip a flag set by hand that it does not show; and services output is
+> parsed forgivingly and narrowly, showing the reply verbatim rather than a
+> confidently wrong table, because services output is not a protocol.
 
 ---
 

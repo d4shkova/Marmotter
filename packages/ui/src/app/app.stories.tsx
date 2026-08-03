@@ -19,6 +19,7 @@ import { AccountMenu } from './AccountMenu.js';
 import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
+import { ChannelAccess } from './ChannelAccess.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
@@ -491,6 +492,42 @@ export const RegisteringAName: StoryObj = {
   render: () => (
     <div className="w-[42rem]">
       <AccountPanel network={{ ...network(), account: undefined }} onSend={() => {}} />
+    </div>
+  ),
+};
+
+/** A network whose ChanServ has answered, so the grid has rows. */
+const withAthemeReplies = (): NetworkState => {
+  const base = network();
+  const notice = (id: string, text: string): Message => ({
+    ...say('ChanServ', text, 1),
+    id,
+    kind: 'notice',
+    target: 'ChanServ',
+  });
+  return {
+    ...base,
+    motd: ['Services provided by Atheme IRC Services'],
+    queries: new Map([
+      [
+        'chanserv',
+        {
+          ...emptyChannel('ChanServ'),
+          messages: [
+            notice('c1', '1     tamsin                 +AFORefiorstv (FOUNDER)'),
+            notice('c2', '2     jonquil                +AVvo'),
+            notice('c3', '3     bramble                +Vv'),
+          ],
+        },
+      ],
+    ]),
+  };
+};
+
+export const WhoCanDoWhat: StoryObj = {
+  render: () => (
+    <div className="w-[52rem]">
+      <ChannelAccess network={withAthemeReplies()} channel={moderatedChannel()} onSend={() => {}} />
     </div>
   ),
 };
