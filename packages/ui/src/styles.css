@@ -110,6 +110,38 @@
     color: var(--label-primary);
     font-family: var(--font-ui-stack);
     -webkit-font-smoothing: antialiased;
+
+    /*
+     * Tells the engine every native control here is a dark one.
+     *
+     * The `<meta name="color-scheme">` in each app's HTML is advisory and does
+     * not reach everything; this is the property that does. It governs the
+     * parts of a control the page does not draw — scrollbars, the focus ring
+     * on a checkbox, the popup a `select` opens — all of which otherwise come
+     * out in the platform's light palette against a black interface.
+     */
+    color-scheme: dark;
+  }
+
+  /*
+   * The list a `select` drops down is drawn by the platform, not by us.
+   *
+   * It inherits the page's text colour but not its background, so a light-blue
+   * label meant for a black interface lands on the platform's near-white popup
+   * and is barely legible — which is exactly what a directory of a hundred and
+   * thirty networks looked like. `color-scheme` fixes the chrome; these fix the
+   * rows, because on GTK WebKit in particular the popup takes its colours from
+   * the options themselves.
+   */
+  option {
+    background-color: var(--bg-elevated-2);
+    color: var(--label-primary);
+  }
+
+  optgroup {
+    background-color: var(--bg-elevated);
+    color: var(--label-secondary);
+    font-weight: 600;
   }
 
   body {

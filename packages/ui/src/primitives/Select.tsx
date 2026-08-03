@@ -23,6 +23,8 @@ export interface SelectProps extends Omit<
 > {
   readonly label: string;
   readonly labelHidden?: boolean;
+  /** A few words beside the label saying how it is operated. */
+  readonly labelNote?: string;
   readonly hint?: string;
   readonly error?: string;
   readonly options: readonly SelectOption[];
@@ -40,6 +42,7 @@ export interface SelectProps extends Omit<
 export function Select({
   label,
   labelHidden,
+  labelNote,
   hint,
   error,
   options,
@@ -58,32 +61,49 @@ export function Select({
       error={error}
       className={className}
       labelHidden={labelHidden}
+      labelNote={labelNote}
     >
-      <select
-        {...rest}
-        id={fieldId}
-        aria-invalid={error === undefined ? undefined : true}
-        aria-describedby={describedBy(fieldId, hint, error)}
-        className={cn(inputClasses(error !== undefined), 'appearance-none pr-8')}
-      >
-        {groupsOf(options).map(([group, entries]) =>
-          group === undefined ? (
-            entries.map((option) => (
-              <option key={option.value} value={option.value} disabled={option.disabled}>
-                {option.label}
-              </option>
-            ))
-          ) : (
-            <optgroup key={group} label={group}>
-              {entries.map((option) => (
+      {/* `appearance-none` takes the platform's arrow away, and `pr-8` holds
+          the space it used to sit in — so without this the control is a text
+          field with an unexplained gap on the right, and nothing about it says
+          it opens. The chevron is what makes it read as a menu. */}
+      <div className="relative">
+        <select
+          {...rest}
+          id={fieldId}
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={describedBy(fieldId, hint, error)}
+          className={cn(inputClasses(error !== undefined), 'cursor-pointer appearance-none pr-9')}
+        >
+          {groupsOf(options).map(([group, entries]) =>
+            group === undefined ? (
+              entries.map((option) => (
                 <option key={option.value} value={option.value} disabled={option.disabled}>
                   {option.label}
                 </option>
-              ))}
-            </optgroup>
-          ),
-        )}
-      </select>
+              ))
+            ) : (
+              <optgroup key={group} label={group}>
+                {entries.map((option) => (
+                  <option key={option.value} value={option.value} disabled={option.disabled}>
+                    {option.label}
+                  </option>
+                ))}
+              </optgroup>
+            ),
+          )}
+        </select>
+
+        <span
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute top-1/2 right-3 -translate-y-1/2',
+            'text-caption-1 text-[var(--label-tertiary)]',
+          )}
+        >
+          ▾
+        </span>
+      </div>
     </Field>
   );
 }

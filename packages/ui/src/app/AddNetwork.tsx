@@ -422,6 +422,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
         {editing === undefined ? (
           <Select
             label="Which network?"
+            labelNote="Click to select"
             value={choice}
             onChange={(event) => changeNetwork(event.target.value)}
             options={NETWORK_OPTIONS}
