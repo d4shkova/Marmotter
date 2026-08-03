@@ -31,6 +31,13 @@ describe('registration', () => {
     expect(registered.state.nick).toBe('marmot');
   });
 
+  // Several networks refuse a LIST for the first stretch of a connection, so
+  // the interface has to know how long a stretch it has been.
+  it('records when the server finished signing us in', () => {
+    expect(registeredSession().state.registeredAt).toBeInstanceOf(Date);
+    expect(newSession().state.registeredAt).toBeUndefined();
+  });
+
   it('adapts to the network rather than assuming defaults', () => {
     const session = registeredSession();
     expect(session.state.support.network).toBe('TestNet');

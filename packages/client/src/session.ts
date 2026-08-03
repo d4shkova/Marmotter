@@ -529,6 +529,9 @@ export function createSession(options: SessionOptions): Session {
       ...state,
       phase: 'disconnected',
       lastClose: reason,
+      // How long we have been signed in is a fact about a connection, not about
+      // a network. The next one starts the clock again.
+      registeredAt: undefined,
       batches: new Map(),
       channels: new Map(
         [...state.channels].map(([key, channel]) => [

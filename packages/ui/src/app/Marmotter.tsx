@@ -26,6 +26,7 @@ import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { InviteBanner } from './Invites.js';
 import { ListPrompt } from './ListPrompt.js';
+import { describeWait, listReadiness } from './list-guard.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -329,7 +330,18 @@ export function Marmotter({
   // can flood the window: the browser's own button, and `/list` typed into the
   // composer. A request that already names a pattern is somebody who has
   // narrowed it on purpose and is sent as asked; a bare one asks first.
+  //
+  // Both wait out the network's own gate first. A `LIST` sent in the first
+  // minute and a half comes back as "unknown command", which is what the server
+  // said and not what it meant, and passing that on teaches somebody that the
+  // feature is broken rather than that it is early.
   const askForList = (networkId: string, pattern?: string): void => {
+    const state = registry.networks.get(networkId);
+    const readiness = listReadiness(state ?? { registeredAt: undefined });
+    if (!readiness.ready) {
+      toast(describeWait(state?.name ?? 'This network', readiness.waitSeconds), 'error');
+      return;
+    }
     if (pattern !== undefined && pattern !== '') {
       registry.sessionOf(networkId)?.listChannels(pattern);
       return;

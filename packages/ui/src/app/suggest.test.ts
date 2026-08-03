@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COMMANDS } from './commands.js';
 import { emojiFor, replaceShortcodes, suggestEmoji } from './emoji.js';
 import { applySuggestion, computeSuggestions } from './suggest.js';
 
@@ -43,6 +44,36 @@ describe('what the composer offers', () => {
 
   it('does not treat a colon inside a word as a shortcode', () => {
     expect(computeSuggestions('https://example.com', 19)).toBeUndefined();
+  });
+
+  // Right-clicking an empty composer asks for the whole list, for somebody who
+  // does not already know that `/` produces one.
+  it('offers every command on an empty line when asked outright', () => {
+    const suggestions = computeSuggestions('', 0, { offerCommands: true });
+    expect(suggestions?.kind).toBe('command');
+    expect(suggestions?.items.length).toBe(COMMANDS.length);
+    expect(suggestions?.items.map((item) => item.label)).toContain('/join');
+  });
+
+  it('cuts the typed list short but not the browsed one', () => {
+    const typed = computeSuggestions('/', 1);
+    const browsed = computeSuggestions('', 0, { offerCommands: true });
+    expect(typed?.items.length).toBeLessThan(browsed?.items.length ?? 0);
+  });
+
+  it('leaves a line with something on it to the usual rules', () => {
+    expect(computeSuggestions('hello', 5, { offerCommands: true })).toBeUndefined();
+  });
+
+  it('splices a browsed command into the empty line', () => {
+    const suggestions = computeSuggestions('', 0, { offerCommands: true });
+    const item = suggestions?.items.find((entry) => entry.label === '/join');
+    expect(suggestions).toBeDefined();
+    expect(item).toBeDefined();
+    if (suggestions === undefined || item === undefined) {
+      return;
+    }
+    expect(applySuggestion('', suggestions, item)).toEqual({ text: '/join #', caret: 7 });
   });
 
   // `/join` carries the `#` its argument always starts with, so picking it out

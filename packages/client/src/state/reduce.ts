@@ -105,6 +105,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     support: DEFAULT_ISUPPORT,
     caps: INITIAL_CAP_STATE,
     serverName: '',
+    registeredAt: undefined,
     channelCount: undefined,
     motd: [],
     serverNotices: [],
@@ -1051,6 +1052,7 @@ function reduceNumeric(
         ...state,
         phase: 'registered',
         nick: event.nick,
+        registeredAt: now(),
         serverName: msg.source?.nick ?? state.serverName,
       });
 
