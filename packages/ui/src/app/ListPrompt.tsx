@@ -79,7 +79,10 @@ export function ListPrompt({
         }}
       >
         <p className="text-subhead text-[var(--label-secondary)]">
-          {channelCount === undefined
+          {/* A count of zero is a number the network gave us and not a reason
+              for anything, so it gets the general sentence rather than
+              "asking for all of them means 0 replies". */}
+          {channelCount === undefined || channelCount === 0
             ? `Asking for every channel on a busy network means tens of thousands of replies arriving over several seconds, and the window will be slower while they do.`
             : `${networkName} has ${channelCount.toLocaleString()} channels. Asking for all of them means ${channelCount.toLocaleString()} replies arriving over several seconds, and the window will be slower while they do.`}{' '}
           Marmotter keeps the first {limit.toLocaleString()} and shows them as they arrive.
