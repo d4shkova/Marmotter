@@ -69,9 +69,11 @@ implementations that disagree:
 sudo apt-get install -y inspircd anope
 # Anope's packaged config is root:irc 0640, and the suite reads it as you.
 sudo chmod a+r /etc/anope/*.conf
-# InspIRCd's AppArmor profile confines it to /etc/inspircd; the suite runs a
-# throwaway server from a generated config in the workspace.
+# Both ship an AppArmor profile confining the daemon to the directories it was
+# installed with; the suite runs throwaway servers from generated configs in
+# the workspace.
 sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.inspircd
+sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.anope
 ```
 
 Then, which starts every server it needs and the app itself:

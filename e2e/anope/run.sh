@@ -14,6 +14,28 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 run="$here/.run"
 
+# Both packages ship an AppArmor profile confining their daemon to the system
+# directories it was installed with. That is right for the daemon the package
+# runs and wrong for a throwaway server reading a generated config out of a
+# workspace, and the denial it produces reads as "could not open the file".
+apparmor_hint() {
+  # Spelled out rather than chained with `&&`: under `set -e` a false test
+  # would end the script, and this only ever runs when something has already
+  # gone wrong and the message is the whole point.
+  local profiles=()
+  if [ -e /etc/apparmor.d/usr.sbin.inspircd ]; then
+    profiles+=(/etc/apparmor.d/usr.sbin.inspircd)
+  fi
+  if [ -e /etc/apparmor.d/usr.sbin.anope ]; then
+    profiles+=(/etc/apparmor.d/usr.sbin.anope)
+  fi
+  if [ ${#profiles[@]} -gt 0 ]; then
+    echo "     If it could not open its configuration, AppArmor denied the read." >&2
+    echo "     Unload the profiles for this machine with:" >&2
+    echo "     sudo apparmor_parser -R ${profiles[*]}" >&2
+  fi
+}
+
 "$here/setup.sh" > /dev/null
 
 # `--runasroot` only matters when this runs as root, which is true in some
@@ -36,12 +58,7 @@ for _ in $(seq 1 40); do
   fi
   if ! kill -0 "$ircd" 2>/dev/null; then
     echo "e2e: InspIRCd exited before it started listening" >&2
-    if [ -e /etc/apparmor.d/usr.sbin.inspircd ]; then
-      echo "     If it could not read its config: the packaged InspIRCd has an" >&2
-      echo "     AppArmor profile confining it to /etc/inspircd, and this one" >&2
-      echo "     reads a generated config from the workspace. Unload it with:" >&2
-      echo "     sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.inspircd" >&2
-    fi
+    apparmor_hint
     wait "$ircd"
     exit 1
   fi
@@ -50,5 +67,19 @@ done
 
 anope --confdir="$run/conf" --dbdir="$run/data" --logdir="$run/logs" \
   --modulesdir=/usr/lib/anope --nofork >&2 &
+services=$!
+
+# Anope refusing to start used to surface thirty seconds later as a test whose
+# `beforeAll` timed out waiting for NickServ, which says nothing about why.
+# Polled rather than checked once: how long it takes to give up on a config it
+# cannot read is not something to guess at.
+for _ in $(seq 1 20); do
+  sleep 0.5
+  if ! kill -0 "$services" 2>/dev/null; then
+    echo "e2e: Anope exited instead of linking" >&2
+    apparmor_hint
+    exit 1
+  fi
+done
 
 wait $ircd
