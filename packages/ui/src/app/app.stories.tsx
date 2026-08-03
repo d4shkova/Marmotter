@@ -13,7 +13,9 @@ import { TabBar } from '../layout/TabBar.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
+import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -134,6 +136,36 @@ const directory = (): ChannelDirectory => ({
   loading: false,
   complete: true,
   truncated: false,
+});
+
+/** A channel with settings and lists to look at, for the channel panel. */
+const moderatedChannel = (): ChannelState => ({
+  ...channel(),
+  modes: {
+    flags: new Set(['n', 't', 'm', 'l']),
+    params: new Map([['l', '120']]),
+  },
+  lists: {
+    ban: [
+      { mask: '*!*@spam.example', setBy: 'jonquil', at: at(0) },
+      { mask: 'troublemaker!*@*', setBy: 'tamsin', at: at(1) },
+    ],
+    quiet: [{ mask: '*!*@noisy.example', setBy: 'jonquil', at: at(2) }],
+    invite: [],
+    except: [{ mask: '*!*@trusted.example', setBy: 'tamsin', at: undefined }],
+  },
+});
+
+/** Somebody to build a ban against. */
+const troublemaker = () => ({
+  nick: 'corvid',
+  user: '~c',
+  host: 'pool-31.isp.example',
+  account: 'corvid_acct',
+  realname: 'corvid',
+  away: false,
+  bot: false,
+  prefixes: '',
 });
 
 const failedNetwork = (): NetworkState => ({
@@ -312,6 +344,72 @@ export const BrowsingChannelsWhileLoading: StoryObj = {
         onJoin={() => {}}
       />
     </div>
+  ),
+};
+
+export const TheChannelPanel: StoryObj = {
+  render: function TheChannelPanel() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Channel settings
+        </button>
+        <ChannelPanel
+          open={open}
+          onClose={() => setOpen(false)}
+          network={network()}
+          channel={moderatedChannel()}
+          onSend={() => {}}
+        />
+      </>
+    );
+  },
+};
+
+export const TheChannelPanelWithoutOps: StoryObj = {
+  render: () => (
+    <ChannelPanel
+      open
+      onClose={() => {}}
+      network={network()}
+      channel={moderatedChannel()}
+      onSend={() => {}}
+      canModerate={false}
+    />
+  ),
+};
+
+export const BuildingABan: StoryObj = {
+  render: function BuildingABan() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Ban somebody
+        </button>
+        <BanDialog
+          open={open}
+          onClose={() => setOpen(false)}
+          network={network()}
+          channel={moderatedChannel()}
+          member={troublemaker()}
+          onSend={() => {}}
+        />
+      </>
+    );
+  },
+};
+
+export const RemovingSomebody: StoryObj = {
+  render: () => (
+    <KickDialog
+      open
+      onClose={() => {}}
+      channel={moderatedChannel()}
+      member={troublemaker()}
+      onSend={() => {}}
+    />
   ),
 };
 

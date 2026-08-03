@@ -19,7 +19,9 @@ import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
+import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { RawLog } from './RawLog.js';
@@ -28,7 +30,7 @@ import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { parseInput } from './commands.js';
-import { memberActions } from './member-actions.js';
+import { canModerateChannel, memberActions } from './member-actions.js';
 import {
   type Notifier,
   buildNotification,
@@ -92,6 +94,12 @@ export function Marmotter({
   const [joiningNetwork, setJoiningNetwork] = useState<string | undefined>(undefined);
   /** Whose profile card is open, if any. */
   const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
+  /** Whether the channel settings and moderation sheet is open. */
+  const [channelPanelOpen, setChannelPanelOpen] = useState(false);
+  /** The member a ban or a removal is being built for, and which of the two. */
+  const [acting, setActing] = useState<{ member: Member; kind: 'ban' | 'kick' } | undefined>(
+    undefined,
+  );
 
   const toast = useCallback((text: string, tone: ToastMessage['tone'] = 'info') => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -313,6 +321,11 @@ export function Marmotter({
           toast(`Ignoring ${nick}. You won't see their messages.`);
         },
         onSend: (line) => session.send(line),
+        // Neither of these acts immediately. A ban is a decision about how wide
+        // to cast it, and a removal is one somebody should be able to explain —
+        // so both open a builder rather than firing a default.
+        onBanBuilder: (target) => setActing({ member: target, kind: 'ban' }),
+        onKickBuilder: (target) => setActing({ member: target, kind: 'kick' }),
       },
     });
   };
@@ -402,12 +415,20 @@ export function Marmotter({
             )}
             {conversation !== undefined && selection?.target !== undefined && network !== undefined
               ? isChannel(selection.target, network.support) && (
-                  <IconButton
-                    label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
-                    icon={<span aria-hidden="true">≡</span>}
-                    pressed={view.memberListOpen}
-                    onClick={() => view.setMemberListOpen(!view.memberListOpen)}
-                  />
+                  <>
+                    <IconButton
+                      label="Channel settings"
+                      icon={<span aria-hidden="true">⚙</span>}
+                      pressed={channelPanelOpen}
+                      onClick={() => setChannelPanelOpen(true)}
+                    />
+                    <IconButton
+                      label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
+                      icon={<span aria-hidden="true">≡</span>}
+                      pressed={view.memberListOpen}
+                      onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                    />
+                  </>
                 )
               : null}
           </>
@@ -572,6 +593,42 @@ export function Marmotter({
         onConfirm={joinChannel}
         onCancel={() => setJoiningNetwork(undefined)}
       />
+
+      {network === undefined ||
+      conversation === undefined ||
+      session === undefined ||
+      selection?.target === undefined ||
+      !isChannel(selection.target, network.support) ? null : (
+        <>
+          <ChannelPanel
+            open={channelPanelOpen}
+            onClose={() => setChannelPanelOpen(false)}
+            network={network}
+            channel={conversation}
+            onSend={(line) => session.send(line)}
+            canModerate={canModerateChannel(network, conversation, network.nick)}
+          />
+
+          {acting === undefined ? null : acting.kind === 'ban' ? (
+            <BanDialog
+              open
+              onClose={() => setActing(undefined)}
+              network={network}
+              channel={conversation}
+              member={acting.member}
+              onSend={(line) => session.send(line)}
+            />
+          ) : (
+            <KickDialog
+              open
+              onClose={() => setActing(undefined)}
+              channel={conversation}
+              member={acting.member}
+              onSend={(line) => session.send(line)}
+            />
+          )}
+        </>
+      )}
 
       {profileNick === undefined || network === undefined ? null : (
         <WhoisCard

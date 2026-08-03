@@ -341,6 +341,43 @@ a local Atheme-backed InspIRCd instance, verifying the abstraction works across
 two different services implementations. Every error path in the panels shows a
 human sentence, not a numeric — assert this in tests.
 
+> **Progress, 2026-08-03. The channel surface is in; the account surface is not.**
+>
+> **In:** the channel settings panel driven by `CHANMODES`; the moderation
+> tables for bans, mutes, invite exceptions and ban exceptions, each with a
+> mask builder and Remove; the ban builder with scope, mask preview and
+> remove-with-reason; removal with a reason; the user profile card and the
+> channel browser, both landed earlier.
+>
+> **Not yet in:** the account panel, the ChanServ permissions grid, the notify
+> list, client-side ignore's mask builder and expiry, the away control, invite
+> send and receive, and configurable CTCP replies. The acceptance criterion is
+> therefore not yet met.
+>
+> Four decisions worth recording:
+>
+> - **A mode letter nobody can describe gets no control.** The panel builds
+>   itself from `CHANMODES`, but only shows a switch where the decoder has a
+>   sentence for the letter. Inventing a label would put a control in front of
+>   somebody with no way to know what it does; those letters stay reachable
+>   from the command bar, and the panel's footer says so. Same rule for the
+>   tabs: a network with no mute list gets no Muted tab.
+> - **Replacing a channel password takes two changes, not one.** Most ircds
+>   refuse a second `+k` rather than replacing the key, so the diff emits
+>   `-k+k old new`. This is the kind of thing that works against the one server
+>   you tested and fails everywhere else, which is why it is a test and not a
+>   comment.
+> - **`EXTBAN` decides whether an account ban is offered at all.** The prefix
+>   differs by ircd, and a network advertising no `a` extban never sees the
+>   option — per CLAUDE.md, a ban type the network cannot enforce is never
+>   offered. Cloaks widen from the right (`libera/staff/*`) and DNS names from
+>   the left (`*.isp.example`), because the two read in opposite directions;
+>   IPv6 is never widened, since guessing a prefix length from text is how a
+>   client bans a continent.
+> - **List modes are fetched when their tab is opened**, not on join. Four
+>   `MODE +b` queries per channel at join time is a burst of traffic for tables
+>   most people never open, and some networks rate-limit it.
+
 ---
 
 ## Phase 7 — Local logging

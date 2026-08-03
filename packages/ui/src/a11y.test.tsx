@@ -12,7 +12,10 @@ import {
 } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
 import { AddNetwork } from './app/AddNetwork.js';
+import { ChannelBrowser } from './app/ChannelBrowser.js';
+import { ChannelPanel } from './app/ChannelPanel.js';
 import { Composer } from './app/Composer.js';
+import { BanDialog, KickDialog } from './app/MemberDialogs.js';
 import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
@@ -123,6 +126,30 @@ const networkFixture = (): NetworkState => ({
     { at: new Date('2026-08-02T09:00:00.000Z'), direction: 'out', line: 'CAP LS 302' },
     { at: new Date('2026-08-02T09:00:01.000Z'), direction: 'in', line: ':srv 001 marmot :Welcome' },
   ],
+});
+
+/** A channel with settings and lists set, so the panel has something to render. */
+const moderatedFixture = (): ChannelState => ({
+  ...channelFixture(),
+  topic: { text: 'Building a nicer IRC client', setBy: 'tamsin', at: new Date(0) },
+  modes: { flags: new Set(['n', 't', 'l']), params: new Map([['l', '120']]) },
+  lists: {
+    ban: [{ mask: '*!*@spam.example', setBy: 'jonquil', at: new Date(0) }],
+    quiet: [],
+    invite: [],
+    except: [],
+  },
+});
+
+const memberFixture = () => ({
+  nick: 'corvid',
+  user: '~c',
+  host: 'pool-31.isp.example',
+  account: 'corvid_acct',
+  realname: 'corvid',
+  away: false,
+  bot: false,
+  prefixes: '',
 });
 
 const noop = (): void => {};
@@ -453,6 +480,57 @@ describe('every component passes axe', () => {
         channel={channelFixture()}
         onMessage={noop}
         menuFor={() => [{ id: 'm', label: 'Send a message', onSelect: noop }]}
+      />,
+    ],
+    [
+      'ChannelBrowser',
+      <ChannelBrowser
+        key="cb"
+        network={{
+          ...networkFixture(),
+          directory: {
+            entries: [{ channel: '#marmotter', members: 42, topic: 'Building the client' }],
+            loading: false,
+            complete: true,
+            truncated: false,
+          },
+        }}
+        onRefresh={noop}
+        onJoin={noop}
+      />,
+    ],
+    [
+      'ChannelPanel',
+      <ChannelPanel
+        key="cp"
+        open
+        onClose={noop}
+        network={networkFixture()}
+        channel={moderatedFixture()}
+        onSend={noop}
+      />,
+    ],
+    [
+      'BanDialog',
+      <BanDialog
+        key="bd"
+        open
+        onClose={noop}
+        network={networkFixture()}
+        channel={moderatedFixture()}
+        member={memberFixture()}
+        onSend={noop}
+      />,
+    ],
+    [
+      'KickDialog',
+      <KickDialog
+        key="kd"
+        open
+        onClose={noop}
+        channel={moderatedFixture()}
+        member={memberFixture()}
+        onSend={noop}
       />,
     ],
   ])('%s', async (_name, ui) => {
