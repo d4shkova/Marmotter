@@ -26,6 +26,6 @@
     "packages/*/.storybook/*.ts",
     "packages/*/.storybook/*.tsx",
     "vitest.config.ts",
-    "vitest.alias.ts"
+    "workspace.alias.ts"
   ]
 }
