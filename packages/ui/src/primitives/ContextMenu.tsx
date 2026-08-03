@@ -1,6 +1,7 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 import { useDismissOnOutsideClick } from '../lib/focus.js';
+import { type Placement, fit } from '../lib/placement.js';
 
 export interface MenuItem {
   readonly id: string;
@@ -44,10 +45,13 @@ export function ContextMenu({
 }: ContextMenuProps): ReactNode {
   const menu = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
+  const [placement, setPlacement] = useState<Placement | undefined>(undefined);
   const dismiss = useCallback(() => onClose(), [onClose]);
   useDismissOnOutsideClick(menu, open, dismiss);
 
   const enabled = items.filter((item) => item.disabled !== true);
+  const anchorX = at?.x;
+  const anchorY = at?.y;
 
   useEffect(() => {
     if (open) {
@@ -55,6 +59,36 @@ export function ContextMenu({
       menu.current?.focus();
     }
   }, [open]);
+
+  // Keeping the menu inside the window. A menu opened near the right edge or
+  // near the bottom of a small window used to run off it, taking half its
+  // actions with it — and the actions that fell off were the destructive ones
+  // at the end, which are the ones somebody is most likely to be looking for.
+  // Measured before paint, so the menu never appears in the wrong place first.
+  useLayoutEffect(() => {
+    if (!open || anchorX === undefined || anchorY === undefined) {
+      setPlacement(undefined);
+      return;
+    }
+
+    const place = (): void => {
+      const element = menu.current;
+      if (element === null) {
+        return;
+      }
+      setPlacement(
+        fit(
+          { x: anchorX, y: anchorY },
+          { width: element.offsetWidth, height: element.scrollHeight },
+          { width: window.innerWidth, height: window.innerHeight },
+        ),
+      );
+    };
+
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [open, anchorX, anchorY, items]);
 
   if (!open) {
     return null;
@@ -76,7 +110,16 @@ export function ContextMenu({
       role="menu"
       aria-label={label}
       tabIndex={-1}
-      style={at === undefined ? undefined : { position: 'fixed', left: at.x, top: at.y }}
+      style={
+        at === undefined
+          ? undefined
+          : {
+              position: 'fixed',
+              left: placement?.left ?? at.x,
+              top: placement?.top ?? at.y,
+              ...(placement === undefined ? {} : { maxHeight: placement.maxHeight }),
+            }
+      }
       onKeyDown={(event) => {
         switch (event.key) {
           case 'ArrowDown':
@@ -114,7 +157,7 @@ export function ContextMenu({
         }
       }}
       className={cn(
-        'z-50 min-w-52 overflow-hidden rounded-card py-1',
+        'z-50 min-w-52 overflow-y-auto rounded-card py-1',
         'bg-[var(--bg-elevated-2)] [backdrop-filter:var(--blur-vibrancy)]',
         'border border-[var(--separator)] shadow-xl',
         className,

@@ -23,7 +23,9 @@ async function addNetwork(page: Page, nick: string): Promise<void> {
   const sheet = page.getByRole('dialog', { name: 'Add a network' });
   await expect(sheet).toBeVisible();
 
-  await sheet.getByRole('radio', { name: 'Somewhere else' }).check();
+  // The network picker is a directory of a hundred and thirty, so "somewhere
+  // else" is an option in it rather than a fourth radio button.
+  await sheet.getByLabel('Which network?').selectOption('custom');
   await sheet.getByRole('radio', { name: 'A web address' }).check();
   await sheet.getByLabel('Name', { exact: true }).fill('Test network');
   await sheet.getByLabel('Web address', { exact: true }).fill('ws://127.0.0.1:18097/');
@@ -142,8 +144,17 @@ test.describe('the panels that translate IRC', () => {
     const nick = NICK();
     const channel = `#e2e${Math.floor(Math.random() * 100_000)}`;
 
+    // The client will not ask for a channel list in the first ninety seconds of
+    // a connection, because several networks answer one that early with
+    // "unknown command". ergo would answer fine, so the wait is stepped over
+    // rather than sat through — the window itself is covered by
+    // `packages/ui/src/app/list-guard.test.ts`.
+    await page.clock.install();
+    await page.clock.resume();
+
     await addNetwork(page, nick);
     await joinChannel(page, channel);
+    await page.clock.fastForward('01:40');
 
     await page
       .getByRole('button', { name: /browse channels on/i })
@@ -154,7 +165,19 @@ test.describe('the panels that translate IRC', () => {
       .first()
       .click();
 
-    await expect(page.getByText(channel).first()).toBeVisible({ timeout: 15_000 });
+    // Asking for every channel on a network is a decision, so it is confirmed
+    // rather than fired off by the button.
+    const ask = page.getByRole('dialog', { name: /^Channels on/ });
+    await expect(ask).toBeVisible();
+    await ask.getByRole('button', { name: 'Ask for all of them' }).click();
+
+    // Scoped to the browser rather than the whole page. The channel was joined
+    // a moment ago, so its name is in the sidebar too — and an assertion that
+    // matches the sidebar passes whether or not a single row was ever listed,
+    // which is exactly what this one used to do.
+    const browser = page.getByRole('main');
+    await expect(browser.getByText(channel).first()).toBeVisible({ timeout: 15_000 });
+    await expect(browser.getByText(/\d+ channels?\./)).toBeVisible({ timeout: 15_000 });
   });
 
   // The CTCP request path is deliberately not tested here. ergo's WebSocket

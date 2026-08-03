@@ -242,6 +242,24 @@ export interface NetworkState {
   readonly support: ISupport;
   readonly caps: CapState;
   readonly serverName: string;
+  /**
+   * When the server finished signing us in, or undefined before it has.
+   *
+   * Kept because several networks refuse commands for the first stretch of a
+   * connection — a `LIST` sent too early comes back as "unknown command" rather
+   * than as anything explicable — and the only way to say so in advance is to
+   * know how long we have been here.
+   */
+  readonly registeredAt: Date | undefined;
+  /**
+   * How many channels the network says it has, from its sign-in summary.
+   *
+   * Undefined on a server that does not say. Kept because it is the one figure
+   * that lets the interface warn about a channel list *before* asking for it —
+   * "this network has 24,000 channels" is a reason somebody can act on, where
+   * "this might be large" is a hedge they will click past.
+   */
+  readonly channelCount: number | undefined;
   /** MOTD lines, collapsed into one expandable item by the interface. */
   readonly motd: readonly string[];
   /** Server-info numerics, shown in the server tab. */

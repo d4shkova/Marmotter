@@ -39,8 +39,21 @@ export interface Suggestions {
   readonly to: number;
 }
 
-/** How many rows the popup shows at once. */
+/** How many rows the popup shows at once while it is narrowing as you type. */
 const LIMIT = 8;
+
+export interface SuggestOptions {
+  /**
+   * Show every command on an empty line, unasked.
+   *
+   * For somebody who right-clicked an empty composer to find out what there is,
+   * rather than somebody typing `/` who is already narrowing. Nothing narrows
+   * this list yet, so it is not cut short the way the typed one is.
+   */
+  readonly offerCommands?: boolean;
+  /** Whether this network's operator commands are offered. */
+  readonly operator?: boolean;
+}
 
 /**
  * The suggestions for a caret position, or undefined for none.
@@ -48,15 +61,26 @@ const LIMIT = 8;
  * Deliberately a pure function of the text and the caret so it can be reasoned
  * about — and tested — without a DOM.
  */
-export function computeSuggestions(value: string, caret: number): Suggestions | undefined {
+export function computeSuggestions(
+  value: string,
+  caret: number,
+  options: SuggestOptions = {},
+): Suggestions | undefined {
   const before = value.slice(0, caret);
+
+  const operator = { operator: options.operator === true };
+
+  if (options.offerCommands === true && value === '') {
+    const items = suggestCommands('', operator).map(commandItem);
+    return items.length === 0 ? undefined : { kind: 'command', items, from: 0, to: caret };
+  }
 
   // A command, only while the caret is still inside the command word at the
   // start of the line. `//` is the escape for a literal slash, not a command.
   const command = /^\/([a-z0-9]*)$/i.exec(before);
   if (command !== null) {
     const prefix = command[1] ?? '';
-    const items = suggestCommands(prefix).slice(0, LIMIT).map(commandItem);
+    const items = suggestCommands(prefix, operator).slice(0, LIMIT).map(commandItem);
     return items.length === 0 ? undefined : { kind: 'command', items, from: 0, to: caret };
   }
 
@@ -92,8 +116,11 @@ function commandItem(spec: CommandSpec): SuggestionItem {
     detail: spec.summary,
     ...(spec.alsoAt === undefined ? {} : { alsoAt: spec.alsoAt }),
     // The trailing space is the point: accepting a command leaves the caret
-    // ready for its first argument rather than jammed against the name.
-    insert: `/${spec.name} `,
+    // ready for its first argument rather than jammed against the name. Where
+    // the argument always starts with a particular character, that goes in too
+    // — picking `/join` should leave `/join #` and a caret, not a command the
+    // user has to already know how to finish.
+    insert: `/${spec.name} ${spec.argPrefix ?? ''}`,
   };
 }
 

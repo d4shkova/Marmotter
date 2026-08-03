@@ -198,6 +198,27 @@ describe('nick colours', () => {
   });
 });
 
+describe('sidebar row colours', () => {
+  const sidebar = resolve('--bg-elevated') ?? '#101720';
+  const rows = [
+    { token: '--label-channel', value: resolve('--label-channel') ?? '' },
+    { token: '--label-person', value: resolve('--label-person') ?? '' },
+  ];
+
+  it.each(rows)('$token clears 4.5:1 against the sidebar', ({ value }) => {
+    expect(contrast(value, sidebar)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // They exist to be told apart at a glance. Two near-identical blues would be
+  // decoration rather than a distinction.
+  it('keeps a channel and a person far enough apart to read as different', () => {
+    const [channel, person] = rows;
+    expect(channel).toBeDefined();
+    expect(person).toBeDefined();
+    expect(perceptualDistance(channel?.value ?? '', person?.value ?? '')).toBeGreaterThan(40);
+  });
+});
+
 describe('typography, geometry, and motion', () => {
   it('defines the iOS text styles', () => {
     for (const style of [

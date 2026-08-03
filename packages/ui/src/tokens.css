@@ -100,6 +100,13 @@
   --status-connecting: var(--blue-700);
   --status-failed: var(--red-500);
 
+  /* Sidebar conversation rows. A channel, a person and a network are three
+     different kinds of thing, and telling them apart at a glance is what stops
+     the sidebar reading as one flat list of names. All three stay inside the
+     blue family: this is a distinction, not decoration. */
+  --label-channel: var(--blue-300);
+  --label-person: var(--periwinkle-300);
+
   /* Nick colours, hashed from the normalised nick. Every one clears 4.5:1
      against --bg-base; packages/ui/src/tokens.test.ts asserts it. Within one
      hue family they separate mostly by lightness, so the ramp is spread wide. */

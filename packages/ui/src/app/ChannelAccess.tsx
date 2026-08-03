@@ -16,6 +16,14 @@ import {
 } from './chanserv.js';
 import { detectServices, probeServices, servicesProbed } from './services.js';
 
+/**
+ * How long to wait for a service to answer before saying it did not.
+ *
+ * Long enough that a slow network is not accused of silence, short enough that
+ * somebody does not sit watching a spinner wondering whether it is their fault.
+ */
+const ANSWER_TIMEOUT_MS = 8_000;
+
 export interface ChannelAccessProps {
   readonly network: NetworkState;
   readonly channel: ChannelState;
@@ -69,30 +77,66 @@ export function ChannelAccess({
   // be sent, so the version question goes first and the list follows once the
   // answer has arrived.
   const probed = servicesProbed(network);
-  const askedVersion = useRef(false);
+  /** Bumped by "Try again", which re-asks and restarts the wait. */
+  const [attempt, setAttempt] = useState(0);
+  /** True once the question has gone unanswered long enough to say so. */
+  const [gaveUp, setGaveUp] = useState(false);
+
+  const askedVersion = useRef(-1);
   useEffect(() => {
-    if (probed || askedVersion.current) {
+    if (probed || askedVersion.current === attempt) {
       return;
     }
-    askedVersion.current = true;
+    askedVersion.current = attempt;
     onSend(probeServices());
-  }, [probed, onSend]);
+  }, [probed, onSend, attempt]);
 
-  const asked = useRef(false);
+  // IRC has no failure reply for a question nobody is listening to. A network
+  // with no channel service — or one whose service will not answer somebody
+  // without the standing to ask — simply says nothing, and a spinner waiting
+  // on nothing spins until the window closes. So the wait is bounded and its
+  // end is a sentence rather than a stall.
   useEffect(() => {
-    if (asked.current || !probed || commands.model === 'unsupported') {
+    if (probed) {
+      setGaveUp(false);
       return;
     }
-    asked.current = true;
-    onSend(commands.list(channel.name));
-  }, [commands, channel.name, onSend, probed]);
+    setGaveUp(false);
+    const timer = setTimeout(() => setGaveUp(true), ANSWER_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [probed, attempt]);
 
-  if (!probed) {
+  const asked = useRef(-1);
+  useEffect(() => {
+    if (asked.current === attempt || !probed || commands.model === 'unsupported') {
+      return;
+    }
+    asked.current = attempt;
+    onSend(commands.list(channel.name));
+  }, [commands, channel.name, onSend, probed, attempt]);
+
+  if (!probed && !gaveUp) {
     return (
       <div className={className}>
         <div className="flex justify-center py-8">
           <Spinner label="Asking the network how it stores permissions" />
         </div>
+      </div>
+    );
+  }
+
+  if (!probed) {
+    return (
+      <div className={className}>
+        <EmptyState
+          title="This network did not answer"
+          description={`Nothing replied to Marmotter's question about how ${network.name} stores permissions. Either it runs no channel service, or its service does not answer people who are not already signed in to an account with standing in ${channel.name}. You can still set permissions from the command bar, and the raw log shows exactly what was sent and what came back.`}
+          action={
+            <Button variant="primary" onClick={() => setAttempt((current) => current + 1)}>
+              Try again
+            </Button>
+          }
+        />
       </div>
     );
   }

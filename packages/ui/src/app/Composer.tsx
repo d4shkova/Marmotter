@@ -29,6 +29,13 @@ export interface ComposerProps {
    * conversation to send to but every command still works.
    */
   readonly commandsOnly?: boolean;
+  /**
+   * Whether this network's operator commands are offered in the list.
+   *
+   * Set from the network profile. Typing one in full still works either way —
+   * this decides what is suggested, not what is permitted.
+   */
+  readonly operatorCommands?: boolean;
   readonly className?: string;
 }
 
@@ -58,9 +65,11 @@ export function Composer({
   disabled = false,
   disabledReason,
   commandsOnly = false,
+  operatorCommands = false,
   className,
 }: ComposerProps): ReactNode {
   const field = useRef<HTMLTextAreaElement>(null);
+  const popup = useRef<HTMLUListElement>(null);
   const completion = useRef<CompletionState | undefined>(undefined);
   const typingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [history, setHistory] = useState<readonly string[]>([]);
@@ -70,10 +79,18 @@ export function Composer({
   const [highlighted, setHighlighted] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** Whether the whole command list was asked for outright, on an empty line. */
+  const [browsing, setBrowsing] = useState(false);
 
   const suggestions = useMemo(
-    () => (dismissed ? undefined : computeSuggestions(value, caret)),
-    [value, caret, dismissed],
+    () =>
+      dismissed
+        ? undefined
+        : computeSuggestions(value, caret, {
+            offerCommands: browsing,
+            operator: operatorCommands,
+          }),
+    [value, caret, dismissed, browsing, operatorCommands],
   );
   const active = suggestions?.items[Math.min(highlighted, suggestions.items.length - 1)];
 
@@ -87,6 +104,18 @@ export function Composer({
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
   }, [value]);
+
+  // The popup scrolls once the list is longer than it is — which the browse
+  // list is — so walking it with the arrow keys has to bring the highlighted
+  // row along rather than leaving it above the fold.
+  useEffect(() => {
+    if (active === undefined) {
+      return;
+    }
+    popup.current?.querySelector(`#suggestion-${CSS.escape(active.id)}`)?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [active]);
 
   const noteTyping = (): void => {
     if (onTyping === undefined) {
@@ -109,6 +138,7 @@ export function Composer({
     setHistoryIndex(-1);
     onChange('');
     setDismissed(false);
+    setBrowsing(false);
     clearTimeout(typingTimer.current);
     onTyping?.(false);
     onSend(replaceShortcodes(text));
@@ -131,6 +161,7 @@ export function Composer({
     }
     const result = applySuggestion(value, suggestions, item);
     setHighlighted(0);
+    setBrowsing(false);
     replace(result.text, result.caret);
   };
 
@@ -161,6 +192,7 @@ export function Composer({
       if (event.key === 'Escape') {
         event.preventDefault();
         setDismissed(true);
+        setBrowsing(false);
         return;
       }
     }
@@ -224,6 +256,7 @@ export function Composer({
     >
       {suggestions === undefined || active === undefined ? null : (
         <ul
+          ref={popup}
           id="composer-suggestions"
           role="listbox"
           aria-label={suggestions.kind === 'command' ? 'Commands' : 'Emoji'}
@@ -350,6 +383,22 @@ export function Composer({
           onKeyUp={(event) => setCaret(event.currentTarget.selectionStart)}
           onClick={(event) => setCaret(event.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
+          onBlur={() => setBrowsing(false)}
+          // An empty composer has nothing to cut or copy, so the platform menu
+          // there offers almost nothing. What somebody is looking for when they
+          // right-click a blank message box is what they can do — the same list
+          // typing `/` produces, without having to know that `/` produces it.
+          // With text in it the platform menu is the useful one and is left
+          // alone.
+          onContextMenu={(event) => {
+            if (value !== '') {
+              return;
+            }
+            event.preventDefault();
+            setDismissed(false);
+            setHighlighted(0);
+            setBrowsing(true);
+          }}
           // Not a `combobox`: that role is not allowed on a textarea, and the
           // field has to stay multi-line. A textbox supports the list
           // relationship on its own, which is all the popup needs to be

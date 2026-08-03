@@ -33,6 +33,7 @@ import {
   handleCapMessage,
   interpretNumeric,
   RPL_WHOISUSER,
+  RPL_LUSERCHANNELS,
   applyWhoisNumeric,
   emptyWhois,
   isChannel,
@@ -104,6 +105,8 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     support: DEFAULT_ISUPPORT,
     caps: INITIAL_CAP_STATE,
     serverName: '',
+    registeredAt: undefined,
+    channelCount: undefined,
     motd: [],
     serverNotices: [],
     channels: new Map(),
@@ -180,6 +183,26 @@ const result = (
 /** Whether a target names us. */
 const isSelf = (state: NetworkState, nick: string): boolean =>
   sameTarget(nick, state.nick, state.support.caseMapping);
+
+/**
+ * Whether a `NOTICE` came from the server itself rather than from a person.
+ *
+ * This matters more than it looks. A server's connection banner — "Looking up
+ * your hostname", the ban notice, the "you are connecting from" line — arrives
+ * as a `NOTICE`, and filing it as conversation puts a row in the sidebar named
+ * after the server. Before registration those notices are addressed to `*`,
+ * which produces a second row called `*`. Three sidebar entries for one
+ * network, two of which cannot be talked to.
+ *
+ * The protocol gives no syntax that distinguishes a server name from a nick, so
+ * this reads what a server prefix actually looks like: no `!user@host` part,
+ * and a name containing a dot, which no ircd permits in a nick. A notice
+ * addressed to `*` is pre-registration by definition and never conversation.
+ */
+const isServerNotice = (source: Source | undefined, target: string): boolean =>
+  target === '*' ||
+  source === undefined ||
+  (source.user === '' && source.host === '' && source.nick.includes('.'));
 
 /** Reads a channel or query, creating it if absent. */
 const conversationOf = (
@@ -832,6 +855,25 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         );
       }
 
+      // What the server says about the connection goes on the network's own
+      // tab, which is where somebody looks for it, rather than becoming a
+      // conversation with something that cannot answer.
+      // A notice the server sends *to a channel* is another matter: it is
+      // addressed to the room and belongs in it.
+      if (
+        msg.command === 'NOTICE' &&
+        !isChannel(target, state.support) &&
+        isServerNotice(msg.source, target)
+      ) {
+        return result({
+          ...state,
+          serverNotices: [
+            ...state.serverNotices,
+            buildMessage(msg, { kind: 'server', target: '', text: body }, now),
+          ],
+        });
+      }
+
       const built = buildMessage(
         msg,
         {
@@ -1010,6 +1052,7 @@ function reduceNumeric(
         ...state,
         phase: 'registered',
         nick: event.nick,
+        registeredAt: now(),
         serverName: msg.source?.nick ?? state.serverName,
       });
 
@@ -1019,14 +1062,20 @@ function reduceNumeric(
     case 'my-info':
       return result({ ...state, serverName: event.server });
 
-    case 'server-info':
+    case 'server-info': {
+      // `254` carries the channel count as a parameter of its own, which is
+      // worth keeping rather than only rendering: it is what lets the interface
+      // say how big a channel list will be before asking for one.
+      const counted = msg.command === RPL_LUSERCHANNELS ? Number(msg.params[1]) : Number.NaN;
       return result({
         ...state,
+        ...(Number.isInteger(counted) ? { channelCount: counted } : {}),
         serverNotices: [
           ...state.serverNotices,
           buildMessage(msg, { kind: 'server', target: '', text: event.text }, now),
         ],
       });
+    }
 
     case 'motd-start':
       return result({ ...state, motd: [event.text] });

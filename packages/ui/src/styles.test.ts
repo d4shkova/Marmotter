@@ -124,6 +124,23 @@ describe('the stylesheet emits the utilities the interface uses', () => {
   });
 });
 
+describe('native controls are told the interface is dark', () => {
+  // The parts of a control the page does not draw take the platform's colours
+  // unless told otherwise: the popup a `select` opens came out near-white, with
+  // the app's pale-blue label text on it, which is barely legible. Cheap to
+  // assert and invisible until somebody opens a dropdown.
+  it('declares a dark colour scheme', async () => {
+    const css = await build([]);
+    expect(css).toMatch(/color-scheme:\s*dark/);
+  });
+
+  it('colours the rows of a dropdown itself, for the platforms that need it', async () => {
+    const css = await build([]);
+    expect(css).toMatch(/option\s*\{[^}]*--bg-elevated-2/);
+    expect(css).toMatch(/optgroup\s*\{[^}]*--bg-elevated/);
+  });
+});
+
 describe('the stylesheet says where the class names are', () => {
   it('declares a source, rather than trusting automatic detection', () => {
     // Without this the stylesheet compiles to tokens and a reset and nothing

@@ -31,6 +31,13 @@ describe('registration', () => {
     expect(registered.state.nick).toBe('marmot');
   });
 
+  // Several networks refuse a LIST for the first stretch of a connection, so
+  // the interface has to know how long a stretch it has been.
+  it('records when the server finished signing us in', () => {
+    expect(registeredSession().state.registeredAt).toBeInstanceOf(Date);
+    expect(newSession().state.registeredAt).toBeUndefined();
+  });
+
   it('adapts to the network rather than assuming defaults', () => {
     const session = registeredSession();
     expect(session.state.support.network).toBe('TestNet');
@@ -275,6 +282,28 @@ describe('messages', () => {
   it('marks a notice as a notice, never as a message', () => {
     const session = feed(joined(), [':irc.test NOTICE #test :server notice']);
     expect(channelOf(session, '#test').messages.at(-1)?.kind).toBe('notice');
+  });
+
+  // Three sidebar rows for one network — the network, a row named after the
+  // server, and a row called `*` — is what filing these as conversation looks
+  // like from the outside.
+  it('files what the server says on the network tab, not in a conversation', () => {
+    const session = feed(registeredSession(), [
+      ':irc.test NOTICE marmot :*** You are connecting from 10.0.0.1',
+    ]);
+    expect(session.state.queries.size).toBe(0);
+    expect(session.state.serverNotices.at(-1)?.text).toBe('*** You are connecting from 10.0.0.1');
+  });
+
+  it('does not open a conversation called * for a pre-registration notice', () => {
+    const session = feed(newSession(), [':irc.test NOTICE * :*** Looking up your hostname']);
+    expect(session.state.queries.size).toBe(0);
+    expect(session.state.serverNotices.at(-1)?.text).toBe('*** Looking up your hostname');
+  });
+
+  it('still treats a notice from a person as a conversation', () => {
+    const session = feed(registeredSession(), [':bramble!~b@host NOTICE marmot :are you there']);
+    expect(queryOf(session, 'bramble').messages.at(-1)?.kind).toBe('notice');
   });
 
   it('files a private message under the sender, not under our own nick', () => {

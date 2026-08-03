@@ -697,6 +697,104 @@ describe('losing the connection', () => {
   });
 });
 
+describe('signing in to the account service', () => {
+  // The legacy path, for networks without SASL. It was in the profile schema
+  // from the start and never acted on, so a profile configured this way
+  // connected and quietly stayed signed out.
+  const build = (resolved: string | undefined) => {
+    const transport = new FakeTransport();
+    const session = createSession({
+      profile: profile({
+        auth: { type: 'nickserv', account: 'marmot', password: secret('nickserv') },
+      }),
+      transport,
+      now,
+      resolveSecret: async () => resolved,
+    });
+    return { transport, session };
+  };
+
+  it('identifies once the connection is up, not during registration', async () => {
+    const { transport, session } = build('hunter2');
+    await session.connect();
+    // The MOTD's end is what says registration finished; 001 only says hello.
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent).toContain('PRIVMSG NickServ :IDENTIFY marmot hunter2');
+    // Nothing about it belongs in registration, where there is no service yet.
+    const welcome = transport.sent.indexOf('NICK marmot');
+    expect(transport.sent.indexOf('PRIVMSG NickServ :IDENTIFY marmot hunter2')).toBeGreaterThan(
+      welcome,
+    );
+  });
+
+  it('says so rather than sending a blank password', async () => {
+    const { transport, session } = build(undefined);
+    const events: SessionEvent[] = [];
+    session.on((event) => events.push(event));
+
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent.some((line) => line.startsWith('PRIVMSG NickServ'))).toBe(false);
+    expect(events.some((event) => event.kind === 'auth-failed')).toBe(true);
+  });
+
+  it('leaves a profile with no login alone', async () => {
+    const transport = new FakeTransport();
+    const session = createSession({ profile: profile(), transport, now });
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome', ':irc.test 376 marmot :End of /MOTD');
+    await settle();
+
+    expect(transport.sent.some((line) => line.startsWith('PRIVMSG NickServ'))).toBe(false);
+  });
+});
+
+describe('a flood of replies', () => {
+  // A bare LIST on a large network is tens of thousands of numerics in a few
+  // seconds. One announcement each is one render of the whole interface each,
+  // which is what made the channel browser stop responding.
+  it('is announced in batches rather than one row at a time', async () => {
+    const { transport, session } = build();
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome');
+
+    session.listChannels();
+
+    let announcements = 0;
+    session.subscribe(() => (announcements += 1));
+    for (let index = 0; index < 500; index += 1) {
+      transport.receive(`:irc.test 322 marmot #channel${index} 12 :a topic`);
+    }
+
+    // Five hundred rows, no announcement yet — but the state is already right
+    // for anybody who asks.
+    expect(announcements).toBe(0);
+    expect(session.state.directory.entries).toHaveLength(500);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(announcements).toBe(1);
+  });
+
+  it('announces the end of the list at once', async () => {
+    const { transport, session } = build();
+    await session.connect();
+    transport.receive(':irc.test 001 marmot :Welcome');
+    session.listChannels();
+    transport.receive(':irc.test 322 marmot #one 3 :a topic');
+
+    let announcements = 0;
+    session.subscribe(() => (announcements += 1));
+    transport.receive(':irc.test 323 marmot :End of /LIST');
+
+    expect(announcements).toBe(1);
+    expect(session.state.directory.complete).toBe(true);
+  });
+});
+
 describe('teardown', () => {
   it('stops listening and disconnects', async () => {
     const { transport, session } = build();

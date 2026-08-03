@@ -19,6 +19,8 @@ export interface SettingsProps {
   /** Reconnects a network whose connection dropped or failed. */
   readonly onReconnect: (networkId: string) => void;
   readonly onDisconnect: (networkId: string) => void;
+  /** Opens the network's saved settings for changing. */
+  readonly onEdit: (networkId: string) => void;
   /** Forgets a network and tears its connection down. */
   readonly onRemove: (networkId: string) => void;
   readonly onAddNetwork: () => void;
@@ -89,6 +91,7 @@ export function Settings({
   onCtcpChange,
   onReconnect,
   onDisconnect,
+  onEdit,
   onRemove,
   onAddNetwork,
   className,
@@ -127,6 +130,13 @@ export function Settings({
                         {network.phase === 'connecting' ? 'Connecting' : 'Connect'}
                       </Button>
                     )}
+                    {/* Address, name, security and nick are all things that
+                        turn out to be wrong after the first connection
+                        attempt, and starting over with Remove and Add loses
+                        everything else the profile holds. */}
+                    <Button size="small" onClick={() => onEdit(network.id)}>
+                      Edit
+                    </Button>
                     <Button size="small" variant="destructive" onClick={() => onRemove(network.id)}>
                       Remove
                     </Button>

@@ -115,6 +115,14 @@ export interface Session {
   join(target: string, key?: string): void;
   part(target: string, reason?: string): void;
   /**
+   * Stops showing a private conversation.
+   *
+   * Local only. There is no leaving a private conversation on IRC — the person
+   * is not in a room with you — so this forgets what was said and nothing is
+   * sent. A new message from them opens it again.
+   */
+  closeQuery(target: string): void;
+  /**
    * Asks the network for its public channel list.
    *
    * The pattern is passed through as the server understands it; every ircd
@@ -159,6 +167,25 @@ const MECHANISM_FOR: ReadonlyMap<string, SaslMechanismName> = new Map<string, Sa
   ['sasl-scram', 'SCRAM-SHA-256'],
 ]);
 
+/**
+ * Replies that arrive in bulk and are worth nothing individually.
+ *
+ * `RPL_LIST` is the whole reason this exists: one row per channel on the
+ * network, tens of thousands of them, each currently costing a render of every
+ * component watching the network. `RPL_WHOREPLY` and `RPL_NAMREPLY` are the
+ * same shape on a large channel. The end-of-list numeric beside each one is
+ * deliberately absent, so finishing always announces immediately.
+ */
+const BULK_NUMERICS: ReadonlySet<string> = new Set(['322', '352', '354', '353']);
+
+/**
+ * How long a coalesced announcement waits.
+ *
+ * Long enough that a flood becomes ten updates a second rather than thousands,
+ * short enough that the count in the channel browser still reads as live.
+ */
+const BULK_FLUSH_MS = 100;
+
 /** The mechanism this profile is configured for, if any. */
 function configuredMechanism(profile: NetworkProfile): SaslMechanismName | undefined {
   return profile.auth === undefined ? undefined : MECHANISM_FOR.get(profile.auth.type);
@@ -198,10 +225,41 @@ export function createSession(options: SessionOptions): Session {
   /** The WHOIS poll, on networks with neither MONITOR nor WATCH. */
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
+  /** A pending announcement of coalesced state, if one is waiting. */
+  let coalescing: ReturnType<typeof setTimeout> | undefined;
+
   const publish = (next: NetworkState): void => {
+    // Anything published outright supersedes a coalesced announcement, which
+    // would otherwise fire a moment later with state already announced.
+    if (coalescing !== undefined) {
+      clearTimeout(coalescing);
+      coalescing = undefined;
+    }
     state = next;
     states.emit(next);
     events.emit({ kind: 'state', state: next });
+  };
+
+  /**
+   * Records new state now, announces it shortly.
+   *
+   * For replies that arrive in the thousands and mean nothing one at a time.
+   * A bare `LIST` on a large network is twenty thousand numerics over a few
+   * seconds, and announcing each one is twenty thousand renders of the whole
+   * interface — which is how a channel list makes a client stop responding.
+   * `session.state` is still correct the instant the line is reduced; only the
+   * telling waits.
+   */
+  const publishSoon = (next: NetworkState): void => {
+    state = next;
+    if (coalescing !== undefined) {
+      return;
+    }
+    coalescing = setTimeout(() => {
+      coalescing = undefined;
+      states.emit(state);
+      events.emit({ kind: 'state', state });
+    }, BULK_FLUSH_MS);
   };
 
   const recordRaw = (
@@ -251,6 +309,12 @@ export function createSession(options: SessionOptions): Session {
 
   const onRegistered = (): void => {
     const lines: string[] = [];
+
+    // Before the autojoins, so a channel that only lets in signed-in people has
+    // the best chance of the sign-in having landed first.
+    if (profile.auth?.type === 'nickserv') {
+      void identifyWithService(profile.auth.account, profile.auth.password);
+    }
 
     for (const entry of profile.autojoin) {
       // Keys are resolved asynchronously, so a keyed channel joins a moment
@@ -312,6 +376,30 @@ export function createSession(options: SessionOptions): Session {
       return;
     }
     write([key === undefined ? `JOIN ${target}` : `JOIN ${target} ${key}`]);
+  };
+
+  /**
+   * The legacy sign-in: a private message to the account service.
+   *
+   * CLAUDE.md prefers SASL everywhere it exists, and this is what is left for
+   * the networks that do not offer it. It goes out after registration rather
+   * than during it, because there is no service to talk to until the connection
+   * is up — which is also why it cannot fail the way SASL can. Nothing replies
+   * in a form worth waiting on, so the notice from the service lands in the
+   * conversation with it, where somebody can read what happened.
+   */
+  const identifyWithService = async (account: string, ref: SecretRef): Promise<void> => {
+    const password = await options.resolveSecret?.(ref);
+    if (destroyed || password === undefined) {
+      if (!destroyed) {
+        events.emit({
+          kind: 'auth-failed',
+          reason: 'No password was stored for this network, so signing in was skipped.',
+        });
+      }
+      return;
+    }
+    write([`PRIVMSG NickServ :IDENTIFY ${account} ${password}`]);
   };
 
   const failAuth = (reason: string): void => {
@@ -446,9 +534,15 @@ export function createSession(options: SessionOptions): Session {
     }
 
     const step = reduce(next, msg, contextNow());
-    publish(step.state);
-    write(step.send);
-    handleEffects(step.effects);
+    // Nothing to send and nothing to do makes a reply safe to announce late;
+    // anything with consequences is announced at once.
+    if (BULK_NUMERICS.has(msg.command) && step.send.length === 0 && step.effects.length === 0) {
+      publishSoon(step.state);
+    } else {
+      publish(step.state);
+      write(step.send);
+      handleEffects(step.effects);
+    }
 
     if (step.state.phase === 'registered') {
       mechanism = undefined;
@@ -465,6 +559,9 @@ export function createSession(options: SessionOptions): Session {
       ...state,
       phase: 'disconnected',
       lastClose: reason,
+      // How long we have been signed in is a fact about a connection, not about
+      // a network. The next one starts the clock again.
+      registeredAt: undefined,
       batches: new Map(),
       channels: new Map(
         [...state.channels].map(([key, channel]) => [
@@ -610,6 +707,16 @@ export function createSession(options: SessionOptions): Session {
     part: (target, reason) =>
       write([reason === undefined ? `PART ${target}` : `PART ${target} :${reason}`]),
 
+    closeQuery(target) {
+      // Nothing goes to the network: IRC has no concept of a private
+      // conversation to leave. Closing one is purely a local decision to stop
+      // showing it, and the next message from that person reopens it.
+      const queries = new Map(state.queries);
+      if (queries.delete(fold(target, state.support.caseMapping))) {
+        publish({ ...state, queries });
+      }
+    },
+
     listChannels(pattern) {
       // Clearing first means the browser shows an empty loading state rather
       // than the previous network-wide list while the new answer arrives.
@@ -670,6 +777,8 @@ export function createSession(options: SessionOptions): Session {
 
     destroy() {
       destroyed = true;
+      clearTimeout(coalescing);
+      coalescing = undefined;
       stopPolling();
       detach();
       states.clear();

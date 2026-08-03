@@ -13,6 +13,16 @@ export interface FieldProps {
    */
   readonly labelHidden?: boolean | undefined;
   /**
+   * A few words beside the label saying how the control is operated.
+   *
+   * For the cases where the control does not look like what it is — a `select`
+   * styled flat enough to read as a text field being the one that prompted it.
+   * Deliberately not the `hint`: this is an affordance, not an explanation, and
+   * it is hidden from screen readers, which are already told it is a listbox
+   * and would be misinformed by "click".
+   */
+  readonly labelNote?: string | undefined;
+  /**
    * Explanatory text under the control.
    *
    * iOS grouped lists put the explanation in a footer rather than a tooltip,
@@ -36,6 +46,7 @@ export function Field({
   id,
   label,
   labelHidden = false,
+  labelNote,
   hint,
   error,
   children,
@@ -43,12 +54,16 @@ export function Field({
 }: FieldProps): ReactNode {
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <label
-        htmlFor={id}
-        className={cn('text-subhead text-[var(--label-secondary)]', labelHidden && 'sr-only')}
-      >
-        {label}
-      </label>
+      <div className={cn('flex items-baseline gap-2', labelHidden && 'sr-only')}>
+        <label htmlFor={id} className="text-subhead text-[var(--label-secondary)]">
+          {label}
+        </label>
+        {labelNote === undefined ? null : (
+          <span aria-hidden="true" className="text-caption-2 text-[var(--label-tertiary)]">
+            {labelNote}
+          </span>
+        )}
+      </div>
       {children}
       {hint !== undefined && error === undefined ? (
         <p id={hintId(id)} className="text-footnote text-[var(--label-tertiary)]">

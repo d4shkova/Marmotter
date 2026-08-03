@@ -19,6 +19,25 @@ export interface CommandSpec {
   /** Where the same thing lives in the interface, when it does. */
   readonly alsoAt?: string;
   readonly aliases?: readonly string[];
+  /**
+   * A character the first argument always starts with.
+   *
+   * Typed for the user when the command is picked from the list. `/join` on its
+   * own is not a command anybody can finish without knowing that a channel name
+   * begins with a `#` — which is precisely the piece of IRC arcana this client
+   * exists to stop teaching people.
+   */
+  readonly argPrefix?: string;
+  /**
+   * Only offered on a network the user has marked themselves an operator on.
+   *
+   * Discovery, not permission. These are meaningless to everybody who is not a
+   * server operator and alarming in a list of ordinary things to do, so they
+   * stay out of the way until somebody says they apply. Typed in full they run
+   * regardless — the server decides who may do what, and a client that refuses
+   * to send what it was asked to send is worse than one that hides a menu row.
+   */
+  readonly operator?: boolean;
   /** Builds the line to send. Undefined means the app handles it itself. */
   readonly build?: (args: string, context: CommandContext) => string | undefined;
 }
@@ -40,6 +59,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: 'Joins a channel, creating it if nobody is there.',
     alsoAt: 'Browse channels',
     aliases: ['j'],
+    argPrefix: '#',
     build: (args) => `JOIN ${rest(args)}`,
   },
   {
@@ -165,6 +185,37 @@ export const COMMANDS: readonly CommandSpec[] = [
     aliases: ['raw'],
     build: (args) => rest(args),
   },
+
+  // Server operator commands. Present for everybody, offered only where the
+  // network profile says they apply.
+  {
+    name: 'oper',
+    params: '<name> <password>',
+    summary: 'Signs in as a server operator, using an account the network gave you.',
+    operator: true,
+    build: (args) => `OPER ${rest(args)}`,
+  },
+  {
+    name: 'kill',
+    params: '<person> <reason>',
+    summary: 'Disconnects somebody from the network. They can reconnect.',
+    operator: true,
+    build: (args) => `KILL ${first(args)} :${after(args)}`,
+  },
+  {
+    name: 'wallops',
+    params: '<message>',
+    summary: 'Sends a message to every operator on the network.',
+    operator: true,
+    build: (args) => `WALLOPS :${rest(args)}`,
+  },
+  {
+    name: 'rehash',
+    params: '',
+    summary: 'Asks the server to re-read its configuration.',
+    operator: true,
+    build: () => 'REHASH',
+  },
 ];
 
 const BY_NAME = new Map<string, CommandSpec>(
@@ -180,12 +231,18 @@ export function findCommand(name: string): CommandSpec | undefined {
 }
 
 /** Commands whose name or alias starts with a prefix, for autocomplete. */
-export function suggestCommands(prefix: string): readonly CommandSpec[] {
+export function suggestCommands(
+  prefix: string,
+  options: { readonly operator?: boolean } = {},
+): readonly CommandSpec[] {
   const needle = prefix.toLowerCase().replace(/^\//, '');
+  const offered = COMMANDS.filter(
+    (command) => command.operator !== true || options.operator === true,
+  );
   if (needle === '') {
-    return COMMANDS;
+    return offered;
   }
-  return COMMANDS.filter(
+  return offered.filter(
     (command) =>
       command.name.startsWith(needle) ||
       (command.aliases ?? []).some((alias) => alias.startsWith(needle)),

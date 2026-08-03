@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COMMANDS } from './commands.js';
 import { emojiFor, replaceShortcodes, suggestEmoji } from './emoji.js';
 import { applySuggestion, computeSuggestions } from './suggest.js';
 
@@ -45,6 +46,56 @@ describe('what the composer offers', () => {
     expect(computeSuggestions('https://example.com', 19)).toBeUndefined();
   });
 
+  // Right-clicking an empty composer asks for the whole list, for somebody who
+  // does not already know that `/` produces one.
+  it('offers every command on an empty line when asked outright', () => {
+    const suggestions = computeSuggestions('', 0, { offerCommands: true });
+    const everyday = COMMANDS.filter((command) => command.operator !== true);
+    expect(suggestions?.kind).toBe('command');
+    expect(suggestions?.items.length).toBe(everyday.length);
+    expect(suggestions?.items.map((item) => item.label)).toContain('/join');
+  });
+
+  // Discovery, not permission: `/oper` typed in full still parses and runs on
+  // any network. It simply is not proposed to somebody it means nothing to.
+  it('keeps the operator commands out of the list until the network says otherwise', () => {
+    const ordinary = computeSuggestions('/op', 3);
+    expect(ordinary).toBeUndefined();
+
+    const operator = computeSuggestions('/op', 3, { operator: true });
+    expect(operator?.items.map((item) => item.label)).toEqual(['/oper']);
+  });
+
+  it('offers the operator commands in the browsed list too, once enabled', () => {
+    const browsed = computeSuggestions('', 0, { offerCommands: true, operator: true });
+    expect(browsed?.items.map((item) => item.label)).toContain('/wallops');
+    expect(browsed?.items.length).toBe(COMMANDS.length);
+  });
+
+  it('cuts the typed list short but not the browsed one', () => {
+    const typed = computeSuggestions('/', 1);
+    const browsed = computeSuggestions('', 0, { offerCommands: true });
+    expect(typed?.items.length).toBeLessThan(browsed?.items.length ?? 0);
+  });
+
+  it('leaves a line with something on it to the usual rules', () => {
+    expect(computeSuggestions('hello', 5, { offerCommands: true })).toBeUndefined();
+  });
+
+  it('splices a browsed command into the empty line', () => {
+    const suggestions = computeSuggestions('', 0, { offerCommands: true });
+    const item = suggestions?.items.find((entry) => entry.label === '/join');
+    expect(suggestions).toBeDefined();
+    expect(item).toBeDefined();
+    if (suggestions === undefined || item === undefined) {
+      return;
+    }
+    expect(applySuggestion('', suggestions, item)).toEqual({ text: '/join #', caret: 7 });
+  });
+
+  // `/join` carries the `#` its argument always starts with, so picking it out
+  // of the list leaves something that can be finished by typing a name rather
+  // than by knowing what a channel name looks like.
   it('splices a command in with the caret ready for its first argument', () => {
     const suggestions = computeSuggestions('/jo', 3);
     const item = suggestions?.items[0];
@@ -53,7 +104,18 @@ describe('what the composer offers', () => {
     if (suggestions === undefined || item === undefined) {
       return;
     }
-    expect(applySuggestion('/jo', suggestions, item)).toEqual({ text: '/join ', caret: 6 });
+    expect(applySuggestion('/jo', suggestions, item)).toEqual({ text: '/join #', caret: 7 });
+  });
+
+  it('leaves a command whose argument has no fixed shape at a bare space', () => {
+    const suggestions = computeSuggestions('/whoi', 5);
+    const item = suggestions?.items[0];
+    expect(suggestions).toBeDefined();
+    expect(item).toBeDefined();
+    if (suggestions === undefined || item === undefined) {
+      return;
+    }
+    expect(applySuggestion('/whoi', suggestions, item)).toEqual({ text: '/whois ', caret: 7 });
   });
 
   it('replaces the whole shortcode, colon included, and keeps what follows', () => {

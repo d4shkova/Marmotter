@@ -12,6 +12,7 @@ import {
   applyISupport,
   makeSource,
 } from '@marmotter/protocol';
+import { defaultLoggingPolicy } from '@marmotter/shared';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
@@ -24,6 +25,8 @@ import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { InviteBanner } from './Invites.js';
+import { CreateChannel } from './CreateChannel.js';
+import { ListPrompt } from './ListPrompt.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Marmotter } from './Marmotter.js';
@@ -546,6 +549,82 @@ export const AddingANetwork: StoryObj = {
   },
 };
 
+export const EditingANetwork: StoryObj = {
+  render: function EditingANetwork() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Edit this network
+        </button>
+        <AddNetwork
+          open={open}
+          editing={{
+            id: 'dashkova',
+            name: 'dashkova.co.uk',
+            servers: [
+              { host: 'irc.dashkova.co.uk', port: 6697, tls: { mode: 'tls', verifyCert: true } },
+            ],
+            identity: {
+              nick: 'marmot',
+              altNicks: ['marmot_', 'marmot__'],
+              username: 'marmot',
+              realname: 'marmot',
+            },
+            autojoin: [{ target: '#marmotter' }],
+            connectCommands: [],
+            encoding: 'utf-8',
+            autoReconnect: true,
+            logging: defaultLoggingPolicy,
+          }}
+          onClose={() => setOpen(false)}
+          onAdd={() => setOpen(false)}
+        />
+      </>
+    );
+  },
+};
+
+export const CreatingAChannel: StoryObj = {
+  render: function CreatingAChannel() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Create channel
+        </button>
+        <CreateChannel
+          open={open}
+          networkName="Libera.Chat"
+          onCreate={() => setOpen(false)}
+          onCancel={() => setOpen(false)}
+        />
+      </>
+    );
+  },
+};
+
+export const AskingForTheChannelList: StoryObj = {
+  render: function AskingForTheChannelList() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Browse channels
+        </button>
+        <ListPrompt
+          open={open}
+          networkName="Libera.Chat"
+          channelCount={23_871}
+          limit={20_000}
+          onCancel={() => setOpen(false)}
+          onConfirm={() => setOpen(false)}
+        />
+      </>
+    );
+  },
+};
+
 export const TheWholeShell: StoryObj = {
   parameters: { layout: 'fullscreen' },
   render: function TheWholeShell() {
@@ -657,6 +736,7 @@ export const SettingsScreen: StoryObj = {
           onCtcpChange={(changes) => setCtcp((current) => ({ ...current, ...changes }))}
           onReconnect={() => {}}
           onDisconnect={() => {}}
+          onEdit={() => {}}
           onRemove={() => {}}
           onAddNetwork={() => {}}
         />

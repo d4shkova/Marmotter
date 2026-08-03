@@ -1,11 +1,15 @@
 import type { NetworkState } from '@marmotter/client';
-import { type ReactNode, useState } from 'react';
+import { type KeyboardEvent, type MouseEvent, type ReactNode, useState } from 'react';
 import { cn } from '../lib/cn.js';
 import { Badge, type ConnectionStatus, StatusDot } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
+import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
 import type { TargetRef, Unread } from './view-store.js';
+
+/** What a sidebar row stands for, which decides how it is coloured and tagged. */
+export type RowKind = 'server' | 'channel' | 'person';
 
 export interface SidebarProps {
   readonly networks: readonly NetworkState[];
@@ -23,6 +27,17 @@ export interface SidebarProps {
   /** Opens the "join a channel" prompt for a network. */
   readonly onJoinChannel?: (networkId: string) => void;
   readonly onBrowseChannels?: (networkId: string) => void;
+  /**
+   * The right-click menu for a network, covering its own row and the blank
+   * space below its channels.
+   */
+  readonly networkMenu?: (network: NetworkState) => readonly MenuItem[];
+  /** The right-click menu for a channel or a private conversation. */
+  readonly conversationMenu?: (
+    network: NetworkState,
+    target: string,
+    kind: 'channel' | 'person',
+  ) => readonly MenuItem[];
   readonly className?: string;
 }
 
@@ -40,12 +55,26 @@ const statusOf = (network: NetworkState): ConnectionStatus => {
   }
 };
 
+/** An open right-click menu: what it offers, what it is called, and where. */
+interface OpenMenu {
+  readonly label: string;
+  readonly items: readonly MenuItem[];
+  readonly x: number;
+  readonly y: number;
+}
+
 /**
  * The network and channel sidebar.
  *
  * Grouped by network, because on a client where multi-network is the point, a
  * flat list of channels loses which server each one is on — and `#general` on
  * two networks is two different rooms.
+ *
+ * The network's own row is the server tab as well as the group heading: two
+ * rows saying the same name, one of them tagged "Server", is a distinction
+ * without a difference to anybody reading the sidebar. The disclosure sits in
+ * its own control beside it, so selecting the network and folding it away stay
+ * separate actions.
  *
  * Reordering is drag-and-drop with a keyboard equivalent, since drag alone is
  * unreachable for anyone not using a pointer.
@@ -63,9 +92,12 @@ export function Sidebar({
   settingsOpen = false,
   onJoinChannel,
   onBrowseChannels,
+  networkMenu,
+  conversationMenu,
   className,
 }: SidebarProps): ReactNode {
   const [dragging, setDragging] = useState<string | undefined>(undefined);
+  const [menu, setMenu] = useState<OpenMenu | undefined>(undefined);
 
   const move = (id: string, delta: number): void => {
     const order = networks.map((network) => network.id);
@@ -78,6 +110,14 @@ export function Sidebar({
     next.splice(from, 1);
     next.splice(to, 0, id);
     onReorder(next);
+  };
+
+  const openMenu = (event: MouseEvent, label: string, items: readonly MenuItem[]): void => {
+    if (event.defaultPrevented || items.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    setMenu({ label, items, x: event.clientX, y: event.clientY });
   };
 
   return (
@@ -109,7 +149,18 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-2">
+      {/* The blank space below the last network is still part of the sidebar,
+          and right-clicking somewhere that looks like nothing should not feel
+          like nothing happened. */}
+      <div
+        className="flex-1 overflow-y-auto pb-2"
+        onContextMenu={(event) =>
+          openMenu(event, 'Networks', [
+            { id: 'add', label: 'Add a network', onSelect: onAddNetwork },
+            { id: 'settings', label: 'Open settings', onSelect: onOpenSettings },
+          ])
+        }
+      >
         {networks.length === 0 ? (
           <EmptyState
             title="No networks yet"
@@ -146,6 +197,9 @@ export function Sidebar({
                 }
                 setDragging(undefined);
               }}
+              onOpenMenu={openMenu}
+              {...(networkMenu === undefined ? {} : { networkMenu })}
+              {...(conversationMenu === undefined ? {} : { conversationMenu })}
               {...(onJoinChannel === undefined
                 ? {}
                 : { onJoinChannel: () => onJoinChannel(network.id) })}
@@ -156,6 +210,16 @@ export function Sidebar({
           ))
         )}
       </div>
+
+      {menu === undefined ? null : (
+        <ContextMenu
+          open
+          label={menu.label}
+          at={{ x: menu.x, y: menu.y }}
+          items={menu.items}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
     </nav>
   );
 }
@@ -172,6 +236,13 @@ interface NetworkGroupProps {
   readonly onDragStart: () => void;
   readonly onDragEnd: () => void;
   readonly onDropOn: () => void;
+  readonly onOpenMenu: (event: MouseEvent, label: string, items: readonly MenuItem[]) => void;
+  readonly networkMenu?: (network: NetworkState) => readonly MenuItem[];
+  readonly conversationMenu?: (
+    network: NetworkState,
+    target: string,
+    kind: 'channel' | 'person',
+  ) => readonly MenuItem[];
   readonly onJoinChannel?: () => void;
   readonly onBrowseChannels?: () => void;
 }
@@ -188,11 +259,32 @@ function NetworkGroup({
   onDragStart,
   onDragEnd,
   onDropOn,
+  onOpenMenu,
+  networkMenu,
+  conversationMenu,
   onJoinChannel,
   onBrowseChannels,
 }: NetworkGroupProps): ReactNode {
   const channels = [...network.channels.values()].filter((channel) => channel.joined);
   const queries = [...network.queries.values()];
+
+  const menuForNetwork = (event: MouseEvent): void => {
+    if (networkMenu !== undefined) {
+      onOpenMenu(event, `Actions for ${network.name}`, networkMenu(network));
+    }
+  };
+
+  // Alt+Arrow is the keyboard equivalent of dragging, so reordering is not
+  // pointer-only.
+  const reorderKeys = (event: KeyboardEvent): void => {
+    if (event.altKey && event.key === 'ArrowUp') {
+      event.preventDefault();
+      onMove(-1);
+    } else if (event.altKey && event.key === 'ArrowDown') {
+      event.preventDefault();
+      onMove(1);
+    }
+  };
 
   return (
     <section
@@ -201,34 +293,39 @@ function NetworkGroup({
       onDragEnd={onDragEnd}
       onDragOver={(event) => event.preventDefault()}
       onDrop={onDropOn}
+      onContextMenu={menuForNetwork}
       className={cn('mb-1', dragging && 'opacity-50')}
     >
       <div className="flex items-center gap-1 px-1">
         <button
           type="button"
           aria-expanded={!collapsed}
+          aria-label={
+            collapsed ? `Show ${network.name}'s channels` : `Hide ${network.name}'s channels`
+          }
           onClick={onToggleCollapsed}
-          onKeyDown={(event) => {
-            // The keyboard equivalent of dragging, so reordering is not
-            // pointer-only.
-            if (event.altKey && event.key === 'ArrowUp') {
-              event.preventDefault();
-              onMove(-1);
-            } else if (event.altKey && event.key === 'ArrowDown') {
-              event.preventDefault();
-              onMove(1);
-            }
-          }}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-control px-2 py-1.5 text-left hover:bg-[var(--fill-quaternary)]"
+          onKeyDown={reorderKeys}
+          className="grid size-5 shrink-0 place-items-center rounded-control text-[var(--label-quaternary)] hover:bg-[var(--fill-quaternary)]"
         >
-          <StatusDot status={statusOf(network)} />
-          <span className="min-w-0 flex-1 truncate text-subhead font-medium text-[var(--label-primary)]">
-            {network.name}
-          </span>
-          <span aria-hidden="true" className="text-caption-2 text-[var(--label-quaternary)]">
+          <span aria-hidden="true" className="text-caption-2">
             {collapsed ? '▸' : '▾'}
           </span>
         </button>
+
+        {/* The network's row is its server tab. There is no second row below
+            saying the same name. */}
+        <ConversationRow
+          label={network.name}
+          tag="Server"
+          kind="server"
+          ref_={{ networkId: network.id, target: undefined }}
+          selection={selection}
+          onSelect={onSelect}
+          unread={unreadFor({ networkId: network.id, target: undefined })}
+          leading={<StatusDot status={statusOf(network)} />}
+          onKeyDown={reorderKeys}
+          className="min-w-0 flex-1"
+        />
 
         {/* Both live in the header rather than in the empty state, because
             somebody who has already joined one channel is exactly the person
@@ -254,25 +351,25 @@ function NetworkGroup({
 
       {collapsed ? null : (
         <ul className="flex flex-col">
-          <li>
-            <ConversationRow
-              label={network.name}
-              sublabel="Server"
-              ref_={{ networkId: network.id, target: undefined }}
-              selection={selection}
-              onSelect={onSelect}
-              unread={unreadFor({ networkId: network.id, target: undefined })}
-            />
-          </li>
-
           {channels.map((channel) => (
             <li key={channel.name}>
               <ConversationRow
                 label={channel.name}
+                kind="channel"
                 ref_={{ networkId: network.id, target: channel.name }}
                 selection={selection}
                 onSelect={onSelect}
                 unread={unreadFor({ networkId: network.id, target: channel.name })}
+                {...(conversationMenu === undefined
+                  ? {}
+                  : {
+                      onContextMenu: (event: MouseEvent) =>
+                        onOpenMenu(
+                          event,
+                          `Actions for ${channel.name}`,
+                          conversationMenu(network, channel.name, 'channel'),
+                        ),
+                    })}
               />
             </li>
           ))}
@@ -281,10 +378,22 @@ function NetworkGroup({
             <li key={query.name}>
               <ConversationRow
                 label={query.name}
+                tag="Person"
+                kind="person"
                 ref_={{ networkId: network.id, target: query.name }}
                 selection={selection}
                 onSelect={onSelect}
                 unread={unreadFor({ networkId: network.id, target: query.name })}
+                {...(conversationMenu === undefined
+                  ? {}
+                  : {
+                      onContextMenu: (event: MouseEvent) =>
+                        onOpenMenu(
+                          event,
+                          `Actions for ${query.name}`,
+                          conversationMenu(network, query.name, 'person'),
+                        ),
+                    })}
               />
             </li>
           ))}
@@ -296,26 +405,48 @@ function NetworkGroup({
               </Button>
             </li>
           ) : null}
+
+          {/* Deliberately clickable-through empty space: right-clicking below
+              the channels is right-clicking the network. */}
+          <li aria-hidden="true" className="h-3" />
         </ul>
       )}
     </section>
   );
 }
 
+/** What colour a row's name is drawn in, by what the row stands for. */
+const COLOR_FOR: Record<RowKind, string> = {
+  server: 'text-[var(--label-secondary)]',
+  channel: 'text-[var(--label-channel)]',
+  person: 'text-[var(--label-person)]',
+};
+
 function ConversationRow({
   label,
-  sublabel,
+  tag,
+  kind,
   ref_,
   selection,
   onSelect,
   unread,
+  leading,
+  onContextMenu,
+  onKeyDown,
+  className,
 }: {
   label: string;
-  sublabel?: string;
+  /** A word for what this is, where the name alone does not say. */
+  tag?: string;
+  kind: RowKind;
   ref_: TargetRef;
   selection: TargetRef | undefined;
   onSelect: (ref: TargetRef) => void;
   unread: Unread;
+  leading?: ReactNode;
+  onContextMenu?: (event: MouseEvent) => void;
+  onKeyDown?: (event: KeyboardEvent) => void;
+  className?: string;
 }): ReactNode {
   const selected =
     selection !== undefined &&
@@ -327,23 +458,30 @@ function ConversationRow({
       type="button"
       aria-current={selected ? 'true' : undefined}
       onClick={() => onSelect(ref_)}
+      onContextMenu={onContextMenu}
+      onKeyDown={onKeyDown}
       className={cn(
-        'flex w-full items-center gap-2 py-1 pr-2 pl-7 text-left',
+        'flex w-full items-center gap-2 rounded-control py-1 pr-2 text-left',
+        // The network's own row sits beside its disclosure control; everything
+        // under it is indented to read as belonging to it.
+        kind === 'server' ? 'pl-1' : 'pl-7',
         'hover:bg-[var(--fill-quaternary)]',
         selected && 'bg-[var(--fill-tertiary)]',
+        className,
       )}
     >
+      {leading}
+
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-subhead',
-          unread.count > 0
-            ? 'font-medium text-[var(--label-primary)]'
-            : 'text-[var(--label-secondary)]',
+          COLOR_FOR[kind],
+          unread.count > 0 && 'font-medium',
         )}
       >
         {label}
-        {sublabel === undefined ? null : (
-          <span className="ml-1.5 text-caption-2 text-[var(--label-quaternary)]">{sublabel}</span>
+        {tag === undefined ? null : (
+          <span className="ml-1.5 text-caption-2 text-[var(--label-quaternary)]">{tag}</span>
         )}
       </span>
 

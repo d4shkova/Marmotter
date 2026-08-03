@@ -1,4 +1,5 @@
 import {
+  CHANNEL_LIST_LIMIT,
   type Member,
   type NetworkState,
   type Session,
@@ -24,6 +25,10 @@ import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { InviteBanner } from './Invites.js';
+import { CreateChannel, createChannelLines } from './CreateChannel.js';
+import { ListPrompt } from './ListPrompt.js';
+import { describeWait, listReadiness } from './list-guard.js';
+import { readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -92,6 +97,14 @@ export function Marmotter({
   const breakpoint = useBreakpoint();
 
   const [adding, setAdding] = useState(false);
+  /** The network whose saved settings are open for changing, if any. */
+  const [editingId, setEditingId] = useState<string | undefined>(undefined);
+  /** The network a channel is being created on, if the form is open. */
+  const [creatingOn, setCreatingOn] = useState<string | undefined>(undefined);
+  /** The network waiting to be asked for its channel list, and with what. */
+  const [listing, setListing] = useState<{ networkId: string; pattern: string } | undefined>(
+    undefined,
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
   /** A network waiting for a channel name from the "Join a channel" prompt. */
@@ -118,6 +131,11 @@ export function Marmotter({
       }),
     [registry.profiles, registry.networks, view.networkOrder],
   );
+
+  const editingProfile = editingId === undefined ? undefined : registry.profiles.get(editingId);
+  const listingNetwork =
+    listing === undefined ? undefined : registry.networks.get(listing.networkId);
+  const creatingNetwork = creatingOn === undefined ? undefined : registry.networks.get(creatingOn);
 
   const selection = view.selection;
   const network = selection === undefined ? undefined : registry.networks.get(selection.networkId);
@@ -223,12 +241,15 @@ export function Marmotter({
   // network and reconnecting one, so a reconnect gets a fresh transport rather
   // than reusing a spent socket.
   const startSession = useCallback(
-    (profile: NetworkProfile): void => {
+    (profile: NetworkProfile, options: { readonly connect?: boolean } = {}): void => {
       const built: Session = createSession({
         profile,
         transport: createTransport(profile),
         ctcp: useView.getState().ctcp,
-        ...(resolveSecret === undefined ? {} : { resolveSecret }),
+        // The platform's own store first, where it has one, and the session
+        // store behind it. A password typed into the form this run is in the
+        // second and not yet in the first, and has to work either way.
+        resolveSecret: async (ref) => (await resolveSecret?.(ref)) ?? readSecret(ref),
       });
 
       built.on((sessionEvent) => {
@@ -243,6 +264,9 @@ export function Marmotter({
       });
 
       registry.addProfile(profile, built);
+      if (options.connect === false) {
+        return;
+      }
       void built.connect().catch((error: unknown) => {
         toast(`Could not reach ${profile.name}. ${describe(error)}`, 'error');
       });
@@ -260,6 +284,24 @@ export function Marmotter({
     if (profile !== undefined) {
       startSession(profile);
     }
+  };
+
+  // Saving an edit. The transport is built around the profile's endpoints and
+  // the identity goes out during registration, so a changed profile reaches the
+  // wire only through a new session — which is why this rebuilds one rather
+  // than only writing the profile back. A network that was connected reconnects
+  // on the new settings; one that was not stays as it was, on them.
+  const saveNetwork = (profile: NetworkProfile): void => {
+    const live = registry.networks.get(profile.id)?.phase !== 'disconnected';
+    // Registering the session writes the profile back with it, so there is
+    // nothing to save separately.
+    startSession(profile, { connect: live });
+    setEditingId(undefined);
+    toast(
+      live
+        ? `Reconnecting to ${profile.name} with the new settings.`
+        : `Saved. ${profile.name} will connect with the new settings.`,
+    );
   };
 
   const removeNetwork = (networkId: string): void => {
@@ -290,6 +332,45 @@ export function Marmotter({
   const browseChannels = (networkId: string): void => {
     view.select({ networkId, target: undefined });
     view.setPane('channel-browser');
+  };
+
+  // Every route to a channel list goes through here, because every one of them
+  // can flood the window: the browser's own button, and `/list` typed into the
+  // composer. A request that already names a pattern is somebody who has
+  // narrowed it on purpose and is sent as asked; a bare one asks first.
+  //
+  // Both wait out the network's own gate first. A `LIST` sent in the first
+  // minute and a half comes back as "unknown command", which is what the server
+  // said and not what it meant, and passing that on teaches somebody that the
+  // feature is broken rather than that it is early.
+  const askForList = (networkId: string, pattern?: string): void => {
+    const state = registry.networks.get(networkId);
+    const readiness = listReadiness(state ?? { registeredAt: undefined });
+    if (!readiness.ready) {
+      toast(describeWait(state?.name ?? 'This network', readiness.waitSeconds), 'error');
+      return;
+    }
+    if (pattern !== undefined && pattern !== '') {
+      registry.sessionOf(networkId)?.listChannels(pattern);
+      return;
+    }
+    setListing({ networkId, pattern: '' });
+  };
+
+  // Making a channel. There is no CREATE on IRC — a channel exists because
+  // somebody is in it — so this joins a name nobody is using and then sets what
+  // was asked for, which the join itself gives us the standing to do.
+  const createChannel = (options: Parameters<typeof createChannelLines>[0]): void => {
+    const networkId = creatingOn;
+    setCreatingOn(undefined);
+    if (networkId === undefined) {
+      return;
+    }
+    const target = registry.sessionOf(networkId);
+    for (const line of createChannelLines(options)) {
+      target?.send(line);
+    }
+    view.select({ networkId, target: options.name });
   };
 
   const joinFromBrowser = (channel: string): void => {
@@ -343,6 +424,106 @@ export function Marmotter({
     });
   };
 
+  // The right-click menu for a network in the sidebar. Everything here is
+  // reachable elsewhere; what right-click adds is reaching it from the thing
+  // itself, which is where somebody looks first.
+  const networkSidebarMenu = (state: NetworkState): readonly MenuItem[] => {
+    const connected = state.phase === 'registered' || state.phase === 'registering';
+    return [
+      ...(connected
+        ? [
+            {
+              id: 'join',
+              label: 'Join a channel…',
+              onSelect: () => setJoiningNetwork(state.id),
+            },
+            {
+              id: 'browse',
+              label: 'Browse channels',
+              onSelect: () => browseChannels(state.id),
+            },
+          ]
+        : []),
+      {
+        id: 'edit',
+        label: 'Edit this network…',
+        onSelect: () => setEditingId(state.id),
+        startsGroup: connected,
+      },
+      {
+        id: 'raw',
+        label: 'Show the raw log',
+        onSelect: () => {
+          view.select({ networkId: state.id, target: undefined });
+          view.setPane('raw-log');
+        },
+      },
+      connected
+        ? { id: 'disconnect', label: 'Disconnect', onSelect: () => disconnect(state.id) }
+        : {
+            id: 'connect',
+            label: state.phase === 'connecting' ? 'Connecting…' : 'Connect',
+            disabled: state.phase === 'connecting',
+            onSelect: () => reconnect(state.id),
+          },
+      {
+        id: 'remove',
+        label: 'Remove this network',
+        destructive: true,
+        startsGroup: true,
+        onSelect: () => removeNetwork(state.id),
+      },
+    ];
+  };
+
+  /** The right-click menu for a channel or a private conversation. */
+  const conversationSidebarMenu = (
+    state: NetworkState,
+    target: string,
+    kind: 'channel' | 'person',
+  ): readonly MenuItem[] => {
+    const ref: TargetRef = { networkId: state.id, target };
+    return [
+      { id: 'open', label: 'Open', onSelect: () => view.select(ref) },
+      {
+        id: 'read',
+        label: 'Mark as read',
+        disabled: unreadFor(view, ref).count === 0,
+        onSelect: () => view.markRead(ref),
+      },
+      {
+        id: 'copy',
+        label: kind === 'channel' ? 'Copy channel name' : 'Copy name',
+        onSelect: () => void navigator.clipboard?.writeText(target),
+      },
+      kind === 'channel'
+        ? {
+            id: 'leave',
+            label: 'Leave channel',
+            destructive: true,
+            startsGroup: true,
+            onSelect: () => {
+              registry.sessionOf(state.id)?.part(target);
+              if (sameRef(view.selection, ref)) {
+                view.select({ networkId: state.id, target: undefined });
+              }
+            },
+          }
+        : {
+            id: 'close',
+            label: 'Close conversation',
+            destructive: true,
+            startsGroup: true,
+            onSelect: () => {
+              registry.sessionOf(state.id)?.closeQuery(target);
+              if (sameRef(view.selection, ref)) {
+                view.select({ networkId: state.id, target: undefined });
+              }
+            },
+          },
+    ];
+  };
+
   const send = (text: string): void => {
     if (session === undefined || selection === undefined || network === undefined) {
       return;
@@ -360,9 +541,12 @@ export function Marmotter({
       case 'line':
         // `/list` is the one command whose answer has nowhere to go in the
         // message list — a numeric per channel is exactly what CLAUDE.md says
-        // never to render — so typing it opens the browser that consumes it.
+        // never to render — so typing it opens the browser that consumes it,
+        // and goes through the same guard as the button beside it.
         if (parsed.command.name === 'list') {
           view.setPane('channel-browser');
+          askForList(network.id, parsed.line.slice('LIST'.length).trim());
+          return;
         }
         session.send(parsed.line);
         return;
@@ -471,6 +655,7 @@ export function Marmotter({
           onCtcpChange={view.updateCtcp}
           onReconnect={reconnect}
           onDisconnect={disconnect}
+          onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
         />
@@ -500,8 +685,9 @@ export function Marmotter({
       ) : view.pane === 'channel-browser' && network !== undefined ? (
         <ChannelBrowser
           network={network}
-          onRefresh={(pattern) => registry.sessionOf(network.id)?.listChannels(pattern)}
+          onRefresh={(pattern) => askForList(network.id, pattern)}
           onJoin={joinFromBrowser}
+          onCreate={() => setCreatingOn(network.id)}
           joined={
             new Set(
               [...network.channels.values()]
@@ -572,6 +758,7 @@ export function Marmotter({
             }
             channels={[...network.channels.values()].map((entry) => entry.name)}
             fold={(text) => fold(text, network.support.caseMapping)}
+            operatorCommands={registry.profiles.get(network.id)?.operatorCommands === true}
             disabled={network.phase !== 'registered'}
             disabledReason="Not connected yet"
           />
@@ -611,6 +798,8 @@ export function Marmotter({
             settingsOpen={view.pane === 'settings'}
             onJoinChannel={(networkId) => setJoiningNetwork(networkId)}
             onBrowseChannels={browseChannels}
+            networkMenu={networkSidebarMenu}
+            conversationMenu={conversationSidebarMenu}
           />
         }
         aside={
@@ -640,6 +829,43 @@ export function Marmotter({
       />
 
       <AddNetwork open={adding} onClose={() => setAdding(false)} onAdd={addNetwork} />
+
+      {editingProfile === undefined ? null : (
+        <AddNetwork
+          open
+          editing={editingProfile}
+          onClose={() => setEditingId(undefined)}
+          onAdd={saveNetwork}
+        />
+      )}
+
+      {listingNetwork === undefined || listing === undefined ? null : (
+        <ListPrompt
+          open
+          networkName={listingNetwork.name}
+          {...(listingNetwork.channelCount === undefined
+            ? {}
+            : { channelCount: listingNetwork.channelCount })}
+          limit={CHANNEL_LIST_LIMIT}
+          initialPattern={listing.pattern}
+          onCancel={() => setListing(undefined)}
+          onConfirm={(pattern) => {
+            registry.sessionOf(listing.networkId)?.listChannels(pattern);
+            setListing(undefined);
+          }}
+        />
+      )}
+
+      {creatingNetwork === undefined ? null : (
+        <CreateChannel
+          open
+          networkName={creatingNetwork.name}
+          prefix={creatingNetwork.support.chanTypes[0] ?? '#'}
+          supportsSecret={creatingNetwork.support.chanModes.flag.includes('s')}
+          onCreate={createChannel}
+          onCancel={() => setCreatingOn(undefined)}
+        />
+      )}
 
       <TextPrompt
         open={joiningNetwork !== undefined}
