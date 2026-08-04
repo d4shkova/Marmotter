@@ -8,6 +8,18 @@ Everything below is run from the repository root.
 
 ---
 
+## Get the source
+
+```sh
+git clone https://github.com/d4shkova/Marmotter.git
+cd Marmotter
+```
+
+Submodules aren't used, so a plain clone is enough. If you already have a
+checkout, `git pull` before building.
+
+---
+
 ## Common to both
 
 | Tool | Version | Get it                                                   |
