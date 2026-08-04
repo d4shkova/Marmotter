@@ -28,6 +28,12 @@ export interface SidebarProps {
   readonly onJoinChannel?: (networkId: string) => void;
   readonly onBrowseChannels?: (networkId: string) => void;
   /**
+   * Whether to keep a persistent "Browse channels" shortcut under every
+   * network's channel list. On by default; the User options section of
+   * Settings can turn it off.
+   */
+  readonly showBrowseChannelsShortcut?: boolean;
+  /**
    * The right-click menu for a network, covering its own row and the blank
    * space below its channels.
    */
@@ -92,6 +98,7 @@ export function Sidebar({
   settingsOpen = false,
   onJoinChannel,
   onBrowseChannels,
+  showBrowseChannelsShortcut = true,
   networkMenu,
   conversationMenu,
   className,
@@ -198,6 +205,7 @@ export function Sidebar({
                 setDragging(undefined);
               }}
               onOpenMenu={openMenu}
+              showBrowseChannelsShortcut={showBrowseChannelsShortcut}
               {...(networkMenu === undefined ? {} : { networkMenu })}
               {...(conversationMenu === undefined ? {} : { conversationMenu })}
               {...(onJoinChannel === undefined
@@ -245,6 +253,7 @@ interface NetworkGroupProps {
   ) => readonly MenuItem[];
   readonly onJoinChannel?: () => void;
   readonly onBrowseChannels?: () => void;
+  readonly showBrowseChannelsShortcut: boolean;
 }
 
 function NetworkGroup({
@@ -264,6 +273,7 @@ function NetworkGroup({
   conversationMenu,
   onJoinChannel,
   onBrowseChannels,
+  showBrowseChannelsShortcut,
 }: NetworkGroupProps): ReactNode {
   const channels = [...network.channels.values()].filter((channel) => channel.joined);
   const queries = [...network.queries.values()];
@@ -398,7 +408,9 @@ function NetworkGroup({
             </li>
           ))}
 
-          {channels.length === 0 && onBrowseChannels !== undefined ? (
+          {onBrowseChannels !== undefined &&
+          network.phase === 'registered' &&
+          (channels.length === 0 || showBrowseChannelsShortcut) ? (
             <li className="px-3 py-1.5">
               <Button variant="plain" size="small" onClick={onBrowseChannels}>
                 Browse channels

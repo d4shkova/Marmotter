@@ -463,6 +463,7 @@ describe('every component passes axe', () => {
           unfurlLinks: false,
           highlightWords: [],
           notificationsEnabled: true,
+          showBrowseChannelsShortcut: true,
         }}
         onAppearanceChange={noop}
         ctcp={DEFAULT_CTCP_POLICY}

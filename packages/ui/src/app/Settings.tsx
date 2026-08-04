@@ -1,6 +1,6 @@
 import type { NetworkState } from '@marmotter/client';
 import { DEFAULT_VERSION_TEXT, type CtcpPolicy } from '@marmotter/protocol';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { StatusDot, type ConnectionStatus } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
@@ -97,7 +97,7 @@ export function Settings({
   className,
 }: SettingsProps): ReactNode {
   return (
-    <div className={className}>
+    <div className={className} style={SETTINGS_TEXT_SCALE}>
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6">
         <h1 className="text-title-2 font-bold text-[var(--label-primary)]">Settings</h1>
 
@@ -283,7 +283,40 @@ export function Settings({
             />
           </div>
         </ListGroup>
+
+        <ListGroup
+          header="User options"
+          footer="Small conveniences for how the interface behaves. None of these change what Marmotter sends or receives."
+        >
+          <div className="px-4 py-3">
+            <Toggle
+              label="Always show the Browse channels shortcut"
+              hint="Keeps the button under every network's channel list, not only when it is empty."
+              checked={appearance.showBrowseChannelsShortcut}
+              onChange={(showBrowseChannelsShortcut) =>
+                onAppearanceChange({ showBrowseChannelsShortcut })
+              }
+            />
+          </div>
+        </ListGroup>
       </div>
     </div>
   );
 }
+
+/**
+ * Trims Settings' text one step below the rest of the interface.
+ *
+ * The controls in a settings screen sit still and are read, not glanced at, so
+ * they carry a smaller size than a message row does — one iOS-style step below
+ * the surrounding UI, applied through the tokens that back Tailwind's `text-*`
+ * utilities so every primitive follows without touching each one.
+ */
+const SETTINGS_TEXT_SCALE = {
+  '--text-body-size': '15px',
+  '--text-body-line': '20px',
+  '--text-callout-size': '15px',
+  '--text-callout-line': '20px',
+  '--text-subhead-size': '14px',
+  '--text-subhead-line': '19px',
+} as CSSProperties;

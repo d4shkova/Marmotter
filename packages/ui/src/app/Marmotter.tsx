@@ -798,6 +798,7 @@ export function Marmotter({
             settingsOpen={view.pane === 'settings'}
             onJoinChannel={(networkId) => setJoiningNetwork(networkId)}
             onBrowseChannels={browseChannels}
+            showBrowseChannelsShortcut={view.appearance.showBrowseChannelsShortcut}
             networkMenu={networkSidebarMenu}
             conversationMenu={conversationSidebarMenu}
           />
