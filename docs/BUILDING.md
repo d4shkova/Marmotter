@@ -8,6 +8,18 @@ Everything below is run from the repository root.
 
 ---
 
+## Get the source
+
+```sh
+git clone https://github.com/d4shkova/Marmotter.git
+cd Marmotter
+```
+
+Submodules aren't used, so a plain clone is enough. If you already have a
+checkout, `git pull` before building.
+
+---
+
 ## Common to both
 
 | Tool | Version | Get it                                                   |
@@ -43,6 +55,29 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 . "$HOME/.cargo/env"
 ```
 
+### Prerequisites — CachyOS / Arch
+
+```sh
+sudo pacman -Syu --needed \
+  base-devel \
+  webkit2gtk-4.1 \
+  gtk3 \
+  libayatana-appindicator \
+  librsvg \
+  patchelf \
+  rustup \
+  nodejs-lts-jod \
+  pnpm
+
+rustup default stable
+```
+
+`base-devel` covers the C toolchain Rust links against. `nodejs-lts-jod` is Node
+22 in the Arch repos; if you already manage Node with `nvm` or Volta, skip that
+and `pnpm`, and use `corepack enable && corepack prepare pnpm@10 --activate`
+instead. CachyOS's x86_64-v3/v4 repos need no special handling — `pacman`
+resolves the right variant on its own.
+
 Other distros: the equivalents are in
 [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/).
 
@@ -76,9 +111,21 @@ pnpm tauri build --bundles deb,rpm       # skip the AppImage
 
 ### Install and run
 
+Debian / Ubuntu:
+
 ```sh
 sudo apt install ./target/release/bundle/deb/Marmotter_0.1.0_amd64.deb
 marmotter-desktop
+```
+
+CachyOS / Arch — the `.rpm` won't install here, so use the standalone binary
+or the AppImage:
+
+```sh
+./target/release/marmotter-desktop
+# or
+chmod +x ./target/release/bundle/appimage/Marmotter_0.1.0_amd64.AppImage
+./target/release/bundle/appimage/Marmotter_0.1.0_amd64.AppImage
 ```
 
 The command is `marmotter-desktop`, not `marmotter` — the package is named
@@ -94,7 +141,7 @@ applications menu as Marmotter.
   installs on Debian 12 and Ubuntu 22.04 or newer — not on anything still
   shipping the WebKitGTK 4.0 series.
 
-Verified on Ubuntu 24.04 by hand and Ubuntu 22.04 in CI.
+Verified on Ubuntu 24.04 by hand, Ubuntu 22.04 in CI, and CachyOS by hand.
 
 ---
 
