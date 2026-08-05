@@ -380,13 +380,16 @@ export function Marmotter({
       }
       useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
       dcc
-        .download({
-          host: source.host,
-          port: source.port,
-          filename: source.filename,
-          folder,
-          ...(source.size === undefined ? {} : { size: source.size }),
-        })
+        .download(
+          {
+            host: source.host,
+            port: source.port,
+            filename: source.filename,
+            folder,
+            ...(source.size === undefined ? {} : { size: source.size }),
+          },
+          (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+        )
         .then((savedPath) => {
           useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
           toast(`Saved ${source.filename}.`);

@@ -1,4 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react';
+import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
@@ -176,6 +177,45 @@ export function DccBrowser({
   );
 }
 
+/** A slim progress bar with a byte-count label, shown while a file downloads. */
+function DownloadProgress({
+  received,
+  total,
+}: {
+  received: number | undefined;
+  total: number | undefined;
+}): ReactNode {
+  const done = received ?? 0;
+  const pct =
+    total !== undefined && total > 0 ? Math.min(100, Math.round((done / total) * 100)) : undefined;
+
+  return (
+    <div className="flex w-32 flex-col items-end gap-1">
+      <div
+        role="progressbar"
+        aria-label="Download progress"
+        aria-valuemin={0}
+        aria-valuemax={total ?? undefined}
+        aria-valuenow={pct === undefined ? undefined : done}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--fill-tertiary)]"
+      >
+        <div
+          className={cn(
+            'h-full rounded-full bg-[var(--accent)]',
+            // With no known total the bar cannot fill to a fraction, so it sits
+            // partly filled to read as "in progress" rather than "stuck at 0".
+            pct === undefined && 'animate-pulse',
+          )}
+          style={{ width: pct === undefined ? '40%' : `${pct}%` }}
+        />
+      </div>
+      <span className="text-caption-2 text-[var(--label-tertiary)]">
+        {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
+      </span>
+    </div>
+  );
+}
+
 /** The trailing Download control, which reflects the transfer's state. */
 function DownloadCell({
   offer,
@@ -197,11 +237,7 @@ function DownloadCell({
         </Button>
       );
     case 'downloading':
-      return (
-        <Button size="small" variant="secondary" busy disabled>
-          Downloading
-        </Button>
-      );
+      return <DownloadProgress received={offer.received} total={offer.size} />;
     case 'downloaded':
       return <span className="text-caption-1 text-[var(--status-connected)]">Saved</span>;
     case 'failed':

@@ -73,6 +73,26 @@ describe('the DCC monitor store', () => {
     expect(updated?.savedPath).toBe('/tmp/dl/holiday.jpg');
   });
 
+  it('records progress and moves the row to downloading', () => {
+    useView.getState().recordDccOffer(offer());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferProgress(id, 1000, 4000);
+    const row = useView.getState().dccOffers[0];
+    expect(row?.status).toBe('downloading');
+    expect(row?.received).toBe(1000);
+  });
+
+  it('fills in a total the advertisement lacked, without overwriting a known size', () => {
+    const { size: _size, ...sendNoSize } = send;
+    useView.getState().recordDccOffer(offer({ send: sendNoSize }));
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferProgress(id, 10, 4000);
+    expect(useView.getState().dccOffers[0]?.size).toBe(4000);
+    // A second report with no total must not wipe the size just learned.
+    useView.getState().setDccOfferProgress(id, 20, undefined);
+    expect(useView.getState().dccOffers[0]?.size).toBe(4000);
+  });
+
   it('clears every offer on request', () => {
     useView.getState().recordDccOffer(offer());
     useView.getState().clearDccOffers();

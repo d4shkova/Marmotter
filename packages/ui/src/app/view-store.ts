@@ -75,6 +75,8 @@ export interface DccOfferRecord {
   readonly error?: string;
   /** Where the file was written, once it was. */
   readonly savedPath?: string;
+  /** Bytes received so far, while a download is in flight. */
+  readonly received?: number;
   /** A passive (reverse) DCC offer, which the receive-only monitor cannot fetch. */
   readonly passive: boolean;
   /** The address to connect to, for a direct DCC offer. */
@@ -244,6 +246,11 @@ export interface ViewState {
     id: string,
     patch: { status: DccStatus; error?: string; savedPath?: string },
   ): void;
+  /**
+   * Records how far a download has got. Moves the row to downloading and fills
+   * in the total size when the transfer reports one the advertisement lacked.
+   */
+  setDccOfferProgress(id: string, received: number, total?: number): void;
   /** Forgets every offer seen so far. */
   clearDccOffers(): void;
   /** Drops everything for a network that has been removed. */
@@ -447,6 +454,23 @@ export const useView = create<ViewState>((set, get) => ({
               status: patch.status,
               ...(patch.error === undefined ? {} : { error: patch.error }),
               ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
+            }
+          : entry,
+      ),
+    }));
+  },
+
+  setDccOfferProgress(id, received, total) {
+    set((current) => ({
+      dccOffers: current.dccOffers.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              status: 'downloading',
+              received,
+              // Fill in a size the advertisement did not carry, so the bar has a
+              // denominator; never overwrite one it already had.
+              ...(entry.size === undefined && total !== undefined ? { size: total } : {}),
             }
           : entry,
       ),

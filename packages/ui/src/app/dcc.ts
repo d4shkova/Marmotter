@@ -21,6 +21,9 @@ export interface DccDownloadRequest {
   readonly folder: string;
 }
 
+/** Progress of a transfer in flight: bytes received, and the total if known. */
+export type DccProgress = (received: number, total: number | undefined) => void;
+
 /** The platform capabilities the file monitor depends on. */
 export interface DccCapability {
   /**
@@ -31,10 +34,11 @@ export interface DccCapability {
   /**
    * Downloads an advertised file, resolving to the path it was written to.
    *
-   * Rejects with a message fit to show the user on any failure — a refused
-   * connection, a size over the cap, a folder that cannot be written to.
+   * `onProgress` is called as bytes arrive, so a row can show a bar rather than
+   * a spinner. Rejects with a message fit to show the user on any failure — a
+   * refused connection, a size over the cap, a folder that cannot be written to.
    */
-  download(request: DccDownloadRequest): Promise<string>;
+  download(request: DccDownloadRequest, onProgress?: DccProgress): Promise<string>;
 }
 
 /** A byte count as a short human-readable string, e.g. "1.4 MB". */

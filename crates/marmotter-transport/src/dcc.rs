@@ -51,14 +51,25 @@ pub struct DownloadOptions {
     pub timeout: Duration,
 }
 
+/// How often progress is reported: once per this many bytes, plus a first and
+/// last call. A 64 KiB read on a multi-gigabyte file would otherwise fire tens
+/// of thousands of updates for a bar that moves a pixel each time.
+const PROGRESS_STEP: u64 = 1024 * 1024;
+
 /// Downloads the file, returning the path it was written to.
+///
+/// `on_progress` is called with the bytes received so far and the total where it
+/// is known — once at the start, roughly once per megabyte, and once at the end.
 ///
 /// # Errors
 ///
 /// Returns [`TransportError`] for a passive offer, a folder that is not usable,
 /// a connection that fails or stalls, or a transfer that ends before the whole
 /// advertised size has arrived.
-pub async fn download(options: DownloadOptions) -> Result<PathBuf> {
+pub async fn download(
+    options: DownloadOptions,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<PathBuf> {
     if options.port == 0 {
         return Err(TransportError::Network(
             "this is a passive transfer, which Marmotter can't fetch".to_owned(),
@@ -79,7 +90,15 @@ pub async fn download(options: DownloadOptions) -> Result<PathBuf> {
         .map_err(|_| TransportError::Timeout)?
         .map_err(|error| TransportError::Network(error.to_string()))?;
 
-    match stream_to_file(stream, &target, options.size, options.timeout).await {
+    match stream_to_file(
+        stream,
+        &target,
+        options.size,
+        options.timeout,
+        &mut on_progress,
+    )
+    .await
+    {
         Ok(()) => Ok(target),
         Err(error) => {
             // A half-written file is worse than none: it looks complete in the
@@ -97,6 +116,7 @@ async fn stream_to_file(
     target: &Path,
     size: Option<u64>,
     timeout: Duration,
+    on_progress: &mut impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
     let mut file = File::create(target)
         .await
@@ -104,7 +124,10 @@ async fn stream_to_file(
 
     let cap = size.unwrap_or(MAX_UNKNOWN_SIZE);
     let mut received: u64 = 0;
+    let mut reported: u64 = 0;
     let mut buffer = vec![0_u8; READ_CHUNK];
+
+    on_progress(0, size);
 
     while received < cap {
         let read = tokio::time::timeout(timeout, stream.read(&mut buffer))
@@ -132,6 +155,11 @@ async fn stream_to_file(
         let ack = (received as u32).to_be_bytes();
         let _ = stream.write_all(&ack).await;
 
+        if received - reported >= PROGRESS_STEP {
+            reported = received;
+            on_progress(received, size);
+        }
+
         if take < read {
             break; // More arrived than was promised; stop at the promised size.
         }
@@ -149,6 +177,7 @@ async fn stream_to_file(
         }
     }
 
+    on_progress(received, size);
     Ok(())
 }
 
@@ -240,14 +269,17 @@ mod tests {
         let payload = b"marmot photographs".to_vec();
         let port = serve(payload.clone()).await;
 
-        let path = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port,
-            size: Some(payload.len() as u64),
-            filename: "photos.dat".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(5),
-        })
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(payload.len() as u64),
+                filename: "photos.dat".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
         .await
         .unwrap();
 
@@ -256,18 +288,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reports_progress_ending_at_the_full_size() {
+        let folder = tempfile::tempdir().unwrap();
+        let payload = b"marmot photographs".to_vec();
+        let port = serve(payload.clone()).await;
+
+        let mut updates: Vec<(u64, Option<u64>)> = Vec::new();
+        download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(payload.len() as u64),
+                filename: "photos.dat".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |received, total| updates.push((received, total)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updates.first(), Some(&(0, Some(payload.len() as u64))));
+        assert_eq!(
+            updates.last(),
+            Some(&(payload.len() as u64, Some(payload.len() as u64)))
+        );
+    }
+
+    #[tokio::test]
     async fn stops_at_the_advertised_size_when_the_sender_over_sends() {
         let folder = tempfile::tempdir().unwrap();
         let port = serve(b"exactlytenXXXXX".to_vec()).await;
 
-        let path = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port,
-            size: Some(10),
-            filename: "clip.bin".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(5),
-        })
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(10),
+                filename: "clip.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
         .await
         .unwrap();
 
@@ -279,14 +342,17 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let port = serve(b"tooshort".to_vec()).await;
 
-        let result = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port,
-            size: Some(1_000),
-            filename: "big.bin".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(5),
-        })
+        let result = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(1_000),
+                filename: "big.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
         .await;
 
         assert!(result.is_err());
@@ -297,14 +363,17 @@ mod tests {
     #[tokio::test]
     async fn refuses_a_passive_offer() {
         let folder = tempfile::tempdir().unwrap();
-        let result = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port: 0,
-            size: Some(1),
-            filename: "x".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
-        })
+        let result = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port: 0,
+                size: Some(1),
+                filename: "x".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(1),
+            },
+            |_, _| {},
+        )
         .await;
         assert!(result.is_err());
     }
@@ -315,14 +384,17 @@ mod tests {
         std::fs::write(folder.path().join("dup.txt"), b"old").unwrap();
         let port = serve(b"new".to_vec()).await;
 
-        let path = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port,
-            size: Some(3),
-            filename: "dup.txt".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(5),
-        })
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(3),
+                filename: "dup.txt".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
         .await
         .unwrap();
 
@@ -346,14 +418,17 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let port = serve(b"data".to_vec()).await;
 
-        let path = download(DownloadOptions {
-            host: "127.0.0.1".to_owned(),
-            port,
-            size: Some(4),
-            filename: "../escape.txt".to_owned(),
-            folder: folder.path().to_path_buf(),
-            timeout: Duration::from_secs(5),
-        })
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(4),
+                filename: "../escape.txt".to_owned(),
+                folder: folder.path().to_path_buf(),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
         .await
         .unwrap();
 
