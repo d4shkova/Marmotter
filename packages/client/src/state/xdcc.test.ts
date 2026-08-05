@@ -41,9 +41,25 @@ describe('an XDCC advertisement', () => {
     expect(state.channels.get('#packlist')?.messages.at(-1)?.text).toBe('#5 0x [1M] thing.bin');
   });
 
-  it('ignores a private message, since packlists live in channels', () => {
+  it('catches a pack advertised as a NOTICE, which many bots use', () => {
+    const line = ':bot!b@host NOTICE #packlist :#5 0x [1M] thing.bin';
+    expect(xdccEffects(line)[0]).toMatchObject({
+      kind: 'xdcc-offer',
+      from: 'bot',
+      target: '#packlist',
+      pack: { pack: 5, filename: 'thing.bin' },
+    });
+  });
+
+  it('catches a pack a bot answers privately, filed under the bot', () => {
+    // `!list` and `@find` replies often arrive as a private message from the bot.
     const line = ':bot!b@host PRIVMSG marmot :#5 0x [1M] thing.bin';
-    expect(xdccEffects(line)).toEqual([]);
+    expect(xdccEffects(line)[0]).toMatchObject({
+      kind: 'xdcc-offer',
+      from: 'bot',
+      target: 'bot',
+      pack: { pack: 5 },
+    });
   });
 
   it('ignores ordinary chatter that is not a pack line', () => {

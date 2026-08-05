@@ -946,16 +946,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         );
       }
 
-      // A channel message from a bot may be an XDCC catalogue line. It stays in
-      // the channel as ordinary text — hiding a packlist channel's own content
+      // A message from a bot may be an XDCC catalogue line. It stays in the
+      // conversation as ordinary text — hiding a packlist channel's own content
       // would be surprising — and is also raised to the file monitor, which the
       // user has to have switched on for anything to be collected.
+      //
+      // Both PRIVMSG and NOTICE count: serving bots spam packs to a channel and
+      // answer `!list`/`@find` in private, and either can arrive as a NOTICE.
+      // The conversation it lands in — channel or the bot's own query — is what
+      // is reported, so the browser can group by where it came from.
       const effects: Effect[] = [];
-      if (
-        msg.command === 'PRIVMSG' &&
-        action === undefined &&
-        isChannel(conversation, state.support)
-      ) {
+      if (action === undefined) {
         const pack = parseXdccAnnounce(body);
         if (pack !== undefined) {
           effects.push({ kind: 'xdcc-offer', from: sender, target: conversation, pack });

@@ -43,6 +43,15 @@ describe('parseXdccAnnounce', () => {
     expect(pack?.sizeText).toBe('');
   });
 
+  it('parses a colourised advertisement', () => {
+    // A bot wrapping the line in mIRC colour codes must still be read.
+    const coloured = '\x0304#70\x03 \x0300 1x\x03 [\x02 2.2G\x02] \x0312movie.mkv\x03';
+    const pack = parseXdccAnnounce(coloured);
+    expect(pack?.pack).toBe(70);
+    expect(pack?.filename).toBe('movie.mkv');
+    expect(pack?.sizeText).toBe('2.2G');
+  });
+
   it('ignores ordinary chatter that merely mentions a number', () => {
     expect(parseXdccAnnounce('see #70 for details')).toBeUndefined();
     expect(parseXdccAnnounce('#general hello everyone')).toBeUndefined();

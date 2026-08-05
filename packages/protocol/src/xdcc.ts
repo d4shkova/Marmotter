@@ -35,6 +35,18 @@ export interface XdccPack {
 // line is taken verbatim once the size has been read.
 const ANNOUNCE = /^\s*#(\d+)\s+([\d,]+)x\s+\[\s*([^\]]*?)\s*\]\s+(\S.*?)\s*$/;
 
+// mIRC formatting: colour (\x03NN,NN), hex colour (\x04RRGGBB), and the toggles
+// for bold, italic, underline, strikethrough, reverse, monospace and reset.
+// Serving bots routinely colour their pack lines, which would otherwise push a
+// control character in front of the leading `#` and defeat the match.
+// eslint-disable-next-line no-control-regex
+const FORMATTING = /\x03\d{0,2}(?:,\d{1,2})?|\x04[0-9A-Fa-f]{6}(?:,[0-9A-Fa-f]{6})?|[\x00-\x1f]/g;
+
+/** Strips mIRC colour and formatting codes, leaving the plain text. */
+function stripFormatting(text: string): string {
+  return text.replace(FORMATTING, '');
+}
+
 const SIZE = /^([\d.]+)\s*([KMGT])?B?$/i;
 
 const UNIT_BYTES: Readonly<Record<string, number>> = {
@@ -77,7 +89,7 @@ export function parseHumanSize(text: string): number | undefined {
  * chatter that merely mentions a `#123` must not be mistaken for an offer.
  */
 export function parseXdccAnnounce(text: string): XdccPack | undefined {
-  const match = ANNOUNCE.exec(text);
+  const match = ANNOUNCE.exec(stripFormatting(text));
   if (match === null) {
     return undefined;
   }
