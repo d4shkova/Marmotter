@@ -369,7 +369,7 @@ underlying raw command must remain available via the command bar.
 | `AWAY` | Status control: Available / Away with message, in the account menu. |
 | `NOTICE` | Distinct styling, routed to a server tab or the relevant channel, never mistakable for a normal message. |
 | `CTCP VERSION/PING/TIME` | Answered automatically, configurable; requests surfaced as a quiet notice, not a message. |
-| `DCC` | **Out of scope for v1.** Do not implement. Security surface is disproportionate to value. |
+| `DCC` | **Receive-only, desktop only.** A file monitor (off by default, enabled under Settings → User options with a chosen download folder) lists files offered over `DCC SEND` in a panel below the member list and downloads them on request. Parsing lives in `packages/protocol/src/dcc.ts`; the socket-to-file download is `crates/marmotter-transport/src/dcc.rs`, behind a Tauri command. Web has no file monitor — a browser tab has no folder and cannot open the direct socket. **Sending, DCC CHAT, and passive/reverse transfers remain out of scope**; their security surface is disproportionate to value, and a passive offer is shown but marked un-fetchable. |
 | `INVITE` | Invite button in the channel menu with a nick picker; incoming invites become an actionable notification. |
 | `MONITOR` / `WATCH` | Notify list: a "Friends" panel showing online/offline, using MONITOR where advertised, polled WHOIS as fallback. |
 | `IGNORE` | Client-side mute list, per-network, with mask builder and expiry. |

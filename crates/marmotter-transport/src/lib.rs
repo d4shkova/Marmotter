@@ -14,6 +14,7 @@
 pub const CRLF: &[u8] = b"\r\n";
 
 pub mod connection;
+pub mod dcc;
 pub mod error;
 pub mod lines;
 pub mod tls;
@@ -21,6 +22,7 @@ pub mod tls;
 pub use connection::{
     connect, Close, ConnectOptions, Connection, Event, Security, DEFAULT_TIMEOUT,
 };
+pub use dcc::{download as dcc_download, DownloadOptions as DccDownloadOptions, DEFAULT_DCC_TIMEOUT};
 pub use error::{Result, TransportError};
 pub use lines::{LineDecoder, MAX_LINE_BYTES};
 pub use tls::{

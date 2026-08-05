@@ -24,6 +24,9 @@ import { ChannelAccess } from './ChannelAccess.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { DccBrowser } from './DccBrowser.js';
+import { DccMonitorPanel } from './DccMonitorPanel.js';
+import type { DccOfferRecord } from './view-store.js';
 import { InviteBanner } from './Invites.js';
 import { CreateChannel } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
@@ -315,6 +318,87 @@ export const Members: StoryObj = {
           { id: 'msg', label: 'Send a message', onSelect: () => {} },
           { id: 'ban', label: `Ban ${entry.nick}`, onSelect: () => {}, destructive: true },
         ]}
+      />
+    </div>
+  ),
+};
+
+function fileOffers(): DccOfferRecord[] {
+  const now = Date.now();
+  return [
+    {
+      id: '1',
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'ferdinand',
+      target: '#marmotter',
+      filename: 'winter-hike.jpg',
+      host: '198.51.100.20',
+      port: 5001,
+      size: 2_411_520,
+      passive: false,
+      receivedAt: now - 40_000,
+      status: 'available',
+    },
+    {
+      id: '2',
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'ilse',
+      target: 'ilse',
+      filename: 'meeting-notes.pdf',
+      host: '203.0.113.7',
+      port: 5002,
+      size: 184_320,
+      passive: false,
+      receivedAt: now - 6 * 60_000,
+      status: 'downloaded',
+      savedPath: '/home/you/Downloads/meeting-notes.pdf',
+    },
+    {
+      id: '3',
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'basil',
+      target: '#marmotter',
+      filename: 'firmware.bin',
+      host: '198.51.100.44',
+      port: 0,
+      size: 8_388_608,
+      passive: true,
+      receivedAt: now - 2 * 60 * 60_000,
+      status: 'available',
+    },
+  ];
+}
+
+export const TheFileMonitor: StoryObj = {
+  render: function TheFileMonitor() {
+    const [active, setActive] = useState(true);
+    return (
+      <div className="w-64">
+        <DccMonitorPanel
+          active={active}
+          seen={active ? 3 : 0}
+          onStart={() => setActive(true)}
+          onStop={() => setActive(false)}
+          onOpen={() => {}}
+        />
+      </div>
+    );
+  },
+};
+
+export const BrowsingFiles: StoryObj = {
+  render: () => (
+    <div className="h-[32rem] w-[52rem] overflow-hidden rounded-card border border-[var(--separator)]">
+      <DccBrowser
+        className="h-full overflow-y-auto"
+        offers={fileOffers()}
+        downloadFolder="/home/you/Downloads"
+        onDownload={() => {}}
+        onChooseFolder={() => {}}
+        onClear={() => {}}
       />
     </div>
   ),
@@ -725,6 +809,10 @@ export const SettingsScreen: StoryObj = {
       showBrowseChannelsShortcut: true,
     });
     const [ctcp, setCtcp] = useState(DEFAULT_CTCP_POLICY);
+    const [userOptions, setUserOptions] = useState({
+      dccMonitorEnabled: false,
+      downloadFolder: undefined as string | undefined,
+    });
 
     return (
       <div className="h-[36rem] w-[40rem] overflow-hidden rounded-card border border-[var(--separator)]">
@@ -735,6 +823,14 @@ export const SettingsScreen: StoryObj = {
           onAppearanceChange={(changes) => setAppearance((current) => ({ ...current, ...changes }))}
           ctcp={ctcp}
           onCtcpChange={(changes) => setCtcp((current) => ({ ...current, ...changes }))}
+          userOptions={userOptions}
+          onUserOptionsChange={(changes) =>
+            setUserOptions((current) => ({ ...current, ...changes }))
+          }
+          dccAvailable
+          onChooseDownloadFolder={() =>
+            setUserOptions((current) => ({ ...current, downloadFolder: '/home/you/Downloads' }))
+          }
           onReconnect={() => {}}
           onDisconnect={() => {}}
           onEdit={() => {}}

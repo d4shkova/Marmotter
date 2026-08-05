@@ -39,6 +39,8 @@ import {
   isChannel,
   parseChannelModes,
   isCtcp,
+  parseDccSend,
+  type DccSend,
   parseStandardReply,
   parseUserModes,
   sameTarget,
@@ -83,7 +85,17 @@ export type Effect =
   /** Registration finished; the session may send autojoins. */
   | { readonly kind: 'registered' }
   /** A capability went away; features relying on it must stop. */
-  | { readonly kind: 'capabilities-lost'; readonly capabilities: readonly string[] };
+  | { readonly kind: 'capabilities-lost'; readonly capabilities: readonly string[] }
+  /**
+   * Somebody advertised a file over DCC. The session raises it to the file
+   * monitor, which the user has to have switched on; nothing is fetched here.
+   */
+  | {
+      readonly kind: 'dcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly send: DccSend;
+    };
 
 export interface ReduceResult {
   readonly state: NetworkState;
@@ -819,6 +831,32 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
       // we had been asked something.
       const ctcp = action === undefined && !isSelf(state, sender) ? decodeCtcp(body) : undefined;
       if (ctcp !== undefined && sender !== '') {
+        // A DCC SEND advertises a file rather than asking anything about us. It
+        // is raised to the file monitor as an effect and shown as a plain-words
+        // notice in the conversation. It is never auto-answered, and nothing is
+        // fetched without the user clicking Download.
+        if (msg.command === 'PRIVMSG' && ctcp.command === 'DCC') {
+          const send = parseDccSend(ctcp);
+          if (send !== undefined) {
+            const notice = buildMessage(
+              msg,
+              {
+                kind: 'server',
+                target: conversation,
+                text: send.passive
+                  ? `${sender} offered you the file “${send.filename}”, but as a passive transfer Marmotter can't fetch it.`
+                  : `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
+              },
+              now,
+            );
+            return result(
+              { ...state, serverNotices: [...state.serverNotices, notice] },
+              [],
+              [{ kind: 'dcc-offer', from: sender, target: conversation, send }],
+            );
+          }
+        }
+
         const policy = context.ctcp ?? DEFAULT_CTCP_POLICY;
         const answer = msg.command === 'PRIVMSG' ? ctcpReply(ctcp, policy, now()) : undefined;
 

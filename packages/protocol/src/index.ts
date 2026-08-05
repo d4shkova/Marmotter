@@ -24,6 +24,7 @@ export * from './sasl.js';
 export * from './numerics.js';
 export * from './whois.js';
 export * from './ctcp.js';
+export * from './dcc.js';
 export * from './batch.js';
 export * from './chathistory.js';
 export * from './standard-replies.js';

@@ -15,6 +15,7 @@
 import {
   AuthenticateReassembler,
   type CryptoProvider,
+  type DccSend,
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
@@ -95,7 +96,18 @@ export type SessionEvent =
   | { readonly kind: 'registered' }
   | { readonly kind: 'closed'; readonly reason: CloseReason }
   /** Authentication failed. The connection continues, unauthenticated. */
-  | { readonly kind: 'auth-failed'; readonly reason: string };
+  | { readonly kind: 'auth-failed'; readonly reason: string }
+  /**
+   * Somebody advertised a file over DCC. Raised so the file monitor can list
+   * it; nothing is fetched until the user asks. `target` is the conversation it
+   * arrived in — a channel, or the sender for a private message.
+   */
+  | {
+      readonly kind: 'dcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly send: DccSend;
+    };
 
 export interface Session {
   readonly id: string;
@@ -302,6 +314,14 @@ export function createSession(options: SessionOptions): Session {
         case 'capabilities-lost':
           // Nothing to undo in state: every feature reads `caps.enabled` at the
           // point of use, so losing one takes effect on the next read.
+          break;
+        case 'dcc-offer':
+          events.emit({
+            kind: 'dcc-offer',
+            from: effect.from,
+            target: effect.target,
+            send: effect.send,
+          });
           break;
       }
     }

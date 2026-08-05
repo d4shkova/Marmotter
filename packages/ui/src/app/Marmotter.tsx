@@ -24,6 +24,9 @@ import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { DccBrowser } from './DccBrowser.js';
+import { DccMonitorPanel } from './DccMonitorPanel.js';
+import type { DccCapability } from './dcc.js';
 import { InviteBanner } from './Invites.js';
 import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
@@ -49,6 +52,7 @@ import {
 } from './notify.js';
 import type { MenuItem } from '../primitives/ContextMenu.js';
 import {
+  type DccOfferRecord,
   type TargetRef,
   draftFor,
   isHighlight,
@@ -83,6 +87,14 @@ export interface MarmotterProps {
    * Notification API and the browser fallback would do nothing on Windows.
    */
   readonly notifier?: Notifier;
+  /**
+   * The DCC file monitor's platform hooks: a folder picker and a downloader.
+   *
+   * Desktop passes a Tauri-backed one; web passes nothing, and the whole file
+   * monitor is absent there — a browser tab has no folder to write to and
+   * cannot open an arbitrary TCP connection to fetch a file.
+   */
+  readonly dcc?: DccCapability;
 }
 
 /** The whole client. */
@@ -91,6 +103,7 @@ export function Marmotter({
   resolveSecret,
   persists = false,
   notifier,
+  dcc,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -260,6 +273,17 @@ export function Marmotter({
             `Could not verify ${profile.name}'s certificate. Check the network's security setting.`,
             'error',
           );
+        } else if (sessionEvent.kind === 'dcc-offer') {
+          // The store is the one that knows whether the monitor is on; recording
+          // is a no-op when it is off, so this can fire unconditionally.
+          useView.getState().recordDccOffer({
+            networkId: profile.id,
+            networkName: profile.name,
+            from: sessionEvent.from,
+            target: sessionEvent.target,
+            send: sessionEvent.send,
+            at: Date.now(),
+          });
         }
       });
 
@@ -312,6 +336,54 @@ export function Marmotter({
   const disconnect = (networkId: string): void => {
     registry.sessionOf(networkId)?.disconnect();
   };
+
+  // Choosing where downloaded files go. Reading the platform's own folder
+  // picker, so the path is a real one the shell can write to rather than
+  // something typed by hand.
+  const chooseDownloadFolder = useCallback((): void => {
+    if (dcc === undefined) {
+      return;
+    }
+    void dcc.chooseDownloadFolder().then((folder) => {
+      if (folder !== undefined && folder !== '') {
+        useView.getState().updateUserOptions({ downloadFolder: folder });
+      }
+    });
+  }, [dcc]);
+
+  // Fetching one advertised file. The optimistic status flips to downloading at
+  // once and settles to saved or failed when the shell reports back, so a slow
+  // transfer is visibly in progress rather than an unresponsive button.
+  const downloadOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      const store = useView.getState();
+      const folder = store.userOptions.downloadFolder;
+      if (dcc === undefined || folder === undefined) {
+        toast('Choose a download folder first.', 'error');
+        return;
+      }
+      store.setDccOfferStatus(offer.id, { status: 'downloading' });
+      dcc
+        .download({
+          host: offer.host,
+          port: offer.port,
+          filename: offer.filename,
+          folder,
+          ...(offer.size === undefined ? {} : { size: offer.size }),
+        })
+        .then((savedPath) => {
+          useView.getState().setDccOfferStatus(offer.id, { status: 'downloaded', savedPath });
+          toast(`Saved ${offer.filename}.`);
+        })
+        .catch((error: unknown) => {
+          useView
+            .getState()
+            .setDccOfferStatus(offer.id, { status: 'failed', error: describe(error) });
+          toast(`Couldn't download ${offer.filename}. ${describe(error)}`, 'error');
+        });
+    },
+    [dcc, toast],
+  );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
   // the session sends the JOIN, so nobody has to know the command exists.
@@ -578,9 +650,49 @@ export function Marmotter({
           ? 'Your account'
           : view.pane === 'settings'
             ? 'Settings'
-            : selection === undefined
-              ? 'Marmotter'
-              : (selection.target ?? network?.name ?? 'Marmotter');
+            : view.pane === 'dcc'
+              ? 'Files'
+              : selection === undefined
+                ? 'Marmotter'
+                : (selection.target ?? network?.name ?? 'Marmotter');
+
+  // The right-hand column carries two things: the member list, for a channel,
+  // and — under it — the DCC file monitor, once it is switched on in settings.
+  // Either one alone is reason enough for the column to exist, so a monitor with
+  // no channel open still has somewhere to live.
+  const showMembers =
+    view.memberListOpen &&
+    conversation !== undefined &&
+    selection?.target !== undefined &&
+    network !== undefined &&
+    isChannel(selection.target, network.support);
+  const showDccPanel = view.userOptions.dccMonitorEnabled && dcc !== undefined;
+  const asideOpen = showMembers || showDccPanel;
+  const asideNode = !asideOpen ? undefined : (
+    <div className="flex h-full w-full flex-col bg-[var(--bg-elevated)]">
+      {showMembers && network !== undefined && conversation !== undefined ? (
+        <MemberList
+          className="min-h-0 flex-1"
+          network={network}
+          channel={conversation}
+          menuFor={memberMenu}
+          onMessage={messageMember}
+          onOpenProfile={openProfile}
+        />
+      ) : (
+        <div className="flex-1 border-l border-[var(--separator)]" />
+      )}
+      {showDccPanel ? (
+        <DccMonitorPanel
+          active={view.dccActive}
+          seen={view.dccOffers.length}
+          onStart={() => view.setDccActive(true)}
+          onStop={() => view.setDccActive(false)}
+          onOpen={() => view.setPane('dcc')}
+        />
+      ) : null}
+    </div>
+  );
 
   const main = (
     <>
@@ -653,11 +765,24 @@ export function Marmotter({
           onAppearanceChange={view.updateAppearance}
           ctcp={view.ctcp}
           onCtcpChange={view.updateCtcp}
+          userOptions={view.userOptions}
+          onUserOptionsChange={view.updateUserOptions}
+          dccAvailable={dcc !== undefined}
+          onChooseDownloadFolder={chooseDownloadFolder}
           onReconnect={reconnect}
           onDisconnect={disconnect}
           onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
+        />
+      ) : view.pane === 'dcc' ? (
+        <DccBrowser
+          className="flex-1 overflow-y-auto"
+          offers={view.dccOffers}
+          downloadFolder={view.userOptions.downloadFolder}
+          onDownload={downloadOffer}
+          onChooseFolder={chooseDownloadFolder}
+          onClear={view.clearDccOffers}
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
@@ -773,13 +898,7 @@ export function Marmotter({
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
-        asideOpen={
-          view.memberListOpen &&
-          conversation !== undefined &&
-          selection?.target !== undefined &&
-          network !== undefined &&
-          isChannel(selection.target, network.support)
-        }
+        asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
           <Sidebar
@@ -803,17 +922,7 @@ export function Marmotter({
             conversationMenu={conversationSidebarMenu}
           />
         }
-        aside={
-          conversation === undefined || network === undefined ? undefined : (
-            <MemberList
-              network={network}
-              channel={conversation}
-              menuFor={memberMenu}
-              onMessage={messageMember}
-              onOpenProfile={openProfile}
-            />
-          )
-        }
+        aside={asideNode}
         tabBar={
           breakpoint === 'mobile' ? (
             <TabBar

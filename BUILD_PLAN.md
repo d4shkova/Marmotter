@@ -525,7 +525,10 @@ screen rotation and a short backgrounding with the session intact.
 
 Do not build these, and do not leave partial implementations behind:
 
-- DCC in any form.
+- DCC sending, DCC CHAT, and passive/reverse transfers. (A **receive-only** DCC
+  file monitor — desktop only, off by default — was added after v1 scoping;
+  see the DCC row in `CLAUDE.md`. Sending and the interactive/reverse modes stay
+  out: their security surface is disproportionate to value.)
 - Any end-to-end encryption, or any UI implying messages are private from the
   server operator.
 - Server-side accounts, user databases, or hosted message retention.
