@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "cross-env NO_STRIP=true tauri",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -26,6 +26,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.4",
+    "cross-env": "^10.1.0",
     "tailwindcss": "^4.1.14",
     "vite": "^7.1.9"
   }

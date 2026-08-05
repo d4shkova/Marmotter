@@ -56,7 +56,9 @@ export function RadioGroup<T extends string>({
         const describedBy = option.description === undefined ? undefined : `${optionId}-desc`;
 
         return (
-          <div key={option.value} className="flex items-start gap-2.5">
+          // `text-body` puts the radio on its label's font-size baseline, so
+          // the em-based size below tracks the surrounding text.
+          <div key={option.value} className="flex items-start gap-2.5 text-body">
             <input
               type="radio"
               id={optionId}
@@ -67,11 +69,13 @@ export function RadioGroup<T extends string>({
               aria-describedby={describedBy}
               onChange={() => onChange(option.value)}
               className={cn(
-                'mt-0.5 size-5 shrink-0 appearance-none rounded-full border',
+                // 1.18em ≈ 20px at the 17px body default, and shrinks with
+                // the token in a scope that dials body down.
+                'mt-0.5 size-[1.18em] shrink-0 appearance-none rounded-full border',
                 'transition-colors duration-[var(--duration-press)] ease-[var(--easing-press)]',
                 'disabled:cursor-not-allowed disabled:opacity-40',
                 'border-[var(--separator-opaque)] bg-[var(--fill-tertiary)]',
-                'checked:border-[6px] checked:border-[var(--accent)] checked:bg-[var(--bg-base)]',
+                'checked:border-[0.35em] checked:border-[var(--accent)] checked:bg-[var(--bg-base)]',
               )}
             />
             <div className="flex flex-col gap-0.5">

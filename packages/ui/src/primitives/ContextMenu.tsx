@@ -181,7 +181,11 @@ export function ContextMenu({
                 onClose();
               }}
               className={cn(
-                'flex w-full items-center gap-2.5 px-3 py-2 text-left text-callout',
+                // One step below the surrounding UI: menu items are chosen from
+                // a short, disciplined list where a smaller size still reads
+                // clearly and the menu itself takes less space over the message
+                // it opened from.
+                'flex w-full items-center gap-2.5 px-3 py-2 text-left text-subhead',
                 'disabled:cursor-not-allowed disabled:opacity-40',
                 item.destructive === true ? 'text-[var(--danger)]' : 'text-[var(--label-primary)]',
                 index === active && index !== -1 && 'bg-[var(--fill-tertiary)]',

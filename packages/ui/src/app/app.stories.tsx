@@ -722,6 +722,7 @@ export const SettingsScreen: StoryObj = {
       unfurlLinks: false,
       highlightWords: [] as readonly string[],
       notificationsEnabled: true,
+      showBrowseChannelsShortcut: true,
     });
     const [ctcp, setCtcp] = useState(DEFAULT_CTCP_POLICY);
 
