@@ -327,7 +327,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(path.file_name().unwrap(), "dup (2).txt");
-        assert_eq!(std::fs::read(folder.path().join("dup.txt")).unwrap(), b"old");
+        assert_eq!(
+            std::fs::read(folder.path().join("dup.txt")).unwrap(),
+            b"old"
+        );
     }
 
     #[test]
