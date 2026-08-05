@@ -16,6 +16,7 @@ import {
   AuthenticateReassembler,
   type CryptoProvider,
   type DccSend,
+  type XdccPack,
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
@@ -107,6 +108,16 @@ export type SessionEvent =
       readonly from: string;
       readonly target: string;
       readonly send: DccSend;
+    }
+  /**
+   * A bot advertised a file over XDCC in a channel. Raised so the file monitor
+   * can list it; nothing is requested until the user asks.
+   */
+  | {
+      readonly kind: 'xdcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly pack: XdccPack;
     };
 
 export interface Session {
@@ -321,6 +332,14 @@ export function createSession(options: SessionOptions): Session {
             from: effect.from,
             target: effect.target,
             send: effect.send,
+          });
+          break;
+        case 'xdcc-offer':
+          events.emit({
+            kind: 'xdcc-offer',
+            from: effect.from,
+            target: effect.target,
+            pack: effect.pack,
           });
           break;
       }

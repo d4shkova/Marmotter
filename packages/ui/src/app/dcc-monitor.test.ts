@@ -1,4 +1,4 @@
-import type { DccSend } from '@marmotter/protocol';
+import type { DccSend, XdccPack } from '@marmotter/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useView } from './view-store.js';
 
@@ -88,5 +88,76 @@ describe('the DCC monitor store', () => {
     const remaining = useView.getState().dccOffers;
     expect(remaining).toHaveLength(1);
     expect(remaining[0]?.networkId).toBe('oftc');
+  });
+});
+
+const pack: XdccPack = {
+  pack: 70,
+  gets: 1,
+  sizeText: '2.2G',
+  sizeBytes: Math.round(2.2 * 1024 ** 3),
+  filename: 'movie.mkv',
+};
+
+type XdccArg = Parameters<ReturnType<typeof useView.getState>['recordXdccOffer']>[0];
+
+const xdcc = (overrides: Partial<XdccArg> = {}): XdccArg => ({
+  networkId: 'rizon',
+  networkName: 'Rizon',
+  from: '[EWG]Totoro',
+  target: '#packlist',
+  pack,
+  at: 2_000,
+  ...overrides,
+});
+
+describe('the XDCC side of the monitor', () => {
+  beforeEach(() => {
+    useView.setState({
+      userOptions: { dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: true,
+      dccOffers: [],
+    });
+  });
+
+  it('records a pack as an xdcc offer with its number and gets', () => {
+    useView.getState().recordXdccOffer(xdcc());
+    const row = useView.getState().dccOffers[0];
+    expect(row?.kind).toBe('xdcc');
+    expect(row?.pack).toBe(70);
+    expect(row?.gets).toBe(1);
+    expect(row?.filename).toBe('movie.mkv');
+    expect(row?.size).toBe(Math.round(2.2 * 1024 ** 3));
+  });
+
+  it('folds a re-listed pack into one row, refreshing its gets count', () => {
+    useView.getState().recordXdccOffer(xdcc());
+    useView.getState().recordXdccOffer(xdcc({ pack: { ...pack, gets: 9 } }));
+    const rows = useView.getState().dccOffers;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.gets).toBe(9);
+  });
+
+  it('does not disturb a pack already downloading when it is re-listed', () => {
+    useView.getState().recordXdccOffer(xdcc());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferStatus(id, { status: 'downloading' });
+    useView.getState().recordXdccOffer(xdcc({ pack: { ...pack, gets: 50 } }));
+    const row = useView.getState().dccOffers[0];
+    expect(row?.status).toBe('downloading');
+    expect(row?.gets).toBe(1);
+  });
+
+  it('keeps a direct DCC offer and an XDCC pack as separate rows', () => {
+    useView.getState().recordXdccOffer(xdcc());
+    useView.getState().recordDccOffer({
+      networkId: 'rizon',
+      networkName: 'Rizon',
+      from: '[EWG]Totoro',
+      target: '#packlist',
+      send,
+      at: 3_000,
+    });
+    expect(useView.getState().dccOffers).toHaveLength(2);
   });
 });

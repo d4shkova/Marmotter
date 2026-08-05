@@ -76,6 +76,20 @@ export function DccBrowser({
       render: (offer) => offer.from,
     },
     {
+      id: 'pack',
+      header: 'Pack',
+      mono: true,
+      compare: (a, b) => (a.pack ?? -1) - (b.pack ?? -1),
+      render: (offer) =>
+        offer.pack === undefined ? (
+          <span className="text-[var(--label-quaternary)]">—</span>
+        ) : (
+          <span title={offer.gets === undefined ? undefined : `${offer.gets} downloads`}>
+            #{offer.pack}
+          </span>
+        ),
+    },
+    {
       id: 'network',
       header: 'Network',
       compare: (a, b) => a.networkName.localeCompare(b.networkName),
@@ -176,6 +190,12 @@ function DownloadCell({
     return <span className="text-caption-1 text-[var(--label-quaternary)]">Can't fetch</span>;
   }
   switch (offer.status) {
+    case 'requested':
+      return (
+        <Button size="small" variant="secondary" busy disabled>
+          Requested
+        </Button>
+      );
     case 'downloading':
       return (
         <Button size="small" variant="secondary" busy disabled>

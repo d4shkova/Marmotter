@@ -8,7 +8,7 @@ import {
   requestOlder,
   useNetworks,
 } from '@marmotter/client';
-import { fold, isChannel } from '@marmotter/protocol';
+import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
 import type { NetworkProfile, Transport } from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
@@ -274,16 +274,24 @@ export function Marmotter({
             'error',
           );
         } else if (sessionEvent.kind === 'dcc-offer') {
-          // The store is the one that knows whether the monitor is on; recording
-          // is a no-op when it is off, so this can fire unconditionally.
-          useView.getState().recordDccOffer({
-            networkId: profile.id,
-            networkName: profile.name,
-            from: sessionEvent.from,
-            target: sessionEvent.target,
-            send: sessionEvent.send,
-            at: Date.now(),
-          });
+          // Routed through a ref so this long-lived listener always runs the
+          // latest logic — the pending-request map and the folder both change
+          // over the session's life.
+          handleDccOffer.current(
+            profile.id,
+            profile.name,
+            sessionEvent.from,
+            sessionEvent.target,
+            sessionEvent.send,
+          );
+        } else if (sessionEvent.kind === 'xdcc-offer') {
+          handleXdccOffer.current(
+            profile.id,
+            profile.name,
+            sessionEvent.from,
+            sessionEvent.target,
+            sessionEvent.pack,
+          );
         }
       });
 
@@ -351,38 +359,147 @@ export function Marmotter({
     });
   }, [dcc]);
 
-  // Fetching one advertised file. The optimistic status flips to downloading at
-  // once and settles to saved or failed when the shell reports back, so a slow
-  // transfer is visibly in progress rather than an unresponsive button.
-  const downloadOffer = useCallback(
-    (offer: DccOfferRecord): void => {
-      const store = useView.getState();
-      const folder = store.userOptions.downloadFolder;
+  // Fetching one direct DCC transfer into the chosen folder, updating a given
+  // row as it goes. The optimistic status flips to downloading at once and
+  // settles to saved or failed when the shell reports back, so a slow transfer
+  // is visibly in progress rather than an unresponsive button. Shared by the
+  // Download button on a direct offer and by the XDCC path, which lands here
+  // once the bot answers a request with a real DCC SEND.
+  const fetchIntoFolder = useCallback(
+    (
+      offerId: string,
+      source: { host: string; port: number; filename: string; size?: number },
+    ): void => {
+      const folder = useView.getState().userOptions.downloadFolder;
       if (dcc === undefined || folder === undefined) {
+        useView
+          .getState()
+          .setDccOfferStatus(offerId, { status: 'failed', error: 'No download folder is set.' });
         toast('Choose a download folder first.', 'error');
         return;
       }
-      store.setDccOfferStatus(offer.id, { status: 'downloading' });
+      useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
       dcc
         .download({
-          host: offer.host,
-          port: offer.port,
-          filename: offer.filename,
+          host: source.host,
+          port: source.port,
+          filename: source.filename,
           folder,
-          ...(offer.size === undefined ? {} : { size: offer.size }),
+          ...(source.size === undefined ? {} : { size: source.size }),
         })
         .then((savedPath) => {
-          useView.getState().setDccOfferStatus(offer.id, { status: 'downloaded', savedPath });
-          toast(`Saved ${offer.filename}.`);
+          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
+          toast(`Saved ${source.filename}.`);
         })
         .catch((error: unknown) => {
           useView
             .getState()
-            .setDccOfferStatus(offer.id, { status: 'failed', error: describe(error) });
-          toast(`Couldn't download ${offer.filename}. ${describe(error)}`, 'error');
+            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
+          toast(`Couldn't download ${source.filename}. ${describe(error)}`, 'error');
         });
     },
     [dcc, toast],
+  );
+
+  // XDCC downloads requested but not yet answered, keyed by network + folded bot
+  // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
+  // to the oldest outstanding request from that bot.
+  const pendingXdcc = useRef(new Map<string, string[]>());
+
+  // What to do when a bot advertises a pack. Held in a ref so the long-lived
+  // session listener always calls the current version.
+  const handleXdccOffer = useRef<
+    (networkId: string, networkName: string, from: string, target: string, pack: XdccPack) => void
+  >(() => {});
+  handleXdccOffer.current = (networkId, networkName, from, target, pack) => {
+    useView
+      .getState()
+      .recordXdccOffer({ networkId, networkName, from, target, pack, at: Date.now() });
+  };
+
+  // The folded-nick key a pending request lives under.
+  const pendingKey = useCallback(
+    (networkId: string, nick: string): string => {
+      const mapping = registry.networks.get(networkId)?.support.caseMapping;
+      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
+    },
+    [registry],
+  );
+
+  // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
+  // that row and downloads; otherwise it is an unsolicited offer of its own.
+  const handleDccOffer = useRef<
+    (networkId: string, networkName: string, from: string, target: string, send: DccSend) => void
+  >(() => {});
+  handleDccOffer.current = (networkId, networkName, from, target, send) => {
+    const key = pendingKey(networkId, from);
+    const queue = pendingXdcc.current.get(key);
+    if (queue !== undefined && queue.length > 0) {
+      const [offerId, ...rest] = queue;
+      if (rest.length > 0) {
+        pendingXdcc.current.set(key, rest);
+      } else {
+        pendingXdcc.current.delete(key);
+      }
+      if (offerId === undefined) {
+        return;
+      }
+      if (send.passive) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+        });
+        return;
+      }
+      fetchIntoFolder(offerId, {
+        host: send.host,
+        port: send.port,
+        filename: send.filename,
+        ...(send.size === undefined ? {} : { size: send.size }),
+      });
+      return;
+    }
+    // Not answering anything we asked for: record it as its own direct offer.
+    useView
+      .getState()
+      .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
+  };
+
+  // The Download button. A direct offer is fetched straight away; an XDCC pack
+  // is requested from the bot, and the answering DCC SEND is caught above.
+  const downloadOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      if (useView.getState().userOptions.downloadFolder === undefined) {
+        toast('Choose a download folder first.', 'error');
+        return;
+      }
+      if (offer.kind === 'xdcc') {
+        const session = registry.sessionOf(offer.networkId);
+        if (session === undefined || offer.pack === undefined) {
+          toast(`Can't reach ${offer.from} to request that file.`, 'error');
+          return;
+        }
+        pendingXdcc.current.set(pendingKey(offer.networkId, offer.from), [
+          ...(pendingXdcc.current.get(pendingKey(offer.networkId, offer.from)) ?? []),
+          offer.id,
+        ]);
+        session.send(`PRIVMSG ${offer.from} :XDCC SEND #${offer.pack}`);
+        useView.getState().setDccOfferStatus(offer.id, { status: 'requested' });
+        toast(`Requested pack #${offer.pack} from ${offer.from}.`);
+        return;
+      }
+      if (offer.host === undefined || offer.port === undefined) {
+        toast(`That offer has no address to connect to.`, 'error');
+        return;
+      }
+      fetchIntoFolder(offer.id, {
+        host: offer.host,
+        port: offer.port,
+        filename: offer.filename,
+        ...(offer.size === undefined ? {} : { size: offer.size }),
+      });
+    },
+    [registry, toast, fetchIntoFolder, pendingKey],
   );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and

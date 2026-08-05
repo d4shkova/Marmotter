@@ -41,6 +41,8 @@ import {
   isCtcp,
   parseDccSend,
   type DccSend,
+  parseXdccAnnounce,
+  type XdccPack,
   parseStandardReply,
   parseUserModes,
   sameTarget,
@@ -95,6 +97,16 @@ export type Effect =
       readonly from: string;
       readonly target: string;
       readonly send: DccSend;
+    }
+  /**
+   * A bot advertised a file over XDCC in a channel. Raised so the file monitor
+   * can list it; nothing is requested until the user asks.
+   */
+  | {
+      readonly kind: 'xdcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly pack: XdccPack;
     };
 
 export interface ReduceResult {
@@ -934,7 +946,23 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         );
       }
 
-      return result(addMessage(state, conversation, built));
+      // A channel message from a bot may be an XDCC catalogue line. It stays in
+      // the channel as ordinary text — hiding a packlist channel's own content
+      // would be surprising — and is also raised to the file monitor, which the
+      // user has to have switched on for anything to be collected.
+      const effects: Effect[] = [];
+      if (
+        msg.command === 'PRIVMSG' &&
+        action === undefined &&
+        isChannel(conversation, state.support)
+      ) {
+        const pack = parseXdccAnnounce(body);
+        if (pack !== undefined) {
+          effects.push({ kind: 'xdcc-offer', from: sender, target: conversation, pack });
+        }
+      }
+
+      return result(addMessage(state, conversation, built), [], effects);
     }
 
     case 'TAGMSG':
