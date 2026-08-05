@@ -35,7 +35,11 @@ export function Toggle({
   const hintId = `${fieldId}-hint`;
 
   return (
-    <div className={cn('flex items-start justify-between gap-4', className)}>
+    // `text-body` on the wrapper puts the switch on the same font-size baseline
+    // as its label. The em-based dimensions below then track it, so a Settings
+    // screen that shrinks the body token shrinks the switch to match, and the
+    // proportions stay right at every size the interface reaches.
+    <div className={cn('flex items-start justify-between gap-4 text-body', className)}>
       <div className={cn('flex flex-col gap-0.5', labelHidden && 'sr-only')}>
         <label htmlFor={fieldId} className="text-body text-[var(--label-primary)]">
           {label}
@@ -57,7 +61,9 @@ export function Toggle({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative h-[31px] w-[51px] shrink-0 rounded-full',
+          // 1.82em × 3em keeps the iOS 31×51 proportion; at the default 17px
+          // body it lands on the platform values to the pixel.
+          'relative h-[1.82em] w-[3em] shrink-0 rounded-full',
           'transition-colors duration-[var(--duration-sheet)] ease-[var(--easing-sheet)]',
           'disabled:cursor-not-allowed disabled:opacity-40',
           checked ? 'bg-[var(--accent)]' : 'bg-[var(--fill-secondary)]',
@@ -66,11 +72,11 @@ export function Toggle({
         <span
           aria-hidden="true"
           className={cn(
-            'absolute top-[2px] left-[2px] size-[27px] rounded-full bg-[var(--control-knob)] shadow-sm',
+            'absolute top-[0.12em] left-[0.12em] size-[1.59em] rounded-full bg-[var(--control-knob)] shadow-sm',
             // The duration token is 0ms under reduced motion, so the state
             // change survives and only the slide goes.
             'transition-transform duration-[var(--duration-sheet)] ease-[var(--easing-sheet)]',
-            checked && 'translate-x-[20px]',
+            checked && 'translate-x-[1.18em]',
           )}
         />
       </button>
