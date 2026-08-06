@@ -8,7 +8,7 @@ import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
-import type { Appearance } from './view-store.js';
+import type { Appearance, UserOptions } from './view-store.js';
 
 export interface SettingsProps {
   readonly networks: readonly NetworkState[];
@@ -16,6 +16,18 @@ export interface SettingsProps {
   readonly onAppearanceChange: (changes: Partial<Appearance>) => void;
   readonly ctcp: CtcpPolicy;
   readonly onCtcpChange: (changes: Partial<CtcpPolicy>) => void;
+  readonly userOptions: UserOptions;
+  readonly onUserOptionsChange: (changes: Partial<UserOptions>) => void;
+  /**
+   * Whether this platform can run the DCC file monitor at all.
+   *
+   * False on web, where the User Options group is left out entirely — a browser
+   * tab has no folder to write to and cannot open the direct connection a
+   * download needs.
+   */
+  readonly dccAvailable: boolean;
+  /** Opens the platform folder picker for where downloads are saved. */
+  readonly onChooseDownloadFolder: () => void;
   /** Reconnects a network whose connection dropped or failed. */
   readonly onReconnect: (networkId: string) => void;
   readonly onDisconnect: (networkId: string) => void;
@@ -89,6 +101,10 @@ export function Settings({
   onAppearanceChange,
   ctcp,
   onCtcpChange,
+  userOptions,
+  onUserOptionsChange,
+  dccAvailable,
+  onChooseDownloadFolder,
   onReconnect,
   onDisconnect,
   onEdit,
@@ -286,7 +302,7 @@ export function Settings({
 
         <ListGroup
           header="User options"
-          footer="Small conveniences for how the interface behaves. None of these change what Marmotter sends or receives."
+          footer="Small conveniences for how Marmotter behaves for you."
         >
           <div className="px-4 py-3">
             <Toggle
@@ -298,6 +314,33 @@ export function Settings({
               }
             />
           </div>
+
+          {!dccAvailable ? null : (
+            <>
+              <ListRow
+                title="Download folder"
+                subtitle={userOptions.downloadFolder ?? 'Not set'}
+                trailing={
+                  <Button size="small" onClick={onChooseDownloadFolder}>
+                    {userOptions.downloadFolder === undefined ? 'Choose' : 'Change'}
+                  </Button>
+                }
+              />
+              <div className="px-4 py-3">
+                <Toggle
+                  label="Watch for files offered over DCC"
+                  hint={
+                    userOptions.downloadFolder === undefined
+                      ? 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
+                      : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
+                  }
+                  checked={userOptions.dccMonitorEnabled}
+                  disabled={userOptions.downloadFolder === undefined}
+                  onChange={(dccMonitorEnabled) => onUserOptionsChange({ dccMonitorEnabled })}
+                />
+              </div>
+            </>
+          )}
         </ListGroup>
       </div>
     </div>

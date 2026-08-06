@@ -1,5 +1,6 @@
 import { Marmotter } from '@marmotter/ui';
 import { type JSX, useMemo } from 'react';
+import { createDesktopDcc } from './dcc';
 import { createDesktopNotifier } from './notifier';
 import { createDesktopTransport } from './transport';
 
@@ -15,8 +16,14 @@ export function App(): JSX.Element {
   // storage behind both; the flag is what tells the shell not to promise the
   // web build's "nothing is kept" guarantee here.
   const notifier = useMemo(() => createDesktopNotifier(), []);
+  const dcc = useMemo(() => createDesktopDcc(), []);
 
   return (
-    <Marmotter createTransport={() => createDesktopTransport()} notifier={notifier} persists />
+    <Marmotter
+      createTransport={() => createDesktopTransport()}
+      notifier={notifier}
+      dcc={dcc}
+      persists
+    />
   );
 }

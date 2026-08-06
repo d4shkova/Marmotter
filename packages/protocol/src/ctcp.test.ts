@@ -193,7 +193,7 @@ describe('automatic answers', () => {
   });
 
   it('does not answer anything else', () => {
-    // DCC is out of scope for v1 and must never be auto-answered.
+    // DCC is surfaced to the file monitor, never auto-answered as a CTCP reply.
     expect(isAutoAnswered('DCC')).toBe(false);
     expect(isAutoAnswered('USERINFO')).toBe(false);
     expect(isAutoAnswered('FINGER')).toBe(false);

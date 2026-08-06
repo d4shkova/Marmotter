@@ -39,6 +39,10 @@ import {
   isChannel,
   parseChannelModes,
   isCtcp,
+  parseDccSend,
+  type DccSend,
+  parseXdccAnnounce,
+  type XdccPack,
   parseStandardReply,
   parseUserModes,
   sameTarget,
@@ -83,7 +87,27 @@ export type Effect =
   /** Registration finished; the session may send autojoins. */
   | { readonly kind: 'registered' }
   /** A capability went away; features relying on it must stop. */
-  | { readonly kind: 'capabilities-lost'; readonly capabilities: readonly string[] };
+  | { readonly kind: 'capabilities-lost'; readonly capabilities: readonly string[] }
+  /**
+   * Somebody advertised a file over DCC. The session raises it to the file
+   * monitor, which the user has to have switched on; nothing is fetched here.
+   */
+  | {
+      readonly kind: 'dcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly send: DccSend;
+    }
+  /**
+   * A bot advertised a file over XDCC in a channel. Raised so the file monitor
+   * can list it; nothing is requested until the user asks.
+   */
+  | {
+      readonly kind: 'xdcc-offer';
+      readonly from: string;
+      readonly target: string;
+      readonly pack: XdccPack;
+    };
 
 export interface ReduceResult {
   readonly state: NetworkState;
@@ -819,6 +843,32 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
       // we had been asked something.
       const ctcp = action === undefined && !isSelf(state, sender) ? decodeCtcp(body) : undefined;
       if (ctcp !== undefined && sender !== '') {
+        // A DCC SEND advertises a file rather than asking anything about us. It
+        // is raised to the file monitor as an effect and shown as a plain-words
+        // notice in the conversation. It is never auto-answered, and nothing is
+        // fetched without the user clicking Download.
+        if (msg.command === 'PRIVMSG' && ctcp.command === 'DCC') {
+          const send = parseDccSend(ctcp);
+          if (send !== undefined) {
+            const notice = buildMessage(
+              msg,
+              {
+                kind: 'server',
+                target: conversation,
+                text: send.passive
+                  ? `${sender} offered you the file “${send.filename}”, but as a passive transfer Marmotter can't fetch it.`
+                  : `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
+              },
+              now,
+            );
+            return result(
+              { ...state, serverNotices: [...state.serverNotices, notice] },
+              [],
+              [{ kind: 'dcc-offer', from: sender, target: conversation, send }],
+            );
+          }
+        }
+
         const policy = context.ctcp ?? DEFAULT_CTCP_POLICY;
         const answer = msg.command === 'PRIVMSG' ? ctcpReply(ctcp, policy, now()) : undefined;
 
@@ -896,7 +946,24 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         );
       }
 
-      return result(addMessage(state, conversation, built));
+      // A message from a bot may be an XDCC catalogue line. It stays in the
+      // conversation as ordinary text — hiding a packlist channel's own content
+      // would be surprising — and is also raised to the file monitor, which the
+      // user has to have switched on for anything to be collected.
+      //
+      // Both PRIVMSG and NOTICE count: serving bots spam packs to a channel and
+      // answer `!list`/`@find` in private, and either can arrive as a NOTICE.
+      // The conversation it lands in — channel or the bot's own query — is what
+      // is reported, so the browser can group by where it came from.
+      const effects: Effect[] = [];
+      if (action === undefined) {
+        const pack = parseXdccAnnounce(body);
+        if (pack !== undefined) {
+          effects.push({ kind: 'xdcc-offer', from: sender, target: conversation, pack });
+        }
+      }
+
+      return result(addMessage(state, conversation, built), [], effects);
     }
 
     case 'TAGMSG':

@@ -8,7 +8,7 @@ import {
   requestOlder,
   useNetworks,
 } from '@marmotter/client';
-import { fold, isChannel } from '@marmotter/protocol';
+import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
 import type { NetworkProfile, Transport } from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
@@ -24,6 +24,9 @@ import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
+import { DccBrowser } from './DccBrowser.js';
+import { DccMonitorPanel } from './DccMonitorPanel.js';
+import type { DccCapability } from './dcc.js';
 import { InviteBanner } from './Invites.js';
 import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
@@ -49,6 +52,7 @@ import {
 } from './notify.js';
 import type { MenuItem } from '../primitives/ContextMenu.js';
 import {
+  type DccOfferRecord,
   type TargetRef,
   draftFor,
   isHighlight,
@@ -83,6 +87,14 @@ export interface MarmotterProps {
    * Notification API and the browser fallback would do nothing on Windows.
    */
   readonly notifier?: Notifier;
+  /**
+   * The DCC file monitor's platform hooks: a folder picker and a downloader.
+   *
+   * Desktop passes a Tauri-backed one; web passes nothing, and the whole file
+   * monitor is absent there — a browser tab has no folder to write to and
+   * cannot open an arbitrary TCP connection to fetch a file.
+   */
+  readonly dcc?: DccCapability;
 }
 
 /** The whole client. */
@@ -91,6 +103,7 @@ export function Marmotter({
   resolveSecret,
   persists = false,
   notifier,
+  dcc,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -260,6 +273,25 @@ export function Marmotter({
             `Could not verify ${profile.name}'s certificate. Check the network's security setting.`,
             'error',
           );
+        } else if (sessionEvent.kind === 'dcc-offer') {
+          // Routed through a ref so this long-lived listener always runs the
+          // latest logic — the pending-request map and the folder both change
+          // over the session's life.
+          handleDccOffer.current(
+            profile.id,
+            profile.name,
+            sessionEvent.from,
+            sessionEvent.target,
+            sessionEvent.send,
+          );
+        } else if (sessionEvent.kind === 'xdcc-offer') {
+          handleXdccOffer.current(
+            profile.id,
+            profile.name,
+            sessionEvent.from,
+            sessionEvent.target,
+            sessionEvent.pack,
+          );
         }
       });
 
@@ -312,6 +344,183 @@ export function Marmotter({
   const disconnect = (networkId: string): void => {
     registry.sessionOf(networkId)?.disconnect();
   };
+
+  // Choosing where downloaded files go. Reading the platform's own folder
+  // picker, so the path is a real one the shell can write to rather than
+  // something typed by hand.
+  const chooseDownloadFolder = useCallback((): void => {
+    if (dcc === undefined) {
+      return;
+    }
+    void dcc.chooseDownloadFolder().then((folder) => {
+      if (folder !== undefined && folder !== '') {
+        useView.getState().updateUserOptions({ downloadFolder: folder });
+      }
+    });
+  }, [dcc]);
+
+  // Fetching one direct DCC transfer into the chosen folder, updating a given
+  // row as it goes. The optimistic status flips to downloading at once and
+  // settles to saved or failed when the shell reports back, so a slow transfer
+  // is visibly in progress rather than an unresponsive button. Shared by the
+  // Download button on a direct offer and by the XDCC path, which lands here
+  // once the bot answers a request with a real DCC SEND.
+  const fetchIntoFolder = useCallback(
+    (
+      offerId: string,
+      source: { host: string; port: number; filename: string; size?: number },
+    ): void => {
+      const folder = useView.getState().userOptions.downloadFolder;
+      if (dcc === undefined || folder === undefined) {
+        useView
+          .getState()
+          .setDccOfferStatus(offerId, { status: 'failed', error: 'No download folder is set.' });
+        toast('Choose a download folder first.', 'error');
+        return;
+      }
+      useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
+      dcc
+        .download(
+          {
+            host: source.host,
+            port: source.port,
+            filename: source.filename,
+            folder,
+            ...(source.size === undefined ? {} : { size: source.size }),
+          },
+          (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+        )
+        .then((savedPath) => {
+          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
+          toast(`Saved ${source.filename}.`);
+        })
+        .catch((error: unknown) => {
+          useView
+            .getState()
+            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
+          toast(`Couldn't download ${source.filename}. ${describe(error)}`, 'error');
+        });
+    },
+    [dcc, toast],
+  );
+
+  // XDCC downloads requested but not yet answered, keyed by network + folded bot
+  // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
+  // to the oldest outstanding request from that bot.
+  const pendingXdcc = useRef(new Map<string, string[]>());
+
+  // What to do when a bot advertises a pack. Held in a ref so the long-lived
+  // session listener always calls the current version.
+  const handleXdccOffer = useRef<
+    (networkId: string, networkName: string, from: string, target: string, pack: XdccPack) => void
+  >(() => {});
+  handleXdccOffer.current = (networkId, networkName, from, target, pack) => {
+    useView
+      .getState()
+      .recordXdccOffer({ networkId, networkName, from, target, pack, at: Date.now() });
+  };
+
+  // The folded-nick key a pending request lives under.
+  const pendingKey = useCallback(
+    (networkId: string, nick: string): string => {
+      const mapping = registry.networks.get(networkId)?.support.caseMapping;
+      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
+    },
+    [registry],
+  );
+
+  // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
+  // that row and downloads; otherwise it is an unsolicited offer of its own.
+  const handleDccOffer = useRef<
+    (networkId: string, networkName: string, from: string, target: string, send: DccSend) => void
+  >(() => {});
+  handleDccOffer.current = (networkId, networkName, from, target, send) => {
+    const key = pendingKey(networkId, from);
+    const queue = pendingXdcc.current.get(key);
+    if (queue !== undefined && queue.length > 0) {
+      const [offerId, ...rest] = queue;
+      if (rest.length > 0) {
+        pendingXdcc.current.set(key, rest);
+      } else {
+        pendingXdcc.current.delete(key);
+      }
+      if (offerId === undefined) {
+        return;
+      }
+      if (send.passive) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+        });
+        return;
+      }
+      fetchIntoFolder(offerId, {
+        host: send.host,
+        port: send.port,
+        filename: send.filename,
+        ...(send.size === undefined ? {} : { size: send.size }),
+      });
+      return;
+    }
+    // Not answering anything we asked for. Serving bots re-offer a pack every
+    // few seconds until the receiver connects, so ignore a repeat of one already
+    // in flight or done — matched on the same bot and filename — rather than
+    // piling up duplicate rows. Otherwise it is a genuine unsolicited offer.
+    const foldedFrom = pendingKey(networkId, from);
+    const duplicate = useView
+      .getState()
+      .dccOffers.some(
+        (entry) =>
+          entry.filename === send.filename &&
+          pendingKey(entry.networkId, entry.from) === foldedFrom &&
+          (entry.status === 'requested' ||
+            entry.status === 'downloading' ||
+            entry.status === 'downloaded'),
+      );
+    if (duplicate) {
+      return;
+    }
+    useView
+      .getState()
+      .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
+  };
+
+  // The Download button. A direct offer is fetched straight away; an XDCC pack
+  // is requested from the bot, and the answering DCC SEND is caught above.
+  const downloadOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      if (useView.getState().userOptions.downloadFolder === undefined) {
+        toast('Choose a download folder first.', 'error');
+        return;
+      }
+      if (offer.kind === 'xdcc') {
+        const session = registry.sessionOf(offer.networkId);
+        if (session === undefined || offer.pack === undefined) {
+          toast(`Can't reach ${offer.from} to request that file.`, 'error');
+          return;
+        }
+        pendingXdcc.current.set(pendingKey(offer.networkId, offer.from), [
+          ...(pendingXdcc.current.get(pendingKey(offer.networkId, offer.from)) ?? []),
+          offer.id,
+        ]);
+        session.send(`PRIVMSG ${offer.from} :XDCC SEND #${offer.pack}`);
+        useView.getState().setDccOfferStatus(offer.id, { status: 'requested' });
+        toast(`Requested pack #${offer.pack} from ${offer.from}.`);
+        return;
+      }
+      if (offer.host === undefined || offer.port === undefined) {
+        toast(`That offer has no address to connect to.`, 'error');
+        return;
+      }
+      fetchIntoFolder(offer.id, {
+        host: offer.host,
+        port: offer.port,
+        filename: offer.filename,
+        ...(offer.size === undefined ? {} : { size: offer.size }),
+      });
+    },
+    [registry, toast, fetchIntoFolder, pendingKey],
+  );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
   // the session sends the JOIN, so nobody has to know the command exists.
@@ -578,9 +787,49 @@ export function Marmotter({
           ? 'Your account'
           : view.pane === 'settings'
             ? 'Settings'
-            : selection === undefined
-              ? 'Marmotter'
-              : (selection.target ?? network?.name ?? 'Marmotter');
+            : view.pane === 'dcc'
+              ? 'Files'
+              : selection === undefined
+                ? 'Marmotter'
+                : (selection.target ?? network?.name ?? 'Marmotter');
+
+  // The right-hand column carries two things: the member list, for a channel,
+  // and — under it — the DCC file monitor, once it is switched on in settings.
+  // Either one alone is reason enough for the column to exist, so a monitor with
+  // no channel open still has somewhere to live.
+  const showMembers =
+    view.memberListOpen &&
+    conversation !== undefined &&
+    selection?.target !== undefined &&
+    network !== undefined &&
+    isChannel(selection.target, network.support);
+  const showDccPanel = view.userOptions.dccMonitorEnabled && dcc !== undefined;
+  const asideOpen = showMembers || showDccPanel;
+  const asideNode = !asideOpen ? undefined : (
+    <div className="flex h-full w-full flex-col bg-[var(--bg-elevated)]">
+      {showMembers && network !== undefined && conversation !== undefined ? (
+        <MemberList
+          className="min-h-0 flex-1"
+          network={network}
+          channel={conversation}
+          menuFor={memberMenu}
+          onMessage={messageMember}
+          onOpenProfile={openProfile}
+        />
+      ) : (
+        <div className="flex-1 border-l border-[var(--separator)]" />
+      )}
+      {showDccPanel ? (
+        <DccMonitorPanel
+          active={view.dccActive}
+          seen={view.dccOffers.length}
+          onStart={() => view.setDccActive(true)}
+          onStop={() => view.setDccActive(false)}
+          onOpen={() => view.setPane('dcc')}
+        />
+      ) : null}
+    </div>
+  );
 
   const main = (
     <>
@@ -653,11 +902,24 @@ export function Marmotter({
           onAppearanceChange={view.updateAppearance}
           ctcp={view.ctcp}
           onCtcpChange={view.updateCtcp}
+          userOptions={view.userOptions}
+          onUserOptionsChange={view.updateUserOptions}
+          dccAvailable={dcc !== undefined}
+          onChooseDownloadFolder={chooseDownloadFolder}
           onReconnect={reconnect}
           onDisconnect={disconnect}
           onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
+        />
+      ) : view.pane === 'dcc' ? (
+        <DccBrowser
+          className="flex-1 overflow-y-auto"
+          offers={view.dccOffers}
+          downloadFolder={view.userOptions.downloadFolder}
+          onDownload={downloadOffer}
+          onChooseFolder={chooseDownloadFolder}
+          onClear={view.clearDccOffers}
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
@@ -773,13 +1035,7 @@ export function Marmotter({
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
-        asideOpen={
-          view.memberListOpen &&
-          conversation !== undefined &&
-          selection?.target !== undefined &&
-          network !== undefined &&
-          isChannel(selection.target, network.support)
-        }
+        asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
           <Sidebar
@@ -803,17 +1059,7 @@ export function Marmotter({
             conversationMenu={conversationSidebarMenu}
           />
         }
-        aside={
-          conversation === undefined || network === undefined ? undefined : (
-            <MemberList
-              network={network}
-              channel={conversation}
-              menuFor={memberMenu}
-              onMessage={messageMember}
-              onOpenProfile={openProfile}
-            />
-          )
-        }
+        aside={asideNode}
         tabBar={
           breakpoint === 'mobile' ? (
             <TabBar
