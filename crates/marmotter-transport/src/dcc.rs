@@ -23,8 +23,17 @@ use tokio::net::TcpStream;
 
 use crate::error::{Result, TransportError};
 
-/// Time allowed to connect, and to wait on any single read once connected.
+/// Time allowed to wait on any single read once connected.
 pub const DEFAULT_DCC_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Time allowed to establish the connection to the advertised address.
+///
+/// Kept well short of the read timeout: a serving bot re-offers a pack within a
+/// few seconds if the receiver has not connected, so a connection that is going
+/// to succeed does so quickly. A long wait here just leaves the row spinning on
+/// an address that is, in practice, unreachable — a filtered port, a blocked
+/// route, or a bot that only accepts the transfer from the IRC session's own IP.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The ceiling used when the sender advertised no size, to bound disk use.
 ///
@@ -85,10 +94,15 @@ pub async fn download(
     let target = unique_target_path(&options.folder, &options.filename);
 
     let address = format!("{}:{}", options.host, options.port);
-    let stream = tokio::time::timeout(options.timeout, TcpStream::connect(&address))
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&address))
         .await
-        .map_err(|_| TransportError::Timeout)?
-        .map_err(|error| TransportError::Network(error.to_string()))?;
+        .map_err(|_| {
+            TransportError::Network(format!(
+                "could not connect to {address} within {}s — the address may be unreachable or the port blocked",
+                CONNECT_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(|error| TransportError::Network(format!("could not connect to {address}: {error}")))?;
 
     match stream_to_file(
         stream,

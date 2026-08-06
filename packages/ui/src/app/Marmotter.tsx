@@ -462,7 +462,24 @@ export function Marmotter({
       });
       return;
     }
-    // Not answering anything we asked for: record it as its own direct offer.
+    // Not answering anything we asked for. Serving bots re-offer a pack every
+    // few seconds until the receiver connects, so ignore a repeat of one already
+    // in flight or done — matched on the same bot and filename — rather than
+    // piling up duplicate rows. Otherwise it is a genuine unsolicited offer.
+    const foldedFrom = pendingKey(networkId, from);
+    const duplicate = useView
+      .getState()
+      .dccOffers.some(
+        (entry) =>
+          entry.filename === send.filename &&
+          pendingKey(entry.networkId, entry.from) === foldedFrom &&
+          (entry.status === 'requested' ||
+            entry.status === 'downloading' ||
+            entry.status === 'downloaded'),
+      );
+    if (duplicate) {
+      return;
+    }
     useView
       .getState()
       .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
