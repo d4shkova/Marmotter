@@ -44,6 +44,12 @@ export interface SidebarProps {
     target: string,
     kind: 'channel' | 'person',
   ) => readonly MenuItem[];
+  /**
+   * Pinned to the bottom of the sidebar, below the networks. The DCC file
+   * monitor lives here — under the network list rather than under the member
+   * list — so it has a home whether or not a channel is open.
+   */
+  readonly footer?: ReactNode;
   readonly className?: string;
 }
 
@@ -101,6 +107,7 @@ export function Sidebar({
   showBrowseChannelsShortcut = true,
   networkMenu,
   conversationMenu,
+  footer,
   className,
 }: SidebarProps): ReactNode {
   const [dragging, setDragging] = useState<string | undefined>(undefined);
@@ -218,6 +225,8 @@ export function Sidebar({
           ))
         )}
       </div>
+
+      {footer === undefined ? null : <div className="shrink-0">{footer}</div>}
 
       {menu === undefined ? null : (
         <ContextMenu

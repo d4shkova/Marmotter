@@ -12,6 +12,7 @@
  */
 
 export * from './listeners.js';
+export * from './connect-error.js';
 export * from './tauri.js';
 export * from './websocket.js';
 export * from './reconnecting.js';

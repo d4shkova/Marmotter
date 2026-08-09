@@ -18,13 +18,16 @@ import { hasSecret, putSecret, replaceSecret } from './secrets.js';
 /** The value the network picker uses for "not one of these". */
 const CUSTOM = 'custom';
 
-type Security = 'verified' | 'pinned' | 'off' | 'websocket';
-
-const TLS_FOR: Record<Exclude<Security, 'websocket'>, TlsConfig> = {
-  verified: { mode: 'tls', verifyCert: true },
-  pinned: { mode: 'tls', verifyCert: false },
-  off: { mode: 'off' },
-};
+/**
+ * The security choices, as a person makes them.
+ *
+ * There is no separate "certificate checked" and "certificate not checked" any
+ * more: "Encrypted" means checked, and if the check fails the app offers to
+ * connect without it and remembers the answer. So the one thing a person used to
+ * have to know up front — whether their server's certificate is signed by a
+ * recognised authority — is now discovered for them.
+ */
+type Security = 'encrypted' | 'off' | 'websocket';
 
 /**
  * The port each kind of connection conventionally listens on.
@@ -35,8 +38,7 @@ const TLS_FOR: Record<Exclude<Security, 'websocket'>, TlsConfig> = {
  * not universality, and a network on 7000 is not unusual.
  */
 const PORT_FOR: Record<Security, number> = {
-  verified: 6697,
-  pinned: 6697,
+  encrypted: 6697,
   off: 6667,
   websocket: 443,
 };
@@ -48,7 +50,7 @@ type LoginMethod = 'none' | 'sasl' | 'nickserv';
 const securityOf = (endpoint: ServerEndpoint | undefined): Security => {
   const tls = endpoint?.tls;
   if (tls === undefined) {
-    return 'verified';
+    return 'encrypted';
   }
   switch (tls.mode) {
     case 'off':
@@ -56,9 +58,15 @@ const securityOf = (endpoint: ServerEndpoint | undefined): Security => {
     case 'websocket':
       return 'websocket';
     case 'tls':
-      return tls.verifyCert ? 'verified' : 'pinned';
+      // Checked and not-checked are one choice now; the difference is remembered
+      // separately so accepting an unverified certificate is not undone on save.
+      return 'encrypted';
   }
 };
+
+/** Whether a saved endpoint had certificate checking already switched off. */
+const certAlreadyAccepted = (endpoint: ServerEndpoint | undefined): boolean =>
+  endpoint?.tls.mode === 'tls' && !endpoint.tls.verifyCert;
 
 /** Which login method a saved profile was using. */
 const loginOf = (auth: AuthConfig | undefined): LoginMethod => {
@@ -136,7 +144,14 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
       whether changing the security setting may replace it. */
   const [portEdited, setPortEdited] = useState(false);
   const [nick, setNick] = useState('');
-  const [security, setSecurity] = useState<Security>('verified');
+  const [security, setSecurity] = useState<Security>('encrypted');
+  /**
+   * Whether an unverified certificate was already accepted for this network.
+   *
+   * Carried through a save so editing the address does not quietly turn checking
+   * back on and break a connection the user had already chosen to trust.
+   */
+  const [certAccepted, setCertAccepted] = useState(false);
   const [socketUrl, setSocketUrl] = useState('');
   const [login, setLogin] = useState<LoginMethod>('none');
   const [account, setAccount] = useState('');
@@ -158,10 +173,11 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
       setChoice('libera-chat');
       setName('');
       setHost('');
-      setPort(String(PORT_FOR.verified));
+      setPort(String(PORT_FOR.encrypted));
       setPortEdited(false);
       setNick('');
-      setSecurity('verified');
+      setSecurity('encrypted');
+      setCertAccepted(false);
       setSocketUrl('');
       setLogin('none');
       setAccount('');
@@ -180,6 +196,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     setPortEdited(true);
     setNick(editing.identity.nick);
     setSecurity(mode);
+    setCertAccepted(certAlreadyAccepted(endpoint));
     setSocketUrl(endpoint?.tls.mode === 'websocket' ? endpoint.tls.url : '');
     setLogin(loginOf(editing.auth));
     setAccount(accountOf(editing.auth));
@@ -195,7 +212,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
   const effective = {
     name: custom ? name : (chosen?.name ?? ''),
     host: custom ? host : (chosen?.host ?? ''),
-    port: custom ? Number.parseInt(port, 10) : (chosen?.port ?? PORT_FOR.verified),
+    port: custom ? Number.parseInt(port, 10) : (chosen?.port ?? PORT_FOR.encrypted),
   };
 
   const usesSocket = security === 'websocket';
@@ -207,7 +224,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     if (network === undefined) {
       return;
     }
-    const wanted: Security = network.tls ? 'verified' : 'off';
+    const wanted: Security = network.tls ? 'encrypted' : 'off';
     setSecurity(wanted);
     if (!portEdited) {
       setPort(String(network.port));
@@ -217,8 +234,28 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
   const changeSecurity = (next: string): void => {
     const value = next as Security;
     setSecurity(value);
+    // Turning encryption off or on by hand starts the certificate question over:
+    // an accepted-once exception belongs to a TLS connection, not a plaintext one.
+    setCertAccepted(false);
     if (!portEdited) {
       setPort(String(PORT_FOR[value]));
+    }
+  };
+
+  /** The transport security for the chosen option, as a saved endpoint holds it. */
+  const tlsFor = (choice: Security): TlsConfig => {
+    switch (choice) {
+      case 'off':
+        return { mode: 'off' };
+      case 'websocket':
+        // The socket path builds its own websocket endpoint from the URL.
+        return { mode: 'off' };
+      case 'encrypted':
+        // Checking is on unless the user has already accepted this network's
+        // unverified certificate, in which case that choice is kept.
+        return certAccepted
+          ? { mode: 'tls', verifyCert: false }
+          : { mode: 'tls', verifyCert: true };
     }
   };
 
@@ -336,7 +373,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     const endpoint: ServerEndpoint = {
       host: effective.host.trim(),
       port: effective.port,
-      tls: TLS_FOR[security],
+      tls: tlsFor(security),
     };
     const auth = authFor();
 
@@ -500,16 +537,11 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
           onChange={changeSecurity}
           options={[
             {
-              value: 'verified',
-              label: 'Encrypted, certificate checked',
-              description:
-                'Recommended. Nobody between you and the server can read or change what you send.',
-            },
-            {
-              value: 'pinned',
-              label: 'Encrypted, certificate not checked',
-              description:
-                'For a server using its own certificate. Still encrypted, but you cannot be sure who you are talking to the first time.',
+              value: 'encrypted',
+              label: 'Encrypted',
+              description: certAccepted
+                ? "Recommended. You've chosen to trust this server's own certificate, so it connects without checking it."
+                : "Recommended. Nobody in between can read what you send. If the server's certificate can't be checked, you'll be asked whether to trust it.",
             },
             {
               value: 'off',

@@ -36,6 +36,7 @@ import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { MessageRow } from './MessageRow.js';
+import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSearch.js';
 import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
@@ -263,6 +264,53 @@ export const Messages: StoryObj = {
       />
     </div>
   ),
+};
+
+export const SearchingMessages: StoryObj = {
+  render: function SearchingMessages() {
+    const matches = findMatches(messages, 'build');
+    const [index, setIndex] = useState(0);
+    const activeId = matches[index % matches.length]?.id;
+    const step = (delta: number) =>
+      setIndex(
+        (current) => (((current + delta) % matches.length) + matches.length) % matches.length,
+      );
+
+    return (
+      <div className="flex h-[28rem] w-[56rem] overflow-hidden rounded-card border border-[var(--separator)]">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <MessageSearchBar
+            query="build"
+            onQueryChange={() => {}}
+            matchCount={matches.length}
+            activeOrdinal={(index % matches.length) + 1}
+            onPrev={() => step(-1)}
+            onNext={() => step(1)}
+            onClose={() => {}}
+          />
+          <MessageList
+            network={network()}
+            conversation={channel()}
+            nickWidth={12}
+            alignNicksRight
+            showTimestamps
+            foldEvents
+            searchMatchIds={new Set(matches.map((match) => match.id))}
+            {...(activeId === undefined ? {} : { searchActiveId: activeId })}
+          />
+        </div>
+        <div className="w-64 shrink-0">
+          <MessageSearchResults
+            query="build"
+            matches={matches}
+            activeId={activeId}
+            onPick={setIndex}
+            onClose={() => {}}
+          />
+        </div>
+      </div>
+    );
+  },
 };
 
 export const Composing: StoryObj = {

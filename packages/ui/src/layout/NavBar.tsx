@@ -5,6 +5,13 @@ export interface NavBarProps {
   readonly title: string;
   /** A second line under the title, e.g. a channel's topic or member count. */
   readonly subtitle?: ReactNode;
+  /**
+   * Double-clicking the title runs this. Used to open a channel's settings from
+   * its name, which is where the old gear button used to point.
+   */
+  readonly onTitleActivate?: () => void;
+  /** A tooltip on the title, e.g. what double-clicking it does. */
+  readonly titleHint?: string;
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
   /**
@@ -30,6 +37,8 @@ const COLLAPSE_DISTANCE = 40;
 export function NavBar({
   title,
   subtitle,
+  onTitleActivate,
+  titleHint,
   leading,
   trailing,
   largeTitle = false,
@@ -67,8 +76,13 @@ export function NavBar({
 
         <div className="flex min-w-0 flex-1 flex-col items-center">
           <h1
-            className="truncate text-headline font-semibold text-[var(--label-primary)]"
+            className={cn(
+              'max-w-full truncate text-headline font-semibold text-[var(--label-primary)]',
+              onTitleActivate !== undefined && 'cursor-pointer select-none',
+            )}
             style={largeTitle ? { opacity: collapsed } : undefined}
+            title={titleHint}
+            onDoubleClick={onTitleActivate}
           >
             {title}
           </h1>

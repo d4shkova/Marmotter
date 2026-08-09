@@ -4,11 +4,11 @@ import { cn } from '../lib/cn.js';
 /**
  * How long a toast stays before it dismisses itself.
  *
- * Long enough that somebody can finish reading it — an error sentence is often
- * two lines — without needing the close button, which stays for anyone who
- * wants it gone sooner.
+ * Ten seconds: long enough to finish reading a two-line sentence, short enough
+ * that a stack of them clears on its own. Hovering or focusing pauses the
+ * countdown, and the close button is there for anyone who wants it gone sooner.
  */
-const AUTO_DISMISS_MS = 20_000;
+const AUTO_DISMISS_MS = 10_000;
 
 /**
  * What a toast is reporting.
@@ -61,8 +61,11 @@ export function Toast({
       onMouseLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)}
       onBlurCapture={() => setPaused(false)}
+      // Clicking anywhere on the toast dismisses it — the close button stays for
+      // anyone who wants the explicit target, but the whole surface is a way out.
+      onClick={() => onDismiss(id)}
       className={cn(
-        'flex items-center gap-3 rounded-card px-4 py-3 shadow-xl',
+        'flex cursor-pointer items-center gap-3 rounded-card px-4 py-3 shadow-xl',
         'bg-[var(--bg-elevated-3)] [backdrop-filter:var(--blur-vibrancy)]',
         'border',
         tone === 'error' ? 'border-[var(--danger)]' : 'border-[var(--separator)]',
@@ -71,7 +74,7 @@ export function Toast({
     >
       <span
         className={cn(
-          'flex-1 text-callout',
+          'flex-1 text-callout break-words',
           tone === 'error' ? 'text-[var(--danger)]' : 'text-[var(--label-primary)]',
         )}
       >
@@ -81,7 +84,14 @@ export function Toast({
       {action === undefined ? null : (
         <button
           type="button"
-          onClick={action.onSelect}
+          // Acting on a toast also clears it: the message has served its purpose
+          // once its action is taken. stopPropagation keeps the surrounding
+          // click-to-dismiss from firing a second time.
+          onClick={(event) => {
+            event.stopPropagation();
+            action.onSelect();
+            onDismiss(id);
+          }}
           className="shrink-0 text-callout font-medium text-[var(--accent)]"
         >
           {action.label}
@@ -91,7 +101,10 @@ export function Toast({
       <button
         type="button"
         aria-label="Dismiss"
-        onClick={() => onDismiss(id)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDismiss(id);
+        }}
         className="grid size-6 shrink-0 place-items-center rounded-full text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]"
       >
         <span aria-hidden="true">
@@ -121,7 +134,14 @@ export function ToastRegion({ toasts, onDismiss, className }: ToastRegionProps):
       )}
     >
       {toasts.map((toast) => (
-        <div key={toast.id} className="pointer-events-auto w-full max-w-sm">
+        // Sized to its content up to a wider ceiling, so a short status is
+        // compact and a message naming a file or a pack — "Requested pack #7
+        // from mybot", "Saved marmot-photos.zip" — gets the room to sit on one
+        // line rather than wrapping mid-name.
+        <div
+          key={toast.id}
+          className="pointer-events-auto w-fit max-w-[min(92vw,34rem)] min-w-[16rem]"
+        >
           <Toast {...toast} onDismiss={onDismiss} />
         </div>
       ))}

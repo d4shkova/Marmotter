@@ -22,8 +22,14 @@ export interface MessageListProps {
   readonly onLoadOlder?: () => void;
   readonly onReply?: (message: Message) => void;
   readonly onNickClick?: (nick: string) => void;
+  /** Opens a link from a message, after the interface has confirmed it. */
+  readonly onOpenLink?: (href: string) => void;
   /** Decides whether a message mentions the user, for the highlight. */
   readonly isHighlight?: (message: Message) => boolean;
+  /** Message ids that match the current in-conversation search. */
+  readonly searchMatchIds?: ReadonlySet<string>;
+  /** The one match centred and emphasised as the user steps through them. */
+  readonly searchActiveId?: string;
   readonly className?: string;
 }
 
@@ -51,7 +57,10 @@ export function MessageList({
   onLoadOlder,
   onReply,
   onNickClick,
+  onOpenLink,
   isHighlight,
+  searchMatchIds,
+  searchActiveId,
   className,
 }: MessageListProps): ReactNode {
   const scroller = useRef<HTMLDivElement>(null);
@@ -108,6 +117,22 @@ export function MessageList({
       onLoadOlder();
     }
   };
+
+  // Stepping through search matches centres the active one. This deliberately
+  // stops following the bottom: a reader jumping to a hit three thousand lines
+  // up has left the live tail, and snapping them back to it would undo the jump.
+  useEffect(() => {
+    if (searchActiveId === undefined) {
+      return;
+    }
+    const index = rows.findIndex(
+      (row) => row.kind === 'message' && row.message.id === searchActiveId,
+    );
+    if (index >= 0) {
+      pinnedToBottom.current = false;
+      virtualizer.scrollToIndex(index, { align: 'center' });
+    }
+  }, [searchActiveId, rows, virtualizer]);
 
   // Loading older messages grows the list upward; without this the viewport
   // jumps by exactly the height that was inserted above it.
@@ -184,10 +209,20 @@ export function MessageList({
                 fold={foldNick}
                 {...(onReply === undefined ? {} : { onReply })}
                 {...(onNickClick === undefined ? {} : { onNickClick })}
+                {...(onOpenLink === undefined ? {} : { onOpenLink })}
                 highlighted={
                   row.kind === 'message' && isHighlight !== undefined
                     ? isHighlight(row.message)
                     : false
+                }
+                searchMatch={
+                  row.kind !== 'message'
+                    ? 'none'
+                    : row.message.id === searchActiveId
+                      ? 'active'
+                      : searchMatchIds?.has(row.message.id) === true
+                        ? 'match'
+                        : 'none'
                 }
               />
             </div>

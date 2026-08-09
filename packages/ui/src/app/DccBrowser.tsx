@@ -14,6 +14,11 @@ export interface DccBrowserProps {
   readonly onDownload: (offer: DccOfferRecord) => void;
   /** Prompts for a download folder, for the case where none is set yet. */
   readonly onChooseFolder: () => void;
+  /**
+   * Opens the file manager on a saved file. When absent — as on web, which has
+   * no file manager to open — the reveal button is not shown.
+   */
+  readonly onReveal?: (offer: DccOfferRecord) => void;
   readonly onClear: () => void;
   /** Injectable for tests; defaults to now. */
   readonly now?: number;
@@ -34,6 +39,7 @@ export function DccBrowser({
   downloadFolder,
   onDownload,
   onChooseFolder,
+  onReveal,
   onClear,
   now = Date.now(),
   className,
@@ -111,6 +117,7 @@ export function DccBrowser({
           offer={offer}
           disabled={downloadFolder === undefined}
           onDownload={onDownload}
+          {...(onReveal === undefined ? {} : { onReveal })}
         />
       ),
     },
@@ -118,21 +125,24 @@ export function DccBrowser({
 
   return (
     <div className={className}>
-      <div className="flex flex-col gap-3 px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <SearchField
-              label="Search files"
-              placeholder="Search by name or sender"
-              value={query}
-              onValueChange={setQuery}
-            />
-          </div>
-          <Button size="small" variant="secondary" disabled={offers.length === 0} onClick={onClear}>
-            Clear
-          </Button>
+      {/* The search bar is pinned to the top of the scroll area: a file window
+          people scroll through a long catalogue in, so the way to narrow it has
+          to stay in reach rather than scrolling off with the first screenful. */}
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-[var(--separator)] bg-[var(--bg-base)]/90 px-4 py-3 [backdrop-filter:var(--blur-vibrancy)]">
+        <div className="flex-1">
+          <SearchField
+            label="Search files"
+            placeholder="Search by name or sender"
+            value={query}
+            onValueChange={setQuery}
+          />
         </div>
+        <Button size="small" variant="secondary" disabled={offers.length === 0} onClick={onClear}>
+          Clear
+        </Button>
+      </div>
 
+      <div className="flex flex-col gap-3 px-4 py-4">
         {downloadFolder === undefined ? (
           <div className="flex items-center justify-between gap-3 rounded-card bg-[var(--bg-elevated)] px-4 py-3">
             <p className="text-footnote text-[var(--label-secondary)]">
@@ -221,10 +231,12 @@ function DownloadCell({
   offer,
   disabled,
   onDownload,
+  onReveal,
 }: {
   offer: DccOfferRecord;
   disabled: boolean;
   onDownload: (offer: DccOfferRecord) => void;
+  onReveal?: (offer: DccOfferRecord) => void;
 }): ReactNode {
   if (offer.passive) {
     return <span className="text-caption-1 text-[var(--label-quaternary)]">Can't fetch</span>;
@@ -239,7 +251,32 @@ function DownloadCell({
     case 'downloading':
       return <DownloadProgress received={offer.received} total={offer.size} />;
     case 'downloaded':
-      return <span className="text-caption-1 text-[var(--status-connected)]">Saved</span>;
+      // "Saved", with a folder button that opens the file manager on the file.
+      // The button only appears where the platform can reveal it and where a
+      // path is actually known.
+      return (
+        <div className="flex items-center justify-end gap-1.5">
+          <span className="text-caption-1 text-[var(--status-connected)]">Saved</span>
+          {onReveal === undefined || offer.savedPath === undefined ? null : (
+            <button
+              type="button"
+              aria-label={`Show ${offer.filename} in its folder`}
+              title="Show in folder"
+              onClick={() => onReveal(offer)}
+              className="grid size-6 shrink-0 place-items-center rounded-control text-[var(--label-secondary)] hover:bg-[var(--fill-secondary)]"
+            >
+              <span aria-hidden="true">
+                <svg viewBox="0 0 16 16" className="size-4 fill-none stroke-current stroke-[1.5]">
+                  <path
+                    d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.4h6.8a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+            </button>
+          )}
+        </div>
+      );
     case 'failed':
       return (
         <div className="flex flex-col items-end gap-0.5">

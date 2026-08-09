@@ -20,8 +20,15 @@ export interface MessageRowProps {
   readonly onReact?: (message: Message) => void;
   readonly onCopy?: (message: Message) => void;
   readonly onNickClick?: (nick: string) => void;
+  /** Opens a link from a message, after the interface has confirmed it. */
+  readonly onOpenLink?: (href: string) => void;
   /** Highlights the row, for a message that mentions the user. */
   readonly highlighted?: boolean;
+  /**
+   * Whether this row matches the active in-conversation search: `match` for one
+   * of the set, `active` for the one currently centred and stepped to.
+   */
+  readonly searchMatch?: 'none' | 'match' | 'active';
 }
 
 /**
@@ -118,7 +125,9 @@ function TextRow({
   onReact,
   onCopy,
   onNickClick,
+  onOpenLink,
   highlighted = false,
+  searchMatch = 'none',
 }: MessageRowProps & { row: Extract<Row, { kind: 'message' }> }): ReactNode {
   const { message, grouped } = row;
   const nick = message.source?.nick ?? '';
@@ -132,6 +141,12 @@ function TextRow({
         'group relative flex items-baseline gap-2 px-4 py-px',
         'hover:bg-[var(--fill-quaternary)]',
         highlighted && 'bg-[var(--accent-muted)]',
+        // Search sits on top of the mention highlight: every hit gets a quiet
+        // fill, and the one being stepped to gets a ring so it reads as "here"
+        // among the rest, without spending a second colour on it.
+        searchMatch === 'match' && 'bg-[var(--fill-tertiary)]',
+        searchMatch === 'active' &&
+          'bg-[var(--accent-muted)] ring-1 ring-inset ring-[var(--accent)]',
       )}
     >
       {showTimestamps ? (
@@ -187,7 +202,13 @@ function TextRow({
         {isAction ? (
           <span style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}>{nick} </span>
         ) : null}
-        <Body text={message.text} kind={message.kind} isMember={isMember} fold={fold} />
+        <Body
+          text={message.text}
+          kind={message.kind}
+          isMember={isMember}
+          fold={fold}
+          {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        />
         {message.pending ? (
           <span
             title="Not yet confirmed by the server"
@@ -256,11 +277,13 @@ function Body({
   kind,
   isMember,
   fold,
+  onOpenLink,
 }: {
   text: string;
   kind: Message['kind'];
   isMember: ((word: string) => boolean) | undefined;
   fold: ((nick: string) => string) | undefined;
+  onOpenLink?: (href: string) => void;
 }): ReactNode {
   if (kind === 'mode' || kind === 'server' || kind === 'error') {
     return <WithDecoder text={text} />;
@@ -271,7 +294,12 @@ function Body({
       {segment(text, isMember).map((part, index) => (
         // Segments have no identity of their own; their position in the line is
         // what they are.
-        <Piece key={index} part={part} fold={fold} />
+        <Piece
+          key={index}
+          part={part}
+          fold={fold}
+          {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        />
       ))}
     </>
   );
@@ -280,9 +308,11 @@ function Body({
 function Piece({
   part,
   fold,
+  onOpenLink,
 }: {
   part: TextSegment;
   fold: ((nick: string) => string) | undefined;
+  onOpenLink?: (href: string) => void;
 }): ReactNode {
   switch (part.kind) {
     case 'link':
@@ -291,6 +321,18 @@ function Piece({
           href={part.href}
           target="_blank"
           rel="noreferrer noopener"
+          // The interface confirms the link before anything opens: a click is
+          // intercepted so the warning can be shown, rather than the webview
+          // trying to navigate to it itself — which it cannot. The href stays so
+          // the link reads as one and can be copied from the context menu.
+          onClick={
+            onOpenLink === undefined
+              ? undefined
+              : (event) => {
+                  event.preventDefault();
+                  onOpenLink(part.href);
+                }
+          }
           className="text-[var(--accent)] underline underline-offset-2"
         >
           {part.text}

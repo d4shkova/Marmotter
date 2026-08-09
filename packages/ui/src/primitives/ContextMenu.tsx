@@ -9,6 +9,8 @@ export interface MenuItem {
   readonly label: string;
   readonly onSelect: () => void;
   readonly icon?: ReactNode;
+  /** A second line under the label, e.g. what a services command does. */
+  readonly detail?: string;
   /** Red, for actions that take something away. */
   readonly destructive?: boolean;
   readonly disabled?: boolean;
@@ -196,7 +198,16 @@ export function ContextMenu({
                   {item.icon}
                 </span>
               )}
-              {item.label}
+              {item.detail === undefined ? (
+                item.label
+              ) : (
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate font-mono">{item.label}</span>
+                  <span className="truncate text-caption-1 text-[var(--label-tertiary)]">
+                    {item.detail}
+                  </span>
+                </span>
+              )}
             </button>
           </div>
         );

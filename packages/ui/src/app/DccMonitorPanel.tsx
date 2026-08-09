@@ -15,7 +15,7 @@ export interface DccMonitorPanelProps {
 }
 
 /**
- * The DCC file monitor's home in the right-hand column, under the member list.
+ * The DCC file monitor's home at the foot of the sidebar, under the networks.
  *
  * Deliberately quiet: a line of status, a start/stop control, and a count. It
  * only appears at all once the feature is switched on in settings, so its mere

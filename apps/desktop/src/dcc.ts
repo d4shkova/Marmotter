@@ -63,5 +63,12 @@ export function createDesktopDcc(): DccCapability {
         unlisten();
       }
     },
+
+    async revealFile(path: string): Promise<void> {
+      // A thin Rust command that hands the path to the platform's file manager
+      // and asks it to select the file. Kept in Rust rather than the shell
+      // plugin so it can pick the right selecting-open per OS.
+      await invoke('dcc_reveal_file', { path });
+    },
   };
 }
