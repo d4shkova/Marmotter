@@ -479,6 +479,7 @@ export const BrowsingFiles: StoryObj = {
         offers={fileOffers()}
         downloadFolder="/home/you/Downloads"
         onDownload={() => {}}
+        onCancel={() => {}}
         onChooseFolder={() => {}}
         onClear={() => {}}
       />

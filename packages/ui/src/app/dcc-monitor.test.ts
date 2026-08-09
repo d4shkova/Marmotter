@@ -1,6 +1,6 @@
 import type { DccSend, XdccPack } from '@marmotter/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useView } from './view-store.js';
+import { classifyDccReoffer, useView } from './view-store.js';
 
 const send: DccSend = {
   filename: 'holiday.jpg',
@@ -179,5 +179,28 @@ describe('the XDCC side of the monitor', () => {
       at: 3_000,
     });
     expect(useView.getState().dccOffers).toHaveLength(2);
+  });
+});
+
+describe('classifying a serving bot re-offer', () => {
+  const active = { passive: false };
+
+  it('records an offer that matches no existing row', () => {
+    expect(classifyDccReoffer(undefined, active)).toBe('record');
+  });
+
+  it('retries a row whose last attempt failed, when the re-offer is fetchable', () => {
+    expect(classifyDccReoffer({ status: 'failed' }, active)).toBe('retry');
+  });
+
+  it('does not retry a failed row from a passive re-offer it cannot fetch', () => {
+    expect(classifyDccReoffer({ status: 'failed' }, { passive: true })).toBe('ignore');
+  });
+
+  it('ignores a re-offer of a row that is mid-transfer, saved, or still waiting', () => {
+    expect(classifyDccReoffer({ status: 'downloading' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'requested' }, active)).toBe('ignore');
   });
 });

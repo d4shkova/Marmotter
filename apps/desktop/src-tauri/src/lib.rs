@@ -28,6 +28,7 @@ pub fn run() {
             transport::transport_send,
             transport::transport_disconnect,
             dcc::dcc_download_file,
+            dcc::dcc_cancel_download,
             dcc::dcc_reveal_file,
             opener::open_external_url,
         ])

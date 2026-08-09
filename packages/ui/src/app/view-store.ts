@@ -48,6 +48,43 @@ export type DccStatus =
 export type DccOfferKind = 'dcc' | 'xdcc';
 
 /**
+ * What to do with a `DCC SEND` that did not answer a request still waiting in
+ * the queue but does match a file already on the list.
+ *
+ * `retry` — the row's last attempt failed and this is the serving bot's own
+ * re-offer, which is a fresh chance: connect again, at the address this offer
+ * carries. Serving bots re-send every few seconds precisely because the first
+ * connection often races their listening socket and is refused.
+ *
+ * `ignore` — a duplicate of a row that is mid-transfer, already saved, or still
+ * sitting there waiting for the user to start it; nothing to do.
+ *
+ * `record` — no such row: a genuinely new, unsolicited offer to list.
+ */
+export type DccReofferAction = 'retry' | 'ignore' | 'record';
+
+/**
+ * Decides how an incoming `DCC SEND` relates to the file monitor's rows.
+ *
+ * Pure so the matching rule can be reasoned about on its own: it is the one bit
+ * of the download flow where a wrong call either drops a file the user asked
+ * for or piles up duplicate rows. `existing` is the row that already matches the
+ * offer's sender and filename, if any.
+ */
+export function classifyDccReoffer(
+  existing: Pick<DccOfferRecord, 'status'> | undefined,
+  send: { readonly passive: boolean },
+): DccReofferAction {
+  if (existing === undefined) {
+    return 'record';
+  }
+  if (existing.status === 'failed' && !send.passive) {
+    return 'retry';
+  }
+  return 'ignore';
+}
+
+/**
  * A file the monitor has seen advertised, over a direct `DCC SEND` or an XDCC
  * pack listing.
  *

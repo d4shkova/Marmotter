@@ -24,6 +24,20 @@ export interface DccDownloadRequest {
 /** Progress of a transfer in flight: bytes received, and the total if known. */
 export type DccProgress = (received: number, total: number | undefined) => void;
 
+/**
+ * A download in flight, with a way to stop it.
+ *
+ * `done` settles the way the old promise did — the saved path, or a rejection
+ * with a message fit to show. `cancel` asks the shell to abort the transfer;
+ * `done` then rejects, so a cancelled download and a failed one arrive through
+ * the same path and the caller decides which it was.
+ */
+export interface DccTransfer {
+  readonly done: Promise<string>;
+  /** Aborts the transfer. Safe to call after it has already finished. */
+  cancel(): void;
+}
+
 /** The platform capabilities the file monitor depends on. */
 export interface DccCapability {
   /**
@@ -32,13 +46,15 @@ export interface DccCapability {
    */
   chooseDownloadFolder(): Promise<string | undefined>;
   /**
-   * Downloads an advertised file, resolving to the path it was written to.
+   * Starts downloading an advertised file, returning a handle to it.
    *
    * `onProgress` is called as bytes arrive, so a row can show a bar rather than
-   * a spinner. Rejects with a message fit to show the user on any failure — a
-   * refused connection, a size over the cap, a folder that cannot be written to.
+   * a spinner. The handle's `done` resolves to the path it was written to, or
+   * rejects with a message fit to show the user on any failure — a refused
+   * connection, a size over the cap, a folder that cannot be written to, or a
+   * cancellation.
    */
-  download(request: DccDownloadRequest, onProgress?: DccProgress): Promise<string>;
+  download(request: DccDownloadRequest, onProgress?: DccProgress): DccTransfer;
   /**
    * Opens the platform's file manager on a downloaded file, selecting it.
    *

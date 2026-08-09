@@ -12,6 +12,8 @@ export interface DccBrowserProps {
   /** Where files are written. When unset, downloads are blocked. */
   readonly downloadFolder: string | undefined;
   readonly onDownload: (offer: DccOfferRecord) => void;
+  /** Stops a download that is in flight, from the X beside its progress bar. */
+  readonly onCancel: (offer: DccOfferRecord) => void;
   /** Prompts for a download folder, for the case where none is set yet. */
   readonly onChooseFolder: () => void;
   /**
@@ -38,6 +40,7 @@ export function DccBrowser({
   offers,
   downloadFolder,
   onDownload,
+  onCancel,
   onChooseFolder,
   onReveal,
   onClear,
@@ -117,6 +120,7 @@ export function DccBrowser({
           offer={offer}
           disabled={downloadFolder === undefined}
           onDownload={onDownload}
+          onCancel={onCancel}
           {...(onReveal === undefined ? {} : { onReveal })}
         />
       ),
@@ -187,37 +191,63 @@ export function DccBrowser({
   );
 }
 
-/** A slim progress bar with a byte-count label, shown while a file downloads. */
+/**
+ * A slim progress bar with a byte-count label, shown while a file downloads.
+ *
+ * A red cancel button sits to the right of the bar. Red is the system's one
+ * alarm colour, reserved for destructive actions — stopping a transfer part-way
+ * and discarding what has arrived is exactly that — so it reads the same here as
+ * everywhere else the colour appears.
+ */
 function DownloadProgress({
   received,
   total,
+  filename,
+  onCancel,
 }: {
   received: number | undefined;
   total: number | undefined;
+  filename: string;
+  onCancel: () => void;
 }): ReactNode {
   const done = received ?? 0;
   const pct =
     total !== undefined && total > 0 ? Math.min(100, Math.round((done / total) * 100)) : undefined;
 
   return (
-    <div className="flex w-32 flex-col items-end gap-1">
-      <div
-        role="progressbar"
-        aria-label="Download progress"
-        aria-valuemin={0}
-        aria-valuemax={total ?? undefined}
-        aria-valuenow={pct === undefined ? undefined : done}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--fill-tertiary)]"
-      >
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1.5">
         <div
-          className={cn(
-            'h-full rounded-full bg-[var(--accent)]',
-            // With no known total the bar cannot fill to a fraction, so it sits
-            // partly filled to read as "in progress" rather than "stuck at 0".
-            pct === undefined && 'animate-pulse',
-          )}
-          style={{ width: pct === undefined ? '40%' : `${pct}%` }}
-        />
+          role="progressbar"
+          aria-label="Download progress"
+          aria-valuemin={0}
+          aria-valuemax={total ?? undefined}
+          aria-valuenow={pct === undefined ? undefined : done}
+          className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--fill-tertiary)]"
+        >
+          <div
+            className={cn(
+              'h-full rounded-full bg-[var(--accent)]',
+              // With no known total the bar cannot fill to a fraction, so it sits
+              // partly filled to read as "in progress" rather than "stuck at 0".
+              pct === undefined && 'animate-pulse',
+            )}
+            style={{ width: pct === undefined ? '40%' : `${pct}%` }}
+          />
+        </div>
+        <button
+          type="button"
+          aria-label={`Cancel downloading ${filename}`}
+          title="Cancel download"
+          onClick={onCancel}
+          className="grid size-5 shrink-0 place-items-center rounded-control text-[var(--danger)] hover:bg-[var(--danger-muted)]"
+        >
+          <span aria-hidden="true">
+            <svg viewBox="0 0 16 16" className="size-3.5 fill-none stroke-current stroke-[1.75]">
+              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" strokeLinecap="round" />
+            </svg>
+          </span>
+        </button>
       </div>
       <span className="text-caption-2 text-[var(--label-tertiary)]">
         {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
@@ -231,11 +261,13 @@ function DownloadCell({
   offer,
   disabled,
   onDownload,
+  onCancel,
   onReveal,
 }: {
   offer: DccOfferRecord;
   disabled: boolean;
   onDownload: (offer: DccOfferRecord) => void;
+  onCancel: (offer: DccOfferRecord) => void;
   onReveal?: (offer: DccOfferRecord) => void;
 }): ReactNode {
   if (offer.passive) {
@@ -249,7 +281,14 @@ function DownloadCell({
         </Button>
       );
     case 'downloading':
-      return <DownloadProgress received={offer.received} total={offer.size} />;
+      return (
+        <DownloadProgress
+          received={offer.received}
+          total={offer.size}
+          filename={offer.filename}
+          onCancel={() => onCancel(offer)}
+        />
+      );
     case 'downloaded':
       // "Saved", with a folder button that opens the file manager on the file.
       // The button only appears where the platform can reveal it and where a
