@@ -2,6 +2,7 @@ import { Marmotter } from '@marmotter/ui';
 import { type JSX, useMemo } from 'react';
 import { createDesktopDcc } from './dcc';
 import { createDesktopNotifier } from './notifier';
+import { openExternalUrl } from './opener';
 import { createDesktopTransport } from './transport';
 
 /**
@@ -23,6 +24,7 @@ export function App(): JSX.Element {
       createTransport={() => createDesktopTransport()}
       notifier={notifier}
       dcc={dcc}
+      openExternal={openExternalUrl}
       persists
     />
   );

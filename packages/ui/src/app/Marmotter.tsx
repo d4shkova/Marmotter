@@ -17,6 +17,7 @@ import { NavBar } from '../layout/NavBar.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
+import { Modal } from '../primitives/Modal.js';
 import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
 import { AccountMenu } from './AccountMenu.js';
 import { AccountPanel } from './AccountPanel.js';
@@ -105,6 +106,15 @@ export interface MarmotterProps {
    * cannot open an arbitrary TCP connection to fetch a file.
    */
   readonly dcc?: DccCapability;
+  /**
+   * Opens a link in the platform's own browser.
+   *
+   * Desktop passes a Tauri-backed one, because the app's own webview cannot
+   * navigate to an arbitrary page and would simply fail to open it. Web passes
+   * nothing and the shell falls back to a new tab, which is what a browser does
+   * with a link anyway.
+   */
+  readonly openExternal?: (url: string) => void;
 }
 
 /** The whole client. */
@@ -114,6 +124,7 @@ export function Marmotter({
   persists = false,
   notifier,
   dcc,
+  openExternal,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -140,6 +151,8 @@ export function Marmotter({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
+  /** A link from a message waiting for the user to confirm before it opens. */
+  const [linkToOpen, setLinkToOpen] = useState<string | undefined>(undefined);
   /** The open services-command menu, anchored under the button that opened it. */
   const [serviceMenu, setServiceMenu] = useState<
     | {
@@ -275,6 +288,22 @@ export function Marmotter({
       x: rect.left,
       y: rect.bottom + 4,
     });
+  };
+
+  // Opening a link the user has confirmed. The platform's own browser where the
+  // shell has one — the app's webview cannot navigate to an arbitrary page — and
+  // a new tab otherwise, which is what a browser does with a link anyway.
+  const openConfirmedLink = (): void => {
+    const url = linkToOpen;
+    setLinkToOpen(undefined);
+    if (url === undefined) {
+      return;
+    }
+    if (openExternal !== undefined) {
+      openExternal(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   };
 
   // The newest message seen in each conversation, so the same one is never
@@ -549,6 +578,10 @@ export function Marmotter({
           : endpoint,
       );
       const trusting: NetworkProfile = { ...profile, servers };
+      // Clear what is on screen first: the certificate warning has been answered,
+      // and any duplicate of it from an earlier attempt goes with it, so the
+      // decision does not leave its own prompt behind.
+      setToasts([]);
       // Registering the rebuilt session writes the profile back with it, so the
       // choice is saved by the same step that reconnects on it.
       startSession(trusting, { connect: true });
@@ -1243,6 +1276,7 @@ export function Marmotter({
                   isHighlight(message.text, network.nick, view.appearance.highlightWords)
                 }
                 onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
+                onOpenLink={(href) => setLinkToOpen(href)}
                 {...(searchOpen ? { searchMatchIds } : {})}
                 {...(activeSearchId === undefined ? {} : { searchActiveId: activeSearchId })}
               />
@@ -1424,6 +1458,27 @@ export function Marmotter({
           onMessage={messageMember}
         />
       )}
+
+      <Modal
+        open={linkToOpen !== undefined}
+        onClose={() => setLinkToOpen(undefined)}
+        title="Open this link?"
+        confirmLabel="Open link"
+        onConfirm={openConfirmedLink}
+        message={
+          <>
+            <p>
+              This opens in your web browser, outside Marmotter. Links can be unsafe — open one only
+              if you trust where it goes.
+            </p>
+            {linkToOpen === undefined ? null : (
+              <p className="mt-2 font-mono text-footnote break-all text-[var(--label-tertiary)]">
+                {linkToOpen}
+              </p>
+            )}
+          </>
+        }
+      />
 
       {serviceMenu === undefined ? null : (
         <ContextMenu

@@ -22,6 +22,8 @@ export interface MessageListProps {
   readonly onLoadOlder?: () => void;
   readonly onReply?: (message: Message) => void;
   readonly onNickClick?: (nick: string) => void;
+  /** Opens a link from a message, after the interface has confirmed it. */
+  readonly onOpenLink?: (href: string) => void;
   /** Decides whether a message mentions the user, for the highlight. */
   readonly isHighlight?: (message: Message) => boolean;
   /** Message ids that match the current in-conversation search. */
@@ -55,6 +57,7 @@ export function MessageList({
   onLoadOlder,
   onReply,
   onNickClick,
+  onOpenLink,
   isHighlight,
   searchMatchIds,
   searchActiveId,
@@ -206,6 +209,7 @@ export function MessageList({
                 fold={foldNick}
                 {...(onReply === undefined ? {} : { onReply })}
                 {...(onNickClick === undefined ? {} : { onNickClick })}
+                {...(onOpenLink === undefined ? {} : { onOpenLink })}
                 highlighted={
                   row.kind === 'message' && isHighlight !== undefined
                     ? isHighlight(row.message)

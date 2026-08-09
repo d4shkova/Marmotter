@@ -61,8 +61,11 @@ export function Toast({
       onMouseLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)}
       onBlurCapture={() => setPaused(false)}
+      // Clicking anywhere on the toast dismisses it — the close button stays for
+      // anyone who wants the explicit target, but the whole surface is a way out.
+      onClick={() => onDismiss(id)}
       className={cn(
-        'flex items-center gap-3 rounded-card px-4 py-3 shadow-xl',
+        'flex cursor-pointer items-center gap-3 rounded-card px-4 py-3 shadow-xl',
         'bg-[var(--bg-elevated-3)] [backdrop-filter:var(--blur-vibrancy)]',
         'border',
         tone === 'error' ? 'border-[var(--danger)]' : 'border-[var(--separator)]',
@@ -81,7 +84,14 @@ export function Toast({
       {action === undefined ? null : (
         <button
           type="button"
-          onClick={action.onSelect}
+          // Acting on a toast also clears it: the message has served its purpose
+          // once its action is taken. stopPropagation keeps the surrounding
+          // click-to-dismiss from firing a second time.
+          onClick={(event) => {
+            event.stopPropagation();
+            action.onSelect();
+            onDismiss(id);
+          }}
           className="shrink-0 text-callout font-medium text-[var(--accent)]"
         >
           {action.label}
@@ -91,7 +101,10 @@ export function Toast({
       <button
         type="button"
         aria-label="Dismiss"
-        onClick={() => onDismiss(id)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDismiss(id);
+        }}
         className="grid size-6 shrink-0 place-items-center rounded-full text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]"
       >
         <span aria-hidden="true">
