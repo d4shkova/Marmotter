@@ -4,6 +4,7 @@ import {
   type NetworkState,
   type Session,
   type SessionOptions,
+  connectErrorReason,
   createSession,
   requestOlder,
   useNetworks,
@@ -411,6 +412,13 @@ export function Marmotter({
         return;
       }
       void built.connect().catch((error: unknown) => {
+        // A certificate that would not verify is offered a way to trust it,
+        // rather than reported as an unreachable server — the same prompt a
+        // mid-session TLS failure raises.
+        if (connectErrorReason(error)?.kind === 'tls-error') {
+          handleTlsError.current(profile);
+          return;
+        }
         toast(`Could not reach ${profile.name}. ${describe(error)}`, 'error');
       });
     },

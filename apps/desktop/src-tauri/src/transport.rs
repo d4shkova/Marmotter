@@ -77,6 +77,28 @@ pub struct ClosePayload {
     pub message: String,
 }
 
+/// Why `transport_connect` rejected.
+///
+/// Carries the same `kind` tags a close does, so the front end can tell a
+/// certificate that would not verify (`tls-error`) from a server that could not
+/// be reached (`network-error`) and offer to trust the certificate rather than
+/// only reporting a failure.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectError {
+    /// One of `timeout`, `tls-error`, `network-error`.
+    pub kind: String,
+    pub message: String,
+}
+
+/// The `CloseReason` tag for a transport error.
+fn error_kind(error: &marmotter_transport::TransportError) -> &'static str {
+    match error.kind() {
+        "timeout" => "timeout",
+        "tls" | "client-certificate" => "tls-error",
+        _ => "network-error",
+    }
+}
+
 /// Live connections, keyed by the id handed back to the front end.
 #[derive(Default)]
 pub struct Transports {
@@ -128,18 +150,11 @@ fn close_payload(id: String, close: &Close) -> ClosePayload {
             kind: "server".into(),
             message: String::new(),
         },
-        Close::Error(error) => {
-            let kind = match error.kind() {
-                "timeout" => "timeout",
-                "tls" | "client-certificate" => "tls-error",
-                _ => "network-error",
-            };
-            ClosePayload {
-                id,
-                kind: kind.into(),
-                message: error.to_string(),
-            }
-        }
+        Close::Error(error) => ClosePayload {
+            id,
+            kind: error_kind(error).into(),
+            message: error.to_string(),
+        },
     }
 }
 
@@ -149,8 +164,11 @@ pub async fn transport_connect(
     app: AppHandle,
     transports: State<'_, Transports>,
     request: ConnectRequest,
-) -> Result<String, String> {
-    let security = verification_from(&request.tls)?;
+) -> Result<String, ConnectError> {
+    let security = verification_from(&request.tls).map_err(|message| ConnectError {
+        kind: "network-error".into(),
+        message,
+    })?;
 
     let client_certificate = request
         .client_certificate
@@ -169,7 +187,12 @@ pub async fn transport_connect(
             .map_or(marmotter_transport::DEFAULT_TIMEOUT, Duration::from_millis),
     };
 
-    let (connection, mut events) = connect(options).await.map_err(|error| error.to_string())?;
+    // Classify a handshake failure the same way a close is classified, so a
+    // rejected certificate arrives at the front end as a `tls-error`.
+    let (connection, mut events) = connect(options).await.map_err(|error| ConnectError {
+        kind: error_kind(&error).into(),
+        message: error.to_string(),
+    })?;
 
     let id = transports.allocate_id();
     transports

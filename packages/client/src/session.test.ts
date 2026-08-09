@@ -9,6 +9,7 @@ import type {
 import { defaultLoggingPolicy } from '@marmotter/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type SessionEvent, createSession } from './session.js';
+import { TransportConnectError } from './transport/connect-error.js';
 
 /** A transport that records what was sent and lets a test push lines back. */
 class FakeTransport implements Transport {
@@ -134,6 +135,28 @@ describe('registration', () => {
     expect(session.state.lastClose).toEqual({
       kind: 'network-error',
       message: 'connection refused',
+    });
+  });
+
+  it('keeps a classified TLS failure as tls-error rather than flattening it', async () => {
+    const transport = new FakeTransport();
+    // A rejected certificate arrives as a TransportConnectError carrying the
+    // reason, which must survive rather than becoming a generic network error —
+    // that is what lets the interface offer to trust the certificate.
+    transport.connect = () =>
+      Promise.reject(
+        new TransportConnectError({
+          kind: 'tls-error',
+          message: 'the secure connection failed: certificate not valid for name',
+        }),
+      );
+    const session = createSession({ profile: profile(), transport, now });
+
+    await expect(session.connect()).rejects.toBeInstanceOf(TransportConnectError);
+    expect(session.state.phase).toBe('disconnected');
+    expect(session.state.lastClose).toEqual({
+      kind: 'tls-error',
+      message: 'the secure connection failed: certificate not valid for name',
     });
   });
 

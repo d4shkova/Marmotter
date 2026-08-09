@@ -1,9 +1,12 @@
 import type { CloseReason, ServerEndpoint } from '@marmotter/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { connectErrorReason } from './connect-error.js';
 import { CLOSE_EVENT, LINE_EVENT, type TauriBridge, createTauriTransport } from './tauri.js';
 
 /** A bridge that records calls and lets a test push events back. */
-const fakeBridge = (options: { connectId?: string; failConnect?: string } = {}) => {
+const fakeBridge = (
+  options: { connectId?: string; failConnect?: string; rejectConnectWith?: unknown } = {},
+) => {
   const calls: { command: string; args?: Record<string, unknown> }[] = [];
   const handlers = new Map<string, ((event: { payload: unknown }) => void)[]>();
   let unlistenCount = 0;
@@ -12,6 +15,9 @@ const fakeBridge = (options: { connectId?: string; failConnect?: string } = {}) 
     invoke: <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
       calls.push(args === undefined ? { command } : { command, args });
       if (command === 'transport_connect') {
+        if (options.rejectConnectWith !== undefined) {
+          return Promise.reject(options.rejectConnectWith);
+        }
         return options.failConnect === undefined
           ? (Promise.resolve(options.connectId ?? 'conn-1') as Promise<T>)
           : Promise.reject(new Error(options.failConnect));
@@ -110,6 +116,46 @@ describe('createTauriTransport', () => {
         endpoint: endpoint({ mode: 'websocket', url: 'wss://irc.example.org' }),
       }),
     ).rejects.toThrow(/WebSocket/);
+  });
+
+  it('classifies a rejected certificate as a tls-error the interface can act on', async () => {
+    // The Rust command rejects with a `{ kind, message }` object; a certificate
+    // that would not verify must arrive as a tls-error rather than a generic
+    // failure, or the interface cannot offer to trust it.
+    const fake = fakeBridge({
+      rejectConnectWith: {
+        kind: 'tls-error',
+        message: 'the secure connection failed: certificate not valid for name',
+      },
+    });
+    const transport = createTauriTransport(fake.bridge);
+
+    const error = await transport
+      .connect({ endpoint: endpoint({ mode: 'tls', verifyCert: true }) })
+      .then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+
+    expect(connectErrorReason(error)).toEqual({
+      kind: 'tls-error',
+      message: 'the secure connection failed: certificate not valid for name',
+    });
+  });
+
+  it('treats an unexpected connect rejection as a network error', async () => {
+    const fake = fakeBridge({ failConnect: 'connection refused' });
+    const transport = createTauriTransport(fake.bridge);
+
+    const error = await transport.connect({ endpoint: endpoint({ mode: 'off' }) }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(connectErrorReason(error)).toEqual({
+      kind: 'network-error',
+      message: 'connection refused',
+    });
   });
 
   it('reads a client certificate through the bridge', async () => {

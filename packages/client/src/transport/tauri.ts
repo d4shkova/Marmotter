@@ -9,6 +9,7 @@
 
 import type { CloseReason, ConnectOptions, Transport, Unsubscribe } from '@marmotter/shared';
 import { Listeners } from './listeners.js';
+import { TransportConnectError } from './connect-error.js';
 
 /** The slice of Tauri this transport needs. */
 export interface TauriBridge {
@@ -46,6 +47,27 @@ const toCloseReason = (payload: ClosePayload): CloseReason => {
     default:
       return { kind: 'network-error', message: payload.message };
   }
+};
+
+/**
+ * The reason a rejected `transport_connect` carries.
+ *
+ * The Rust command rejects with a `{ kind, message }` object classified the same
+ * way a close is, so a certificate that would not verify arrives as a
+ * `tls-error` rather than being flattened into a generic failure. Anything that
+ * does not carry that shape — an unexpected throw — is treated as a network
+ * error with whatever message it had.
+ */
+const connectFailureReason = (error: unknown): CloseReason => {
+  if (typeof error === 'object' && error !== null && 'kind' in error) {
+    const payload = error as { kind: unknown; message?: unknown };
+    return toCloseReason({
+      id: '',
+      kind: typeof payload.kind === 'string' ? payload.kind : '',
+      message: typeof payload.message === 'string' ? payload.message : '',
+    });
+  }
+  return { kind: 'network-error', message: error instanceof Error ? error.message : String(error) };
 };
 
 /**
@@ -125,7 +147,14 @@ export function createTauriTransport(bridge: TauriBridge): Transport {
       // have yet; subscribing after means the first lines could be missed.
       // Tauri buffers nothing, so the id has to come first — and Rust does not
       // start reading until the command returns.
-      const id = await bridge.invoke<string>('transport_connect', { request });
+      let id: string;
+      try {
+        id = await bridge.invoke<string>('transport_connect', { request });
+      } catch (error) {
+        // Classify the handshake failure so a rejected certificate reaches the
+        // interface as one, rather than as an unspecified network error.
+        throw new TransportConnectError(connectFailureReason(error));
+      }
       connectionId = id;
 
       unlisten = await Promise.all([

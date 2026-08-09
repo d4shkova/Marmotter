@@ -40,6 +40,7 @@ import type {
   Unsubscribe,
 } from '@marmotter/shared';
 import { Listeners } from './transport/listeners.js';
+import { connectErrorReason } from './transport/connect-error.js';
 import type { ReconnectingTransport } from './transport/reconnecting.js';
 import { type AddIgnoreOptions, addIgnore, pruneIgnores, removeIgnore } from './state/ignore.js';
 import { backfillJoinedChannels, requestOlder } from './state/history.js';
@@ -695,13 +696,15 @@ export function createSession(options: SessionOptions): Session {
       } catch (error) {
         // A transport that rejects its connect — a refused socket, a TLS
         // failure surfaced synchronously — never emits a close event, so the
-        // phase would otherwise stay stuck at `connecting`.
-        const message = error instanceof Error ? error.message : String(error);
-        publish({
-          ...state,
-          phase: 'disconnected',
-          lastClose: { kind: 'network-error', message },
-        });
+        // phase would otherwise stay stuck at `connecting`. The reason the
+        // transport classified is kept where it has one, so a rejected
+        // certificate stays a `tls-error` the interface can act on rather than
+        // being flattened to a generic network error.
+        const reason: CloseReason = connectErrorReason(error) ?? {
+          kind: 'network-error',
+          message: error instanceof Error ? error.message : String(error),
+        };
+        publish({ ...state, phase: 'disconnected', lastClose: reason });
         throw error;
       }
 
