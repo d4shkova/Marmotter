@@ -4,11 +4,11 @@ import { cn } from '../lib/cn.js';
 /**
  * How long a toast stays before it dismisses itself.
  *
- * Long enough that somebody can finish reading it — an error sentence is often
- * two lines — without needing the close button, which stays for anyone who
- * wants it gone sooner.
+ * Ten seconds: long enough to finish reading a two-line sentence, short enough
+ * that a stack of them clears on its own. Hovering or focusing pauses the
+ * countdown, and the close button is there for anyone who wants it gone sooner.
  */
-const AUTO_DISMISS_MS = 20_000;
+const AUTO_DISMISS_MS = 10_000;
 
 /**
  * What a toast is reporting.
@@ -71,7 +71,7 @@ export function Toast({
     >
       <span
         className={cn(
-          'flex-1 text-callout',
+          'flex-1 text-callout break-words',
           tone === 'error' ? 'text-[var(--danger)]' : 'text-[var(--label-primary)]',
         )}
       >
@@ -121,7 +121,14 @@ export function ToastRegion({ toasts, onDismiss, className }: ToastRegionProps):
       )}
     >
       {toasts.map((toast) => (
-        <div key={toast.id} className="pointer-events-auto w-full max-w-sm">
+        // Sized to its content up to a wider ceiling, so a short status is
+        // compact and a message naming a file or a pack — "Requested pack #7
+        // from mybot", "Saved marmot-photos.zip" — gets the room to sit on one
+        // line rather than wrapping mid-name.
+        <div
+          key={toast.id}
+          className="pointer-events-auto w-fit max-w-[min(92vw,34rem)] min-w-[16rem]"
+        >
           <Toast {...toast} onDismiss={onDismiss} />
         </div>
       ))}

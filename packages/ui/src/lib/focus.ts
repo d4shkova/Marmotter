@@ -8,7 +8,7 @@
  * is — and both are why this lives in one place rather than in each component.
  */
 
-import { type RefObject, useEffect } from 'react';
+import { type RefObject, useEffect, useRef } from 'react';
 
 const FOCUSABLE = [
   'a[href]',
@@ -37,6 +37,15 @@ export function useFocusTrap(
   open: boolean,
   onEscape?: () => void,
 ): void {
+  // The escape handler is kept in a ref so a caller passing a fresh closure on
+  // every render — which is the common case, since `() => onClose()` is rarely
+  // memoised — does not re-run this effect. Re-running it would call
+  // `initial.focus()` again and yank focus back to the first field every time
+  // something behind the overlay re-renders, which is exactly what happens when
+  // a message arrives while the user is partway through a form.
+  const escapeRef = useRef(onEscape);
+  escapeRef.current = onEscape;
+
   useEffect(() => {
     if (!open) {
       return;
@@ -54,9 +63,9 @@ export function useFocusTrap(
     initial.focus();
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && onEscape !== undefined) {
+      if (event.key === 'Escape' && escapeRef.current !== undefined) {
         event.stopPropagation();
-        onEscape();
+        escapeRef.current();
         return;
       }
       if (event.key !== 'Tab') {
@@ -86,7 +95,7 @@ export function useFocusTrap(
       // Back where they were, not to the top of the document.
       previous?.focus?.();
     };
-  }, [container, open, onEscape]);
+  }, [container, open]);
 }
 
 /** Calls back when a pointer goes down outside the container. */

@@ -27,6 +27,7 @@ pub fn run() {
             transport::transport_send,
             transport::transport_disconnect,
             dcc::dcc_download_file,
+            dcc::dcc_reveal_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marmotter");

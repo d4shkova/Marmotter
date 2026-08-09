@@ -39,6 +39,14 @@ export interface DccCapability {
    * refused connection, a size over the cap, a folder that cannot be written to.
    */
   download(request: DccDownloadRequest, onProgress?: DccProgress): Promise<string>;
+  /**
+   * Opens the platform's file manager on a downloaded file, selecting it.
+   *
+   * Optional: a platform that has no file manager to open — or no meaningful
+   * notion of "reveal" — simply omits it, and the button that calls it is not
+   * shown. Rejects with a message fit to show the user when the reveal fails.
+   */
+  revealFile?(path: string): Promise<void>;
 }
 
 /** A byte count as a short human-readable string, e.g. "1.4 MB". */

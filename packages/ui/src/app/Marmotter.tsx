@@ -35,9 +35,18 @@ import { readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
+import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSearch.js';
 import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
+import {
+  type ServiceName,
+  serviceCommandBody,
+  serviceCommandLabel,
+  serviceCommands,
+  serviceDisplayName,
+  serviceForTarget,
+} from './service-commands.js';
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
@@ -50,7 +59,7 @@ import {
   shouldNotify,
   windowIsFocused,
 } from './notify.js';
-import type { MenuItem } from '../primitives/ContextMenu.js';
+import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import {
   type DccOfferRecord,
   type TargetRef,
@@ -126,15 +135,35 @@ export function Marmotter({
   const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
   /** Whether the channel settings and moderation sheet is open. */
   const [channelPanelOpen, setChannelPanelOpen] = useState(false);
+  /** In-conversation search: whether it is open, what for, and where in the hits. */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
+  /** The open services-command menu, anchored under the button that opened it. */
+  const [serviceMenu, setServiceMenu] = useState<
+    | {
+        readonly label: string;
+        readonly items: readonly MenuItem[];
+        readonly x: number;
+        readonly y: number;
+      }
+    | undefined
+  >(undefined);
   /** The member a ban or a removal is being built for, and which of the two. */
   const [acting, setActing] = useState<{ member: Member; kind: 'ban' | 'kick' } | undefined>(
     undefined,
   );
 
-  const toast = useCallback((text: string, tone: ToastMessage['tone'] = 'info') => {
-    const id = `${Date.now()}-${Math.random()}`;
-    setToasts((current) => [...current, { id, text, tone }]);
-  }, []);
+  const toast = useCallback(
+    (text: string, tone: ToastMessage['tone'] = 'info', action?: ToastMessage['action']) => {
+      const id = `${Date.now()}-${Math.random()}`;
+      setToasts((current) => [
+        ...current,
+        { id, text, tone, ...(action === undefined ? {} : { action }) },
+      ]);
+    },
+    [],
+  );
 
   const networks = useMemo(
     () =>
@@ -161,6 +190,91 @@ export function Marmotter({
     const key = fold(selection.target, network.support.caseMapping);
     return network.channels.get(key) ?? network.queries.get(key);
   }, [network, selection]);
+
+  // In-conversation search. Switching conversations closes it — a search is
+  // about the messages in front of you, and carrying it across would highlight
+  // a term nobody asked to find here.
+  useEffect(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchIndex(0);
+  }, [selection?.networkId, selection?.target]);
+
+  const searchMatches = useMemo(
+    () =>
+      searchOpen && conversation !== undefined
+        ? findMatches(conversation.messages, searchQuery)
+        : [],
+    [searchOpen, conversation, searchQuery],
+  );
+  const searchMatchIds = useMemo(
+    () => new Set(searchMatches.map((match) => match.id)),
+    [searchMatches],
+  );
+  // Keep the cursor inside the set as it shrinks under a longer query.
+  const activeSearchPos = searchMatches.length === 0 ? 0 : searchIndex % searchMatches.length;
+  const activeSearchId = searchMatches[activeSearchPos]?.id;
+
+  const stepSearch = (delta: number): void => {
+    setSearchIndex((current) => {
+      const count = searchMatches.length;
+      return count === 0 ? 0 : (((current + delta) % count) + count) % count;
+    });
+  };
+
+  const closeSearch = (): void => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchIndex(0);
+  };
+
+  // Whether this network was set up by somebody who operates it, which is what
+  // decides whether the services command menus and their operator-level entries
+  // are offered at all.
+  const isOperator =
+    network !== undefined && registry.profiles.get(network.id)?.operatorCommands === true;
+
+  // Which service, if either, the open conversation is with — so NickServ and
+  // ChanServ get a command menu the other conversations do not.
+  const conversationService =
+    conversation !== undefined ? serviceForTarget(selection?.target) : undefined;
+
+  // Opening a services conversation and asking it for its help listing, from the
+  // buttons on the server tab. The reply lands in the conversation as an ordinary
+  // message, which is the whole point — no `/msg` for anybody to have typed.
+  const openServiceHelp = (service: ServiceName): void => {
+    if (network === undefined) {
+      return;
+    }
+    const target = serviceDisplayName(service);
+    view.select({ networkId: network.id, target });
+    registry.sessionOf(network.id)?.sendMessage(target, 'HELP');
+  };
+
+  // The command menu for a services conversation, anchored under its button.
+  // Picking a command drops its shape into the composer for this conversation
+  // rather than sending it, because most of them take an argument only the user
+  // has and a services command sent by mistake is not always reversible.
+  const openServiceMenu = (service: ServiceName, anchor: HTMLElement): void => {
+    if (selection === undefined) {
+      return;
+    }
+    const commands = serviceCommands(service, { operator: isOperator });
+    const items: MenuItem[] = commands.map((command, index) => ({
+      id: `${command.name}-${index}`,
+      label: serviceCommandLabel(command),
+      detail: command.summary,
+      startsGroup: command.operator === true && commands[index - 1]?.operator !== true,
+      onSelect: () => view.setDraft(selection, serviceCommandBody(command)),
+    }));
+    const rect = anchor.getBoundingClientRect();
+    setServiceMenu({
+      label: `${serviceDisplayName(service)} commands`,
+      items,
+      x: rect.left,
+      y: rect.bottom + 4,
+    });
+  };
 
   // The newest message seen in each conversation, so the same one is never
   // counted or notified twice. Recording a conversation the first time it is
@@ -269,10 +383,7 @@ export function Marmotter({
         if (sessionEvent.kind === 'auth-failed') {
           toast(sessionEvent.reason, 'error');
         } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind === 'tls-error') {
-          toast(
-            `Could not verify ${profile.name}'s certificate. Check the network's security setting.`,
-            'error',
-          );
+          handleTlsError.current(profile);
         } else if (sessionEvent.kind === 'dcc-offer') {
           // Routed through a ref so this long-lived listener always runs the
           // latest logic — the pending-request map and the folder both change
@@ -403,6 +514,64 @@ export function Marmotter({
     },
     [dcc, toast],
   );
+
+  // Opening the file manager on a saved download. Only wired where the platform
+  // can do it — desktop — and only ever on a path the shell itself returned.
+  const revealOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      if (dcc?.revealFile === undefined || offer.savedPath === undefined) {
+        return;
+      }
+      dcc.revealFile(offer.savedPath).catch((error: unknown) => {
+        toast(`Couldn't open the folder. ${describe(error)}`, 'error');
+      });
+    },
+    [dcc, toast],
+  );
+
+  // Reconnecting to a network with certificate checking switched off, and saving
+  // that so it holds next time. Reached only after the user is told the
+  // certificate could not be verified and chooses to trust it anyway, so nobody
+  // ends up on an unverified connection without having said so.
+  const acceptUnverifiedCert = useCallback(
+    (profile: NetworkProfile): void => {
+      const servers = profile.servers.map((endpoint) =>
+        endpoint.tls.mode === 'tls' && endpoint.tls.verifyCert
+          ? { ...endpoint, tls: { mode: 'tls' as const, verifyCert: false as const } }
+          : endpoint,
+      );
+      const trusting: NetworkProfile = { ...profile, servers };
+      // Registering the rebuilt session writes the profile back with it, so the
+      // choice is saved by the same step that reconnects on it.
+      startSession(trusting, { connect: true });
+      view.select({ networkId: trusting.id, target: undefined });
+      toast(`Connecting to ${profile.name} without checking its certificate. Saved for next time.`);
+    },
+    [startSession, view, toast],
+  );
+
+  // A certificate that would not verify. The connection is refused rather than
+  // silently trusted; the user is told plainly and offered a one-click way to
+  // trust it and remember the choice. Held in a ref so the long-lived session
+  // listener always runs the current version.
+  const handleTlsError = useRef<(profile: NetworkProfile) => void>(() => {});
+  handleTlsError.current = (profile) => {
+    const verifying = profile.servers.some(
+      (endpoint) => endpoint.tls.mode === 'tls' && endpoint.tls.verifyCert,
+    );
+    if (!verifying) {
+      toast(
+        `Couldn't verify ${profile.name}'s certificate. Check the network's security setting.`,
+        'error',
+      );
+      return;
+    }
+    toast(
+      `Couldn't verify ${profile.name}'s certificate — it isn't signed by an authority your device recognises. Connect without checking it?`,
+      'error',
+      { label: 'Connect anyway', onSelect: () => acceptUnverifiedCert(profile) },
+    );
+  };
 
   // XDCC downloads requested but not yet answered, keyed by network + folded bot
   // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
@@ -705,6 +874,20 @@ export function Marmotter({
         label: kind === 'channel' ? 'Copy channel name' : 'Copy name',
         onSelect: () => void navigator.clipboard?.writeText(target),
       },
+      // The keyboard and right-click path to what double-clicking the channel
+      // name opens, so channel settings are not pointer-only.
+      ...(kind === 'channel'
+        ? [
+            {
+              id: 'settings',
+              label: 'Channel settings…',
+              onSelect: () => {
+                view.select(ref);
+                setChannelPanelOpen(true);
+              },
+            },
+          ]
+        : []),
       kind === 'channel'
         ? {
             id: 'leave',
@@ -793,10 +976,9 @@ export function Marmotter({
                 ? 'Marmotter'
                 : (selection.target ?? network?.name ?? 'Marmotter');
 
-  // The right-hand column carries two things: the member list, for a channel,
-  // and — under it — the DCC file monitor, once it is switched on in settings.
-  // Either one alone is reason enough for the column to exist, so a monitor with
-  // no channel open still has somewhere to live.
+  // The right-hand column carries the member list, for a channel. The DCC file
+  // monitor used to sit under it here; it now lives at the foot of the sidebar
+  // instead, so it has a home whether or not a channel is open.
   const showMembers =
     view.memberListOpen &&
     conversation !== undefined &&
@@ -804,32 +986,45 @@ export function Marmotter({
     network !== undefined &&
     isChannel(selection.target, network.support);
   const showDccPanel = view.userOptions.dccMonitorEnabled && dcc !== undefined;
-  const asideOpen = showMembers || showDccPanel;
-  const asideNode = !asideOpen ? undefined : (
+  // While searching, the right-hand column shows the hits instead of the member
+  // list — that is where CLAUDE-md-style the user asked to see every instance,
+  // and it closes from its own corner as well as from the search bar.
+  const showSearchResults = searchOpen && view.pane === 'chat' && conversation !== undefined;
+  const asideOpen = showSearchResults || showMembers;
+  const asideNode = showSearchResults ? (
+    <MessageSearchResults
+      query={searchQuery}
+      matches={searchMatches}
+      activeId={activeSearchId}
+      onPick={(index) => setSearchIndex(index)}
+      onClose={closeSearch}
+      {...(network === undefined
+        ? {}
+        : { fold: (text: string) => fold(text, network.support.caseMapping) })}
+    />
+  ) : !showMembers || network === undefined || conversation === undefined ? undefined : (
     <div className="flex h-full w-full flex-col bg-[var(--bg-elevated)]">
-      {showMembers && network !== undefined && conversation !== undefined ? (
-        <MemberList
-          className="min-h-0 flex-1"
-          network={network}
-          channel={conversation}
-          menuFor={memberMenu}
-          onMessage={messageMember}
-          onOpenProfile={openProfile}
-        />
-      ) : (
-        <div className="flex-1 border-l border-[var(--separator)]" />
-      )}
-      {showDccPanel ? (
-        <DccMonitorPanel
-          active={view.dccActive}
-          seen={view.dccOffers.length}
-          onStart={() => view.setDccActive(true)}
-          onStop={() => view.setDccActive(false)}
-          onOpen={() => view.setPane('dcc')}
-        />
-      ) : null}
+      <MemberList
+        className="min-h-0 flex-1"
+        network={network}
+        channel={conversation}
+        menuFor={memberMenu}
+        onMessage={messageMember}
+        onOpenProfile={openProfile}
+      />
     </div>
   );
+
+  // The file monitor's home in the left column, under the networks.
+  const dccMonitorNode = showDccPanel ? (
+    <DccMonitorPanel
+      active={view.dccActive}
+      seen={view.dccOffers.length}
+      onStart={() => view.setDccActive(true)}
+      onStop={() => view.setDccActive(false)}
+      onOpen={() => view.setPane('dcc')}
+    />
+  ) : undefined;
 
   const main = (
     <>
@@ -838,6 +1033,16 @@ export function Marmotter({
         {...(conversation?.topic?.text === undefined || conversation.topic.text === ''
           ? {}
           : { subtitle: conversation.topic.text })}
+        {...(view.pane === 'chat' &&
+        conversation !== undefined &&
+        selection?.target !== undefined &&
+        network !== undefined &&
+        isChannel(selection.target, network.support)
+          ? {
+              onTitleActivate: () => setChannelPanelOpen(true),
+              titleHint: 'Double-click to open channel settings',
+            }
+          : {})}
         leading={
           breakpoint === 'mobile' ? (
             <IconButton
@@ -872,24 +1077,37 @@ export function Marmotter({
                 onClick={() => view.setPane(view.pane === 'raw-log' ? 'chat' : 'raw-log')}
               />
             )}
-            {conversation !== undefined && selection?.target !== undefined && network !== undefined
-              ? isChannel(selection.target, network.support) && (
-                  <>
-                    <IconButton
-                      label="Channel settings"
-                      icon={<span aria-hidden="true">⚙</span>}
-                      pressed={channelPanelOpen}
-                      onClick={() => setChannelPanelOpen(true)}
-                    />
-                    <IconButton
-                      label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
-                      icon={<span aria-hidden="true">≡</span>}
-                      pressed={view.memberListOpen}
-                      onClick={() => view.setMemberListOpen(!view.memberListOpen)}
-                    />
-                  </>
-                )
-              : null}
+            {view.pane === 'chat' &&
+            conversation !== undefined &&
+            selection?.target !== undefined &&
+            network !== undefined ? (
+              <>
+                {/* Search takes the spot the channel-settings gear used to hold;
+                    settings now open by double-clicking the channel name. */}
+                <IconButton
+                  label={searchOpen ? 'Close search' : 'Search this conversation'}
+                  icon={<span aria-hidden="true">⌕</span>}
+                  pressed={searchOpen}
+                  onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+                />
+                {conversationService !== undefined && isOperator ? (
+                  <IconButton
+                    label={`${serviceDisplayName(conversationService)} commands`}
+                    icon={<span aria-hidden="true">⌘</span>}
+                    pressed={serviceMenu !== undefined}
+                    onClick={(event) => openServiceMenu(conversationService, event.currentTarget)}
+                  />
+                ) : null}
+                {isChannel(selection.target, network.support) ? (
+                  <IconButton
+                    label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
+                    icon={<span aria-hidden="true">≡</span>}
+                    pressed={view.memberListOpen}
+                    onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                  />
+                ) : null}
+              </>
+            ) : null}
           </>
         }
       />
@@ -919,6 +1137,7 @@ export function Marmotter({
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onChooseFolder={chooseDownloadFolder}
+          {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={view.clearDccOffers}
         />
       ) : view.pane === 'raw-log' && network !== undefined ? (
@@ -986,21 +1205,40 @@ export function Marmotter({
               onReconnect={() => reconnect(network.id)}
               onOpenRawLog={() => view.setPane('raw-log')}
               onBrowseChannels={() => browseChannels(network.id)}
+              {...(isOperator ? { onServiceHelp: openServiceHelp } : {})}
             />
           ) : (
-            <MessageList
-              network={network}
-              conversation={conversation}
-              nickWidth={view.appearance.nickColumnWidth}
-              alignNicksRight={view.appearance.alignNicksRight}
-              showTimestamps={view.appearance.showTimestamps}
-              foldEvents={view.appearance.foldEvents}
-              onLoadOlder={loadOlder}
-              isHighlight={(message) =>
-                isHighlight(message.text, network.nick, view.appearance.highlightWords)
-              }
-              onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
-            />
+            <>
+              {searchOpen ? (
+                <MessageSearchBar
+                  query={searchQuery}
+                  onQueryChange={(next) => {
+                    setSearchQuery(next);
+                    setSearchIndex(0);
+                  }}
+                  matchCount={searchMatches.length}
+                  activeOrdinal={searchMatches.length === 0 ? 0 : activeSearchPos + 1}
+                  onPrev={() => stepSearch(-1)}
+                  onNext={() => stepSearch(1)}
+                  onClose={closeSearch}
+                />
+              ) : null}
+              <MessageList
+                network={network}
+                conversation={conversation}
+                nickWidth={view.appearance.nickColumnWidth}
+                alignNicksRight={view.appearance.alignNicksRight}
+                showTimestamps={view.appearance.showTimestamps}
+                foldEvents={view.appearance.foldEvents}
+                onLoadOlder={loadOlder}
+                isHighlight={(message) =>
+                  isHighlight(message.text, network.nick, view.appearance.highlightWords)
+                }
+                onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
+                {...(searchOpen ? { searchMatchIds } : {})}
+                {...(activeSearchId === undefined ? {} : { searchActiveId: activeSearchId })}
+              />
+            </>
           )}
 
           {/* The composer is on the server tab too, where it takes commands
@@ -1057,6 +1295,7 @@ export function Marmotter({
             showBrowseChannelsShortcut={view.appearance.showBrowseChannelsShortcut}
             networkMenu={networkSidebarMenu}
             conversationMenu={conversationSidebarMenu}
+            {...(dccMonitorNode === undefined ? {} : { footer: dccMonitorNode })}
           />
         }
         aside={asideNode}
@@ -1178,6 +1417,16 @@ export function Marmotter({
         />
       )}
 
+      {serviceMenu === undefined ? null : (
+        <ContextMenu
+          open
+          label={serviceMenu.label}
+          at={{ x: serviceMenu.x, y: serviceMenu.y }}
+          items={serviceMenu.items}
+          onClose={() => setServiceMenu(undefined)}
+        />
+      )}
+
       <ToastRegion
         toasts={toasts}
         onDismiss={(id) => setToasts((current) => current.filter((entry) => entry.id !== id))}
@@ -1198,12 +1447,30 @@ function ServerPane({
   onReconnect,
   onOpenRawLog,
   onBrowseChannels,
+  onServiceHelp,
 }: {
   network: NetworkState;
   onReconnect: () => void;
   onOpenRawLog?: () => void;
   onBrowseChannels?: () => void;
+  /** Opens NickServ / ChanServ and asks for its help. Operator networks only. */
+  onServiceHelp?: (service: ServiceName) => void;
 }): ReactNode {
+  // The services shortcuts, shown on the server tab of a network the user
+  // operates: a one-click way into the NickServ and ChanServ conversations,
+  // where the command menus live.
+  const servicesBar =
+    onServiceHelp === undefined || network.phase !== 'registered' ? null : (
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-footnote text-[var(--label-tertiary)]">Services:</span>
+        <Button variant="secondary" size="small" onClick={() => onServiceHelp('nickserv')}>
+          NickServ help
+        </Button>
+        <Button variant="secondary" size="small" onClick={() => onServiceHelp('chanserv')}>
+          ChanServ help
+        </Button>
+      </div>
+    );
   // A dropped or refused connection is shown as what it is, with the reason and
   // a way to try again — not as an indefinite "connecting" that never resolves,
   // which is what the server tab used to do for every failure.
@@ -1247,37 +1514,41 @@ function ServerPane({
 
   if (network.serverNotices.length === 0 && network.motd.length === 0) {
     return (
-      <EmptyState
-        className="flex-1"
-        title={network.phase === 'registered' ? 'Connected' : 'Not connected'}
-        description={
-          network.phase === 'registered'
-            ? 'Browse what this network has, or join a channel by name from the sidebar.'
-            : 'This network is not connected.'
-        }
-        {...(network.phase !== 'registered'
-          ? {
-              action: (
-                <Button variant="primary" onClick={onReconnect}>
-                  Connect
-                </Button>
-              ),
-            }
-          : onBrowseChannels === undefined
-            ? {}
-            : {
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        {servicesBar === null ? null : <div className="px-4 pt-3">{servicesBar}</div>}
+        <EmptyState
+          className="flex-1"
+          title={network.phase === 'registered' ? 'Connected' : 'Not connected'}
+          description={
+            network.phase === 'registered'
+              ? 'Browse what this network has, or join a channel by name from the sidebar.'
+              : 'This network is not connected.'
+          }
+          {...(network.phase !== 'registered'
+            ? {
                 action: (
-                  <Button variant="primary" onClick={onBrowseChannels}>
-                    Browse channels
+                  <Button variant="primary" onClick={onReconnect}>
+                    Connect
                   </Button>
                 ),
-              })}
-      />
+              }
+            : onBrowseChannels === undefined
+              ? {}
+              : {
+                  action: (
+                    <Button variant="primary" onClick={onBrowseChannels}>
+                      Browse channels
+                    </Button>
+                  ),
+                })}
+        />
+      </div>
     );
   }
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-2">
+      {servicesBar}
       {network.motd.length === 0 ? null : (
         <details className="mb-3 rounded-card bg-[var(--bg-elevated)] p-3">
           <summary className="cursor-pointer text-subhead text-[var(--label-secondary)]">

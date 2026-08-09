@@ -22,6 +22,11 @@ export interface MessageRowProps {
   readonly onNickClick?: (nick: string) => void;
   /** Highlights the row, for a message that mentions the user. */
   readonly highlighted?: boolean;
+  /**
+   * Whether this row matches the active in-conversation search: `match` for one
+   * of the set, `active` for the one currently centred and stepped to.
+   */
+  readonly searchMatch?: 'none' | 'match' | 'active';
 }
 
 /**
@@ -119,6 +124,7 @@ function TextRow({
   onCopy,
   onNickClick,
   highlighted = false,
+  searchMatch = 'none',
 }: MessageRowProps & { row: Extract<Row, { kind: 'message' }> }): ReactNode {
   const { message, grouped } = row;
   const nick = message.source?.nick ?? '';
@@ -132,6 +138,12 @@ function TextRow({
         'group relative flex items-baseline gap-2 px-4 py-px',
         'hover:bg-[var(--fill-quaternary)]',
         highlighted && 'bg-[var(--accent-muted)]',
+        // Search sits on top of the mention highlight: every hit gets a quiet
+        // fill, and the one being stepped to gets a ring so it reads as "here"
+        // among the rest, without spending a second colour on it.
+        searchMatch === 'match' && 'bg-[var(--fill-tertiary)]',
+        searchMatch === 'active' &&
+          'bg-[var(--accent-muted)] ring-1 ring-inset ring-[var(--accent)]',
       )}
     >
       {showTimestamps ? (
