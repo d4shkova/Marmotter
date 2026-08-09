@@ -50,6 +50,16 @@ async function joinChannel(page: Page, channel: string): Promise<void> {
   await expect(prompt).toBeHidden();
 }
 
+/**
+ * Opens the channel settings panel the way the interface offers it: by
+ * double-clicking the channel's name in the title bar. There is no settings
+ * gear any more — that spot is the conversation search — so this is the path a
+ * person takes.
+ */
+async function openChannelSettings(page: Page, channel: string): Promise<void> {
+  await page.getByRole('heading', { name: channel }).first().dblclick();
+}
+
 test.describe('connecting and talking', () => {
   test('someone can connect, join, talk, and see who is there', async ({ page }) => {
     const nick = NICK();
@@ -102,7 +112,7 @@ test.describe('the panels that translate IRC', () => {
 
     await addNetwork(page, nick);
     await joinChannel(page, channel);
-    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await openChannelSettings(page, channel);
 
     const sheet = page.getByRole('dialog', { name: channel });
     await expect(sheet).toBeVisible();
@@ -127,7 +137,7 @@ test.describe('the panels that translate IRC', () => {
 
     await addNetwork(page, nick);
     await joinChannel(page, channel);
-    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await openChannelSettings(page, channel);
 
     const sheet = page.getByRole('dialog', { name: channel });
     await sheet.getByRole('switch', { name: 'Invite only' }).click();
@@ -136,7 +146,7 @@ test.describe('the panels that translate IRC', () => {
 
     // Reopening reads the state back from what the server actually applied,
     // not from what the form remembered.
-    await page.getByRole('button', { name: 'Channel settings' }).click();
+    await openChannelSettings(page, channel);
     await expect(page.getByRole('switch', { name: 'Invite only' })).toBeChecked();
   });
 
