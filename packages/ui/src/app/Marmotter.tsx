@@ -65,6 +65,7 @@ import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import {
   type DccOfferRecord,
   type TargetRef,
+  classifyDccReoffer,
   draftFor,
   isHighlight,
   orderNetworks,
@@ -507,6 +508,14 @@ export function Marmotter({
     });
   }, [dcc]);
 
+  // Downloads in flight, keyed by the row that started them, each with the
+  // handle used to cancel it. A row can only have one transfer at a time, so the
+  // id is a fine key; the entry is cleared when the transfer settles.
+  const transfers = useRef(new Map<string, { cancel: () => void }>());
+  // Rows the user cancelled, so the transfer's own rejection is recognised as a
+  // deliberate stop and not surfaced as a download failure.
+  const cancelledOffers = useRef(new Set<string>());
+
   // Fetching one direct DCC transfer into the chosen folder, updating a given
   // row as it goes. The optimistic status flips to downloading at once and
   // settles to saved or failed when the shell reports back, so a slow transfer
@@ -526,23 +535,34 @@ export function Marmotter({
         toast('Choose a download folder first.', 'error');
         return;
       }
+      // A fresh attempt clears any earlier cancel mark, so a row downloaded,
+      // cancelled, and started again is treated on its own terms.
+      cancelledOffers.current.delete(offerId);
       useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
-      dcc
-        .download(
-          {
-            host: source.host,
-            port: source.port,
-            filename: source.filename,
-            folder,
-            ...(source.size === undefined ? {} : { size: source.size }),
-          },
-          (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
-        )
+      const transfer = dcc.download(
+        {
+          host: source.host,
+          port: source.port,
+          filename: source.filename,
+          folder,
+          ...(source.size === undefined ? {} : { size: source.size }),
+        },
+        (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+      );
+      transfers.current.set(offerId, transfer);
+      transfer.done
         .then((savedPath) => {
+          transfers.current.delete(offerId);
           useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
           toast(`Saved ${source.filename}.`);
         })
         .catch((error: unknown) => {
+          transfers.current.delete(offerId);
+          // A cancel rejects the transfer too; that is the user's own doing, so
+          // the row is already back to available and no failure is shown.
+          if (cancelledOffers.current.delete(offerId)) {
+            return;
+          }
           useView
             .getState()
             .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
@@ -550,6 +570,23 @@ export function Marmotter({
         });
     },
     [dcc, toast],
+  );
+
+  // Stopping a download that is under way. The row goes straight back to
+  // available so it can be started again, and the shell is asked to abort the
+  // socket; the transfer's rejection is then swallowed as a deliberate cancel.
+  const cancelOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      const transfer = transfers.current.get(offer.id);
+      if (transfer === undefined) {
+        return;
+      }
+      cancelledOffers.current.add(offer.id);
+      transfer.cancel();
+      useView.getState().setDccOfferStatus(offer.id, { status: 'available' });
+      toast(`Stopped downloading ${offer.filename}.`);
+    },
+    [toast],
   );
 
   // Opening the file manager on a saved download. Only wired where the platform
@@ -672,27 +709,39 @@ export function Marmotter({
       });
       return;
     }
-    // Not answering anything we asked for. Serving bots re-offer a pack every
-    // few seconds until the receiver connects, so ignore a repeat of one already
-    // in flight or done — matched on the same bot and filename — rather than
-    // piling up duplicate rows. Otherwise it is a genuine unsolicited offer.
+    // Not matched to a request still in its queue. A DCC SEND that matches a
+    // file already on the list is the serving bot re-offering it, not a new
+    // file; the classifier decides whether that means retrying a failed row,
+    // ignoring a duplicate, or listing a genuinely new offer.
     const foldedFrom = pendingKey(networkId, from);
-    const duplicate = useView
+    const existing = useView
       .getState()
-      .dccOffers.some(
+      .dccOffers.find(
         (entry) =>
           entry.filename === send.filename &&
-          pendingKey(entry.networkId, entry.from) === foldedFrom &&
-          (entry.status === 'requested' ||
-            entry.status === 'downloading' ||
-            entry.status === 'downloaded'),
+          pendingKey(entry.networkId, entry.from) === foldedFrom,
       );
-    if (duplicate) {
-      return;
+    switch (classifyDccReoffer(existing, send)) {
+      case 'retry':
+        // `existing` is defined on this branch; retry that same row at the
+        // address this re-offer advertises.
+        if (existing !== undefined) {
+          fetchIntoFolder(existing.id, {
+            host: send.host,
+            port: send.port,
+            filename: send.filename,
+            ...(send.size === undefined ? {} : { size: send.size }),
+          });
+        }
+        return;
+      case 'ignore':
+        return;
+      case 'record':
+        useView
+          .getState()
+          .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
+        return;
     }
-    useView
-      .getState()
-      .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
   };
 
   // The Download button. A direct offer is fetched straight away; an XDCC pack
@@ -1177,6 +1226,7 @@ export function Marmotter({
           offers={view.dccOffers}
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
+          onCancel={cancelOffer}
           onChooseFolder={chooseDownloadFolder}
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={view.clearDccOffers}

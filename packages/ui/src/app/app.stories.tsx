@@ -451,6 +451,22 @@ function fileOffers(): DccOfferRecord[] {
       receivedAt: now - 2 * 60 * 60_000,
       status: 'available',
     },
+    {
+      id: '6',
+      kind: 'xdcc',
+      networkId: 'rizon',
+      networkName: 'Rizon',
+      from: '[EWG]-[TB-iKR09',
+      target: '#packlist',
+      filename: 'Celebrity.Wheel.of.Fortune.S01E01.720p.WEB.h264-KOGi.tar',
+      size: 992_491_520,
+      pack: 265,
+      gets: 3,
+      passive: false,
+      receivedAt: now - 90_000,
+      status: 'failed',
+      error: "The bot didn't answer in time.",
+    },
   ];
 }
 
@@ -479,6 +495,7 @@ export const BrowsingFiles: StoryObj = {
         offers={fileOffers()}
         downloadFolder="/home/you/Downloads"
         onDownload={() => {}}
+        onCancel={() => {}}
         onChooseFolder={() => {}}
         onClear={() => {}}
       />

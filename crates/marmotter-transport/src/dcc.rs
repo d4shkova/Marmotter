@@ -20,8 +20,69 @@ use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::watch;
 
 use crate::error::{Result, TransportError};
+
+/// A cancellation signal a caller can trip to abort a download in flight.
+///
+/// It is the receiving half of a [`watch`] channel carrying a single flag: the
+/// caller keeps the [`CancelHandle`] and trips it to cancel, which unblocks the
+/// connect or the next read and unwinds the transfer with
+/// [`TransportError::Cancelled`], cleaning up the partial file on the way out.
+/// A channel whose handle has been dropped simply never cancels.
+pub type CancelSignal = watch::Receiver<bool>;
+
+/// The sending half of a cancellation: hold it, then [`cancel`] the transfer.
+///
+/// Paired with a [`CancelSignal`] by [`cancel_channel`]. It wraps the watch
+/// sender so a caller — the desktop shell's transfer registry, in practice —
+/// can carry it without depending on the channel type directly.
+///
+/// [`cancel`]: CancelHandle::cancel
+#[derive(Clone)]
+pub struct CancelHandle(watch::Sender<bool>);
+
+impl CancelHandle {
+    /// Trips the signal, cancelling the transfer it was paired with. Cancelling
+    /// one that has already finished is harmless — the signal is simply unheard.
+    pub fn cancel(&self) {
+        let _ = self.0.send(true);
+    }
+}
+
+/// Creates a linked cancel handle and signal.
+///
+/// The handle goes to whatever wants to be able to stop the transfer; the signal
+/// goes into [`DownloadOptions::cancel`]. Keeps the watch channel an internal
+/// detail of this crate, so callers need no async runtime dependency of their
+/// own to make a download cancellable.
+#[must_use]
+pub fn cancel_channel() -> (CancelHandle, CancelSignal) {
+    let (sender, receiver) = watch::channel(false);
+    (CancelHandle(sender), receiver)
+}
+
+/// Resolves once the signal has been tripped, or never when there is none.
+///
+/// Used as the other arm of a `select!` against a connect or a read, so a
+/// cancellation is noticed the moment it arrives rather than only between
+/// chunks. Marks each observed value as seen so the next `changed()` waits for
+/// the following one; a dropped sender parks forever, since a gone caller is
+/// not a cancellation.
+async fn cancelled(signal: &mut Option<CancelSignal>) {
+    match signal {
+        Some(receiver) => loop {
+            if *receiver.borrow_and_update() {
+                return;
+            }
+            if receiver.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        },
+        None => std::future::pending::<()>().await,
+    }
+}
 
 /// Time allowed to wait on any single read once connected.
 pub const DEFAULT_DCC_TIMEOUT: Duration = Duration::from_secs(60);
@@ -58,6 +119,8 @@ pub struct DownloadOptions {
     pub folder: PathBuf,
     /// Connect and per-read timeout.
     pub timeout: Duration,
+    /// A signal the caller can trip to abort the transfer, if it wants one.
+    pub cancel: Option<CancelSignal>,
 }
 
 /// How often progress is reported: once per this many bytes, plus a first and
@@ -73,10 +136,11 @@ const PROGRESS_STEP: u64 = 1024 * 1024;
 /// # Errors
 ///
 /// Returns [`TransportError`] for a passive offer, a folder that is not usable,
-/// a connection that fails or stalls, or a transfer that ends before the whole
-/// advertised size has arrived.
+/// a connection that fails or stalls, a transfer that ends before the whole
+/// advertised size has arrived, or [`TransportError::Cancelled`] when the
+/// caller trips the [`CancelSignal`] mid-transfer.
 pub async fn download(
-    options: DownloadOptions,
+    mut options: DownloadOptions,
     mut on_progress: impl FnMut(u64, Option<u64>),
 ) -> Result<PathBuf> {
     if options.port == 0 {
@@ -93,22 +157,32 @@ pub async fn download(
 
     let target = unique_target_path(&options.folder, &options.filename);
 
+    // The cancel signal is consumed here so it can be shared by the connect and
+    // the read loop, which run one after the other on the same transfer.
+    let mut cancel = options.cancel.take();
+
     let address = format!("{}:{}", options.host, options.port);
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&address))
-        .await
-        .map_err(|_| {
-            TransportError::Network(format!(
-                "could not connect to {address} within {}s — the address may be unreachable or the port blocked",
-                CONNECT_TIMEOUT.as_secs()
-            ))
-        })?
-        .map_err(|error| TransportError::Network(format!("could not connect to {address}: {error}")))?;
+    let stream = tokio::select! {
+        biased;
+        // A cancel while the connect is still pending unwinds before any file
+        // is created, so there is nothing to clean up here.
+        () = cancelled(&mut cancel) => return Err(TransportError::Cancelled),
+        connected = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&address)) => connected
+            .map_err(|_| {
+                TransportError::Network(format!(
+                    "could not connect to {address} within {}s — the address may be unreachable or the port blocked",
+                    CONNECT_TIMEOUT.as_secs()
+                ))
+            })?
+            .map_err(|error| TransportError::Network(format!("could not connect to {address}: {error}")))?,
+    };
 
     match stream_to_file(
         stream,
         &target,
         options.size,
         options.timeout,
+        &mut cancel,
         &mut on_progress,
     )
     .await
@@ -130,6 +204,7 @@ async fn stream_to_file(
     target: &Path,
     size: Option<u64>,
     timeout: Duration,
+    cancel: &mut Option<CancelSignal>,
     on_progress: &mut impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
     let mut file = File::create(target)
@@ -144,10 +219,15 @@ async fn stream_to_file(
     on_progress(0, size);
 
     while received < cap {
-        let read = tokio::time::timeout(timeout, stream.read(&mut buffer))
-            .await
-            .map_err(|_| TransportError::Timeout)?
-            .map_err(|error| TransportError::Network(error.to_string()))?;
+        let read = tokio::select! {
+            biased;
+            // Cancelling mid-transfer returns here; the caller then removes the
+            // partial file, so a stopped download never looks like a whole one.
+            () = cancelled(cancel) => return Err(TransportError::Cancelled),
+            chunk = tokio::time::timeout(timeout, stream.read(&mut buffer)) => chunk
+                .map_err(|_| TransportError::Timeout)?
+                .map_err(|error| TransportError::Network(error.to_string()))?,
+        };
 
         if read == 0 {
             break; // The peer closed the connection.
@@ -290,6 +370,7 @@ mod tests {
                 size: Some(payload.len() as u64),
                 filename: "photos.dat".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -315,6 +396,7 @@ mod tests {
                 size: Some(payload.len() as u64),
                 filename: "photos.dat".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |received, total| updates.push((received, total)),
@@ -341,6 +423,7 @@ mod tests {
                 size: Some(10),
                 filename: "clip.bin".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -363,6 +446,7 @@ mod tests {
                 size: Some(1_000),
                 filename: "big.bin".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -384,6 +468,7 @@ mod tests {
                 size: Some(1),
                 filename: "x".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(1),
             },
             |_, _| {},
@@ -405,6 +490,7 @@ mod tests {
                 size: Some(3),
                 filename: "dup.txt".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -439,6 +525,7 @@ mod tests {
                 size: Some(4),
                 filename: "../escape.txt".to_owned(),
                 folder: folder.path().to_path_buf(),
+                cancel: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -448,5 +535,46 @@ mod tests {
 
         assert_eq!(path.parent().unwrap(), folder.path());
         assert_eq!(path.file_name().unwrap(), "escape.txt");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_the_transfer_and_removes_the_partial_file() {
+        let folder = tempfile::tempdir().unwrap();
+
+        // A server that accepts the connection and then holds it open without
+        // sending the rest, so the client blocks on the read until cancelled.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                let _held = socket;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        });
+
+        let (handle, signal) = cancel_channel();
+        // Trip the cancel a moment after the transfer is under way.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle.cancel();
+        });
+
+        let result = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(1_000_000),
+                filename: "big.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: Some(signal),
+                timeout: Duration::from_secs(30),
+            },
+            |_, _| {},
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), TransportError::Cancelled);
+        // The partial file is cleaned up, exactly as a failed transfer is.
+        assert!(!folder.path().join("big.bin").exists());
     }
 }

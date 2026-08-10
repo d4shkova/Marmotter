@@ -10,15 +10,31 @@
 //! and each call is forwarded to the front end as an event tagged with the
 //! transfer's id, so the row that started the download can show a bar.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
-use marmotter_transport::{dcc_download, DccDownloadOptions, DEFAULT_DCC_TIMEOUT};
+use marmotter_transport::{
+    dcc_cancel_channel, dcc_download, DccCancelHandle, DccDownloadOptions, DEFAULT_DCC_TIMEOUT,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 /// Event emitted as a download proceeds. Payload is [`DccProgress`].
 pub const DCC_PROGRESS_EVENT: &str = "marmotter://dcc-progress";
+
+/// The cancel handle of every transfer currently in flight, keyed by its id.
+///
+/// A download registers its handle here when it starts and removes it when it
+/// ends; `dcc_cancel_download` trips the matching one to stop a transfer the
+/// user has changed their mind about. A cancel for an id that is not present —
+/// a transfer that already finished, or a click that raced the registration —
+/// is simply a no-op.
+fn transfers() -> &'static Mutex<HashMap<String, DccCancelHandle>> {
+    static TRANSFERS: OnceLock<Mutex<HashMap<String, DccCancelHandle>>> = OnceLock::new();
+    TRANSFERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// What `dcc_download_file` accepts, mirroring `DccDownloadRequest` in the UI.
 #[derive(Debug, Deserialize)]
@@ -54,7 +70,16 @@ pub async fn dcc_download_file(
     let transfer_id = request.transfer_id;
     let emitter = app.clone();
 
-    let path = dcc_download(
+    // Register a cancel handle so `dcc_cancel_download` can reach this transfer
+    // by its id, and make sure it is removed however the download ends.
+    let (cancel_handle, cancel_signal) = dcc_cancel_channel();
+    transfers()
+        .lock()
+        .expect("the transfer registry lock was poisoned")
+        .insert(transfer_id.clone(), cancel_handle);
+    let _guard = TransferGuard(transfer_id.clone());
+
+    let result = dcc_download(
         DccDownloadOptions {
             host: request.host,
             port: request.port,
@@ -62,24 +87,55 @@ pub async fn dcc_download_file(
             filename: request.filename,
             folder: PathBuf::from(request.folder),
             timeout: DEFAULT_DCC_TIMEOUT,
+            cancel: Some(cancel_signal),
         },
-        move |received, total| {
-            // Best-effort: a dropped progress event only costs a bar that jumps,
-            // never the transfer itself.
-            let _ = emitter.emit(
-                DCC_PROGRESS_EVENT,
-                DccProgress {
-                    id: transfer_id.clone(),
-                    received,
-                    total,
-                },
-            );
+        {
+            let transfer_id = transfer_id.clone();
+            move |received, total| {
+                // Best-effort: a dropped progress event only costs a bar that
+                // jumps, never the transfer itself.
+                let _ = emitter.emit(
+                    DCC_PROGRESS_EVENT,
+                    DccProgress {
+                        id: transfer_id.clone(),
+                        received,
+                        total,
+                    },
+                );
+            }
         },
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await;
 
+    let path = result.map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Removes a transfer's cancel channel from the registry when its download ends,
+/// whichever way it ends — success, failure, or an early return — so the map
+/// does not accumulate senders for transfers that are long gone.
+struct TransferGuard(String);
+
+impl Drop for TransferGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = transfers().lock() {
+            map.remove(&self.0);
+        }
+    }
+}
+
+/// Cancels a download in flight by its transfer id.
+///
+/// Trips the cancel signal the transfer is waiting on, which unwinds it with a
+/// cancelled error and removes its half-written file. Unknown ids — a transfer
+/// that already finished, or a click that raced its start — are a no-op.
+#[tauri::command]
+pub fn dcc_cancel_download(transfer_id: String) {
+    if let Ok(map) = transfers().lock() {
+        if let Some(handle) = map.get(&transfer_id) {
+            handle.cancel();
+        }
+    }
 }
 
 /// Opens the platform's file manager on a downloaded file, selecting it where

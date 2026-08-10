@@ -48,6 +48,65 @@ export type DccStatus =
 export type DccOfferKind = 'dcc' | 'xdcc';
 
 /**
+ * Whether the user has acted on this row, rather than merely been shown it.
+ *
+ * A packlist channel offers thousands of files and only a handful are ever
+ * asked for, so the ones that were are pinned above the catalogue instead of
+ * being left to scroll away among everything the monitor happened to see.
+ */
+export function isTrackedTransfer(status: DccStatus): boolean {
+  return status !== 'available';
+}
+
+/**
+ * Whether a transfer is still running and would be lost if its row went away.
+ *
+ * Clearing the list keeps these: dropping the row of a file that is still
+ * arriving would leave it downloading with nothing to show it, and no way to
+ * stop it.
+ */
+export function isTransferInFlight(status: DccStatus): boolean {
+  return status === 'requested' || status === 'downloading';
+}
+
+/**
+ * What to do with a `DCC SEND` that did not answer a request still waiting in
+ * the queue but does match a file already on the list.
+ *
+ * `retry` — the row's last attempt failed and this is the serving bot's own
+ * re-offer, which is a fresh chance: connect again, at the address this offer
+ * carries. Serving bots re-send every few seconds precisely because the first
+ * connection often races their listening socket and is refused.
+ *
+ * `ignore` — a duplicate of a row that is mid-transfer, already saved, or still
+ * sitting there waiting for the user to start it; nothing to do.
+ *
+ * `record` — no such row: a genuinely new, unsolicited offer to list.
+ */
+export type DccReofferAction = 'retry' | 'ignore' | 'record';
+
+/**
+ * Decides how an incoming `DCC SEND` relates to the file monitor's rows.
+ *
+ * Pure so the matching rule can be reasoned about on its own: it is the one bit
+ * of the download flow where a wrong call either drops a file the user asked
+ * for or piles up duplicate rows. `existing` is the row that already matches the
+ * offer's sender and filename, if any.
+ */
+export function classifyDccReoffer(
+  existing: Pick<DccOfferRecord, 'status'> | undefined,
+  send: { readonly passive: boolean },
+): DccReofferAction {
+  if (existing === undefined) {
+    return 'record';
+  }
+  if (existing.status === 'failed' && !send.passive) {
+    return 'retry';
+  }
+  return 'ignore';
+}
+
+/**
  * A file the monitor has seen advertised, over a direct `DCC SEND` or an XDCC
  * pack listing.
  *
@@ -251,7 +310,14 @@ export interface ViewState {
    * in the total size when the transfer reports one the advertisement lacked.
    */
   setDccOfferProgress(id: string, received: number, total?: number): void;
-  /** Forgets every offer seen so far. */
+  /**
+   * Resets the list: forgets the whole observed catalogue along with the
+   * transfers that have finished, failed, or been saved.
+   *
+   * Transfers still running are kept, since they are the one thing that cannot
+   * be recovered by waiting for the next advertisement — the row is what shows
+   * the progress and carries the button that stops it.
+   */
   clearDccOffers(): void;
   /** Drops everything for a network that has been removed. */
   forgetNetwork(networkId: string): void;
@@ -477,7 +543,10 @@ export const useView = create<ViewState>((set, get) => ({
     }));
   },
 
-  clearDccOffers: () => set({ dccOffers: [] }),
+  clearDccOffers: () =>
+    set((current) => ({
+      dccOffers: current.dccOffers.filter((entry) => isTransferInFlight(entry.status)),
+    })),
 
   forgetNetwork(networkId) {
     set((current) => {

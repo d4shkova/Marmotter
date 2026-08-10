@@ -11,7 +11,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { DccCapability, DccDownloadRequest, DccProgress } from '@marmotter/ui';
+import type { DccCapability, DccDownloadRequest, DccProgress, DccTransfer } from '@marmotter/ui';
 
 const PROGRESS_EVENT = 'marmotter://dcc-progress';
 
@@ -34,34 +34,46 @@ export function createDesktopDcc(): DccCapability {
       return typeof chosen === 'string' ? chosen : undefined;
     },
 
-    async download(request: DccDownloadRequest, onProgress?: DccProgress): Promise<string> {
+    download(request: DccDownloadRequest, onProgress?: DccProgress): DccTransfer {
       // A per-transfer id ties the Rust side's progress events back to this
-      // call, so two downloads at once do not drive each other's bars.
+      // call, so two downloads at once do not drive each other's bars, and lets
+      // a cancel reach the right transfer.
       const transferId = crypto.randomUUID();
 
-      let unlisten = (): void => {};
-      if (onProgress !== undefined) {
-        unlisten = await listen<ProgressPayload>(PROGRESS_EVENT, (event) => {
-          if (event.payload.id === transferId) {
-            onProgress(event.payload.received, event.payload.total ?? undefined);
-          }
-        });
-      }
+      const done = (async (): Promise<string> => {
+        let unlisten = (): void => {};
+        if (onProgress !== undefined) {
+          unlisten = await listen<ProgressPayload>(PROGRESS_EVENT, (event) => {
+            if (event.payload.id === transferId) {
+              onProgress(event.payload.received, event.payload.total ?? undefined);
+            }
+          });
+        }
 
-      try {
-        return await invoke<string>('dcc_download_file', {
-          request: {
-            host: request.host,
-            port: request.port,
-            size: request.size ?? null,
-            filename: request.filename,
-            folder: request.folder,
-            transferId,
-          },
-        });
-      } finally {
-        unlisten();
-      }
+        try {
+          return await invoke<string>('dcc_download_file', {
+            request: {
+              host: request.host,
+              port: request.port,
+              size: request.size ?? null,
+              filename: request.filename,
+              folder: request.folder,
+              transferId,
+            },
+          });
+        } finally {
+          unlisten();
+        }
+      })();
+
+      return {
+        done,
+        cancel(): void {
+          // Best-effort: the Rust side no-ops an id it no longer holds, and the
+          // transfer's own rejection is what actually settles the row.
+          void invoke('dcc_cancel_download', { transferId }).catch(() => {});
+        },
+      };
     },
 
     async revealFile(path: string): Promise<void> {

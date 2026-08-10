@@ -5,13 +5,30 @@ import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
 import { Table, type Column } from '../primitives/Table.js';
 import { formatAge, formatBytes } from './dcc.js';
-import type { DccOfferRecord } from './view-store.js';
+import { isTrackedTransfer, isTransferInFlight, type DccOfferRecord } from './view-store.js';
+
+/**
+ * Where each state sits in the downloads tray.
+ *
+ * Arriving first, then waiting on a bot, then needing a retry, then done —
+ * roughly the order in which a person cares about them. `available` never
+ * appears here; those rows stay in the catalogue below.
+ */
+const TRAY_ORDER: Readonly<Record<DccOfferRecord['status'], number>> = {
+  downloading: 0,
+  requested: 1,
+  failed: 2,
+  downloaded: 3,
+  available: 4,
+};
 
 export interface DccBrowserProps {
   readonly offers: readonly DccOfferRecord[];
   /** Where files are written. When unset, downloads are blocked. */
   readonly downloadFolder: string | undefined;
   readonly onDownload: (offer: DccOfferRecord) => void;
+  /** Stops a download that is in flight, from the X beside its progress bar. */
+  readonly onCancel: (offer: DccOfferRecord) => void;
   /** Prompts for a download folder, for the case where none is set yet. */
   readonly onChooseFolder: () => void;
   /**
@@ -38,6 +55,7 @@ export function DccBrowser({
   offers,
   downloadFolder,
   onDownload,
+  onCancel,
   onChooseFolder,
   onReveal,
   onClear,
@@ -50,12 +68,29 @@ export function DccBrowser({
     direction: 'desc',
   });
 
+  // Rows the user has asked for are lifted out of the catalogue and pinned
+  // above it. On a packlist channel the monitor sees thousands of files and the
+  // handful actually being fetched would otherwise scroll away among them.
+  //
+  // Ordered by what wants attention rather than by when the file was seen: the
+  // transfers still running, then the ones that need a decision, then the ones
+  // already saved. The tray is capped, so what sits at its top is what a person
+  // sees without scrolling it.
+  const tracked = useMemo(
+    () =>
+      offers
+        .filter((offer) => isTrackedTransfer(offer.status))
+        .sort((a, b) => TRAY_ORDER[a.status] - TRAY_ORDER[b.status]),
+    [offers],
+  );
+
   const filtered = useMemo(() => {
+    const catalogue = offers.filter((offer) => !isTrackedTransfer(offer.status));
     const needle = query.trim().toLowerCase();
     if (needle === '') {
-      return offers;
+      return catalogue;
     }
-    return offers.filter(
+    return catalogue.filter(
       (offer) =>
         offer.filename.toLowerCase().includes(needle) || offer.from.toLowerCase().includes(needle),
     );
@@ -117,6 +152,7 @@ export function DccBrowser({
           offer={offer}
           disabled={downloadFolder === undefined}
           onDownload={onDownload}
+          onCancel={onCancel}
           {...(onReveal === undefined ? {} : { onReveal })}
         />
       ),
@@ -125,21 +161,69 @@ export function DccBrowser({
 
   return (
     <div className={className}>
-      {/* The search bar is pinned to the top of the scroll area: a file window
-          people scroll through a long catalogue in, so the way to narrow it has
-          to stay in reach rather than scrolling off with the first screenful. */}
-      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-[var(--separator)] bg-[var(--bg-base)]/90 px-4 py-3 [backdrop-filter:var(--blur-vibrancy)]">
-        <div className="flex-1">
-          <SearchField
-            label="Search files"
-            placeholder="Search by name or sender"
-            value={query}
-            onValueChange={setQuery}
-          />
+      {/* The search bar and the downloads tray are pinned to the top of the
+          scroll area together: a file window people scroll through a long
+          catalogue in, so both the way to narrow it and the files they actually
+          asked for have to stay in reach rather than scrolling off with the
+          first screenful. */}
+      <div className="sticky top-0 z-10 border-b border-[var(--separator)] bg-[var(--bg-base)]/90 [backdrop-filter:var(--blur-vibrancy)]">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <div className="flex-1">
+            <SearchField
+              label="Search files"
+              placeholder="Search by name or sender"
+              value={query}
+              onValueChange={setQuery}
+            />
+          </div>
+          {/* Clearing leaves running transfers alone, so with nothing but those
+              on the list there is nothing for the button to do. */}
+          <Button
+            size="small"
+            variant="secondary"
+            disabled={!offers.some((offer) => !isTransferInFlight(offer.status))}
+            onClick={onClear}
+          >
+            Clear
+          </Button>
         </div>
-        <Button size="small" variant="secondary" disabled={offers.length === 0} onClick={onClear}>
-          Clear
-        </Button>
+
+        {tracked.length === 0 ? null : (
+          <section
+            aria-label="Your downloads"
+            // Capped and scrollable: a queue of many transfers must not grow
+            // until it has swallowed the catalogue underneath it.
+            className="max-h-56 overflow-y-auto border-t border-[var(--separator)] px-4 py-2"
+          >
+            <h2 className="pb-1 text-caption-2 text-[var(--label-tertiary)]">
+              {tracked.length === 1 ? '1 download' : `${tracked.length} downloads`}
+            </h2>
+            <ul className="flex flex-col">
+              {tracked.map((offer) => (
+                <li
+                  key={offer.id}
+                  className="flex items-center justify-between gap-3 border-b border-[var(--separator)] py-1.5 last:border-b-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-mono text-footnote text-[var(--label-primary)]">
+                      {offer.filename}
+                    </p>
+                    <p className="truncate text-caption-2 text-[var(--label-tertiary)]">
+                      {formatBytes(offer.size)} · {offer.from} · {offer.networkName}
+                    </p>
+                  </div>
+                  <DownloadCell
+                    offer={offer}
+                    disabled={downloadFolder === undefined}
+                    onDownload={onDownload}
+                    onCancel={onCancel}
+                    {...(onReveal === undefined ? {} : { onReveal })}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 px-4 py-4">
@@ -172,14 +256,21 @@ export function DccBrowser({
             )
           }
           empty={
-            <EmptyState
-              title={offers.length === 0 ? 'No files offered yet' : 'No matches'}
-              description={
-                offers.length === 0
-                  ? 'When someone offers a file over DCC, it shows up here.'
-                  : 'No files match your search.'
-              }
-            />
+            offers.length === 0 ? (
+              <EmptyState
+                title="No files offered yet"
+                description="When someone offers a file over DCC, it shows up here."
+              />
+            ) : tracked.length === offers.length ? (
+              // Everything on offer is up in the downloads tray, which is not
+              // the same as the search having found nothing.
+              <EmptyState
+                title="Nothing else on offer"
+                description="Every file offered so far is in your downloads above."
+              />
+            ) : (
+              <EmptyState title="No matches" description="No files match your search." />
+            )
           }
         />
       </div>
@@ -187,37 +278,63 @@ export function DccBrowser({
   );
 }
 
-/** A slim progress bar with a byte-count label, shown while a file downloads. */
+/**
+ * A slim progress bar with a byte-count label, shown while a file downloads.
+ *
+ * A red cancel button sits to the right of the bar. Red is the system's one
+ * alarm colour, reserved for destructive actions — stopping a transfer part-way
+ * and discarding what has arrived is exactly that — so it reads the same here as
+ * everywhere else the colour appears.
+ */
 function DownloadProgress({
   received,
   total,
+  filename,
+  onCancel,
 }: {
   received: number | undefined;
   total: number | undefined;
+  filename: string;
+  onCancel: () => void;
 }): ReactNode {
   const done = received ?? 0;
   const pct =
     total !== undefined && total > 0 ? Math.min(100, Math.round((done / total) * 100)) : undefined;
 
   return (
-    <div className="flex w-32 flex-col items-end gap-1">
-      <div
-        role="progressbar"
-        aria-label="Download progress"
-        aria-valuemin={0}
-        aria-valuemax={total ?? undefined}
-        aria-valuenow={pct === undefined ? undefined : done}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--fill-tertiary)]"
-      >
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1.5">
         <div
-          className={cn(
-            'h-full rounded-full bg-[var(--accent)]',
-            // With no known total the bar cannot fill to a fraction, so it sits
-            // partly filled to read as "in progress" rather than "stuck at 0".
-            pct === undefined && 'animate-pulse',
-          )}
-          style={{ width: pct === undefined ? '40%' : `${pct}%` }}
-        />
+          role="progressbar"
+          aria-label="Download progress"
+          aria-valuemin={0}
+          aria-valuemax={total ?? undefined}
+          aria-valuenow={pct === undefined ? undefined : done}
+          className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--fill-tertiary)]"
+        >
+          <div
+            className={cn(
+              'h-full rounded-full bg-[var(--accent)]',
+              // With no known total the bar cannot fill to a fraction, so it sits
+              // partly filled to read as "in progress" rather than "stuck at 0".
+              pct === undefined && 'animate-pulse',
+            )}
+            style={{ width: pct === undefined ? '40%' : `${pct}%` }}
+          />
+        </div>
+        <button
+          type="button"
+          aria-label={`Cancel downloading ${filename}`}
+          title="Cancel download"
+          onClick={onCancel}
+          className="grid size-5 shrink-0 place-items-center rounded-control text-[var(--danger)] hover:bg-[var(--danger-muted)]"
+        >
+          <span aria-hidden="true">
+            <svg viewBox="0 0 16 16" className="size-3.5 fill-none stroke-current stroke-[1.75]">
+              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" strokeLinecap="round" />
+            </svg>
+          </span>
+        </button>
       </div>
       <span className="text-caption-2 text-[var(--label-tertiary)]">
         {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
@@ -231,11 +348,13 @@ function DownloadCell({
   offer,
   disabled,
   onDownload,
+  onCancel,
   onReveal,
 }: {
   offer: DccOfferRecord;
   disabled: boolean;
   onDownload: (offer: DccOfferRecord) => void;
+  onCancel: (offer: DccOfferRecord) => void;
   onReveal?: (offer: DccOfferRecord) => void;
 }): ReactNode {
   if (offer.passive) {
@@ -249,7 +368,14 @@ function DownloadCell({
         </Button>
       );
     case 'downloading':
-      return <DownloadProgress received={offer.received} total={offer.size} />;
+      return (
+        <DownloadProgress
+          received={offer.received}
+          total={offer.size}
+          filename={offer.filename}
+          onCancel={() => onCancel(offer)}
+        />
+      );
     case 'downloaded':
       // "Saved", with a folder button that opens the file manager on the file.
       // The button only appears where the platform can reveal it and where a

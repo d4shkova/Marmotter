@@ -22,6 +22,8 @@ pub enum TransportError {
     LineTooLong,
     /// The connection has already been closed.
     Closed,
+    /// The operation was cancelled by the user before it finished.
+    Cancelled,
 }
 
 impl fmt::Display for TransportError {
@@ -36,6 +38,7 @@ impl fmt::Display for TransportError {
             }
             Self::LineTooLong => write!(f, "the server sent an oversized line"),
             Self::Closed => write!(f, "the connection is closed"),
+            Self::Cancelled => write!(f, "the download was cancelled"),
         }
     }
 }
@@ -56,6 +59,7 @@ impl TransportError {
             Self::ClientCertificate(_) => "client-certificate",
             Self::LineTooLong => "line-too-long",
             Self::Closed => "closed",
+            Self::Cancelled => "cancelled",
         }
     }
 }

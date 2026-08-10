@@ -1,6 +1,6 @@
 import type { DccSend, XdccPack } from '@marmotter/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useView } from './view-store.js';
+import { classifyDccReoffer, useView } from './view-store.js';
 
 const send: DccSend = {
   filename: 'holiday.jpg',
@@ -93,10 +93,41 @@ describe('the DCC monitor store', () => {
     expect(useView.getState().dccOffers[0]?.size).toBe(4000);
   });
 
-  it('clears every offer on request', () => {
+  it('clears the observed catalogue on request', () => {
     useView.getState().recordDccOffer(offer());
     useView.getState().clearDccOffers();
     expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('clears files already downloaded along with the catalogue', () => {
+    useView.getState().recordDccOffer(offer());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferStatus(id, { status: 'downloaded', savedPath: '/tmp/dl/x' });
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'other.zip' } }));
+
+    useView.getState().clearDccOffers();
+    expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('keeps a transfer still running, which the row is the only way to stop', () => {
+    useView.getState().recordDccOffer(offer());
+    const running = useView.getState().dccOffers[0]!.id;
+    useView.getState().setDccOfferProgress(running, 500, 4000);
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'other.zip' } }));
+
+    useView.getState().clearDccOffers();
+    const remaining = useView.getState().dccOffers;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe(running);
+    expect(remaining[0]?.status).toBe('downloading');
+  });
+
+  it('keeps a requested pack waiting on its bot', () => {
+    useView.getState().recordDccOffer(offer());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferStatus(id, { status: 'requested' });
+    useView.getState().clearDccOffers();
+    expect(useView.getState().dccOffers).toHaveLength(1);
   });
 
   it("drops a removed network's offers", () => {
@@ -179,5 +210,28 @@ describe('the XDCC side of the monitor', () => {
       at: 3_000,
     });
     expect(useView.getState().dccOffers).toHaveLength(2);
+  });
+});
+
+describe('classifying a serving bot re-offer', () => {
+  const active = { passive: false };
+
+  it('records an offer that matches no existing row', () => {
+    expect(classifyDccReoffer(undefined, active)).toBe('record');
+  });
+
+  it('retries a row whose last attempt failed, when the re-offer is fetchable', () => {
+    expect(classifyDccReoffer({ status: 'failed' }, active)).toBe('retry');
+  });
+
+  it('does not retry a failed row from a passive re-offer it cannot fetch', () => {
+    expect(classifyDccReoffer({ status: 'failed' }, { passive: true })).toBe('ignore');
+  });
+
+  it('ignores a re-offer of a row that is mid-transfer, saved, or still waiting', () => {
+    expect(classifyDccReoffer({ status: 'downloading' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
+    expect(classifyDccReoffer({ status: 'requested' }, active)).toBe('ignore');
   });
 });
