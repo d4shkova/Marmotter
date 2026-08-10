@@ -93,10 +93,41 @@ describe('the DCC monitor store', () => {
     expect(useView.getState().dccOffers[0]?.size).toBe(4000);
   });
 
-  it('clears every offer on request', () => {
+  it('clears the observed catalogue on request', () => {
     useView.getState().recordDccOffer(offer());
     useView.getState().clearDccOffers();
     expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('clears files already downloaded along with the catalogue', () => {
+    useView.getState().recordDccOffer(offer());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferStatus(id, { status: 'downloaded', savedPath: '/tmp/dl/x' });
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'other.zip' } }));
+
+    useView.getState().clearDccOffers();
+    expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('keeps a transfer still running, which the row is the only way to stop', () => {
+    useView.getState().recordDccOffer(offer());
+    const running = useView.getState().dccOffers[0]!.id;
+    useView.getState().setDccOfferProgress(running, 500, 4000);
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'other.zip' } }));
+
+    useView.getState().clearDccOffers();
+    const remaining = useView.getState().dccOffers;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe(running);
+    expect(remaining[0]?.status).toBe('downloading');
+  });
+
+  it('keeps a requested pack waiting on its bot', () => {
+    useView.getState().recordDccOffer(offer());
+    const { id } = useView.getState().dccOffers[0]!;
+    useView.getState().setDccOfferStatus(id, { status: 'requested' });
+    useView.getState().clearDccOffers();
+    expect(useView.getState().dccOffers).toHaveLength(1);
   });
 
   it("drops a removed network's offers", () => {
