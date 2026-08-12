@@ -6,6 +6,7 @@
 pub mod dcc;
 pub mod logstore;
 pub mod opener;
+pub mod prefs;
 pub mod transport;
 
 /// Builds and runs the Tauri application.
@@ -43,6 +44,8 @@ pub fn run() {
             logstore::log_write,
             logstore::log_delete,
             logstore::log_reveal,
+            prefs::prefs_read,
+            prefs::prefs_write,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marmotter");

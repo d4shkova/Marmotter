@@ -11,12 +11,15 @@ import {
 } from '@marmotter/client';
 import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
 import { effectivePolicy, retentionCutoff } from '@marmotter/client';
-import type {
-  LogLocation,
-  LogStore,
-  LoggingPolicy,
-  NetworkProfile,
-  Transport,
+import {
+  EMPTY_IDENTITY,
+  type DefaultIdentity,
+  type LogLocation,
+  type LogStore,
+  type LoggingPolicy,
+  type NetworkProfile,
+  type PreferenceStore,
+  type Transport,
 } from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
@@ -49,6 +52,7 @@ import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
 import { LogSearch } from './LogSearch.js';
+import { FirstRun } from './FirstRun.js';
 import { useMessageLogging, usePurge } from './logging.js';
 import {
   type ServiceName,
@@ -156,6 +160,15 @@ export interface MarmotterProps {
   readonly chooseLogFolder?: () => Promise<string | undefined>;
   /** Opens the platform save dialog for an export, returning the chosen path. */
   readonly chooseExportFile?: () => Promise<string | undefined>;
+  /**
+   * Where settings are kept between launches.
+   *
+   * Desktop passes a file-backed one. Web passes nothing and the identity given
+   * at first run lives in memory for the session — which still saves typing
+   * across several networks added in one sitting, and keeps nothing after the
+   * tab closes.
+   */
+  readonly preferences?: PreferenceStore;
 }
 
 /** The whole client. */
@@ -169,6 +182,7 @@ export function Marmotter({
   createLogStore,
   chooseLogFolder,
   chooseExportFile,
+  preferences,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -199,6 +213,18 @@ export function Marmotter({
   const [logLocation, setLogLocation] = useState<LogLocation | undefined>(undefined);
   /** The store itself, rebuilt when the format or the folder changes. */
   const [logs, setLogs] = useState<LogStore | undefined>(undefined);
+  /**
+   * The name and fallbacks given at first run.
+   *
+   * Held here rather than in the view store because it is the one piece of
+   * interface state a platform may persist, and the store's own comment says
+   * nothing in it is worth persisting. Undefined means "not yet loaded", which
+   * is different from "loaded and empty" — the setup screen must not flash up
+   * before the file has been read.
+   */
+  const [identity, setIdentity] = useState<DefaultIdentity | undefined>(undefined);
+  /** Whether the setup screen is open, either at first run or from Settings. */
+  const [settingUp, setSettingUp] = useState(false);
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -379,6 +405,55 @@ export function Marmotter({
   const permission = useRef<boolean | undefined>(undefined);
   /** Whether that question is currently outstanding, so it is only asked once. */
   const asking = useRef(false);
+
+  // Loading the saved identity, and asking for one when there is none.
+  //
+  // On a platform with no store this resolves immediately to nothing, and the
+  // setup screen opens once per session — which still saves typing across
+  // several networks added in one sitting.
+  useEffect(() => {
+    let live = true;
+    const finish = (loaded: DefaultIdentity): void => {
+      if (!live) {
+        return;
+      }
+      setIdentity(loaded);
+      // Asked only when there is no name yet. Somebody who skipped it is not
+      // asked again this session; they get the form on the next launch, or can
+      // fill it in from Settings, which is less rude than a screen that will
+      // not take no for an answer.
+      if (loaded.nick === '') {
+        setSettingUp(true);
+      }
+    };
+
+    if (preferences === undefined) {
+      finish(EMPTY_IDENTITY);
+      return () => {
+        live = false;
+      };
+    }
+
+    void preferences
+      .load()
+      .then((stored) => finish(stored?.identity ?? EMPTY_IDENTITY))
+      // A settings file that cannot be read starts blank rather than stopping
+      // the client. Nothing in it is needed to connect.
+      .catch(() => finish(EMPTY_IDENTITY));
+
+    return () => {
+      live = false;
+    };
+  }, [preferences]);
+
+  /** Saves the identity, and carries on if the platform cannot keep it. */
+  const saveIdentity = (next: DefaultIdentity): void => {
+    setIdentity(next);
+    setSettingUp(false);
+    void preferences?.save({ identity: next }).catch((error: unknown) => {
+      toast(`Could not save your details. ${String(error)}`, 'error');
+    });
+  };
 
   // ---------------------------------------------------------------- logging
   //
@@ -1470,6 +1545,9 @@ export function Marmotter({
           onCtcpChange={view.updateCtcp}
           userOptions={view.userOptions}
           onUserOptionsChange={view.updateUserOptions}
+          {...(identity === undefined
+            ? {}
+            : { identity: { nick: identity.nick, onEdit: () => setSettingUp(true) } })}
           {...(logs === undefined
             ? {}
             : {
@@ -1687,7 +1765,12 @@ export function Marmotter({
         main={main}
       />
 
-      <AddNetwork open={adding} onClose={() => setAdding(false)} onAdd={addNetwork} />
+      <AddNetwork
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdd={addNetwork}
+        {...(identity === undefined ? {} : { defaultIdentity: identity })}
+      />
 
       {editingProfile === undefined ? null : (
         <AddNetwork
@@ -1723,6 +1806,19 @@ export function Marmotter({
           supportsSecret={creatingNetwork.support.chanModes.flag.includes('s')}
           onCreate={createChannel}
           onCancel={() => setCreatingOn(undefined)}
+        />
+      )}
+
+      {/* The first thing Marmotter asks, and the thing Settings reopens. Held
+          back until the saved identity has been read, so it does not flash up
+          in front of somebody who answered it last week. */}
+      {identity === undefined ? null : (
+        <FirstRun
+          open={settingUp}
+          initial={identity}
+          confirmLabel={identity.nick === '' ? 'Continue' : 'Save'}
+          onDone={saveIdentity}
+          onSkip={() => setSettingUp(false)}
         />
       )}
 

@@ -12,11 +12,12 @@ import {
   applyISupport,
   makeSource,
 } from '@marmotter/protocol';
-import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import { EMPTY_IDENTITY, defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { AccountMenu } from './AccountMenu.js';
+import { FirstRun } from './FirstRun.js';
 import { LogSearch } from './LogSearch.js';
 import { LoggingSettings } from './LoggingSettings.js';
 import { AccountPanel } from './AccountPanel.js';
@@ -880,7 +881,7 @@ export const TheWholeShell: StoryObj = {
  * network — so this is exactly what somebody sees the first time they start the
  * app, which is the state worth being able to look at.
  */
-export const FirstRun: StoryObj = {
+export const NoNetworksYet: StoryObj = {
   parameters: { layout: 'fullscreen' },
   render: () => (
     <div className="h-[36rem] overflow-hidden rounded-card border border-[var(--separator)]">
@@ -1098,4 +1099,20 @@ export const SearchingTheLogs: StoryObj = {
       />
     </div>
   ),
+};
+
+/**
+ * The first thing Marmotter asks: a name, two fallbacks, and optionally who you
+ * are. Shown blank, which is how somebody meets it.
+ */
+export const SettingUpYourName: StoryObj = {
+  render: function SettingUpYourName() {
+    const [identity, setIdentity] = useState(EMPTY_IDENTITY);
+
+    return (
+      <div className="h-[36rem]">
+        <FirstRun open initial={identity} onDone={setIdentity} onSkip={() => {}} />
+      </div>
+    );
+  },
 };

@@ -32,6 +32,8 @@ export interface SettingsProps {
    * switched on in a browser tab. It cannot.
    */
   readonly logging?: LoggingSettingsProps;
+  /** The name new networks start from, and a way back to the form that set it. */
+  readonly identity?: { readonly nick: string; readonly onEdit: () => void };
   /**
    * Whether this platform can run the DCC file monitor at all.
    *
@@ -118,6 +120,7 @@ export function Settings({
   userOptions,
   onUserOptionsChange,
   logging,
+  identity,
   dccAvailable,
   onChooseDownloadFolder,
   onReconnect,
@@ -131,6 +134,23 @@ export function Settings({
     <div className={className} style={SETTINGS_TEXT_SCALE}>
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6">
         <h1 className="text-title-2 font-bold text-[var(--label-primary)]">Settings</h1>
+
+        {identity === undefined ? null : (
+          <ListGroup
+            header="You"
+            footer="The name new networks start from. Each network can still use a different one."
+          >
+            <ListRow
+              title="Your name"
+              subtitle={identity.nick === '' ? 'Not set' : identity.nick}
+              trailing={
+                <Button size="small" onClick={identity.onEdit}>
+                  {identity.nick === '' ? 'Set' : 'Change'}
+                </Button>
+              }
+            />
+          </ListGroup>
+        )}
 
         <ListGroup
           header="Networks"

@@ -5,7 +5,13 @@ import type {
   ServerEndpoint,
   TlsConfig,
 } from '@marmotter/shared';
-import { NETWORKS, defaultLoggingPolicy, findNetwork } from '@marmotter/shared';
+import {
+  EMPTY_IDENTITY,
+  NETWORKS,
+  type DefaultIdentity,
+  findNetwork,
+  identityFrom,
+} from '@marmotter/shared';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../primitives/Button.js';
 import { RadioGroup } from '../primitives/Radio.js';
@@ -121,6 +127,14 @@ export interface AddNetworkProps {
    * cannot quietly discard the rest of somebody's setup.
    */
   readonly editing?: NetworkProfile;
+  /**
+   * The name and fallbacks the user gave once, at first run.
+   *
+   * Fills the nick field on a new network so it is not typed again per network.
+   * The field stays editable: one network wanting a different name is ordinary,
+   * and the fallbacks and real name still come from here.
+   */
+  readonly defaultIdentity?: DefaultIdentity;
   /** Generates the profile ID. Injected so tests are deterministic. */
   readonly newId?: () => string;
 }
@@ -135,7 +149,14 @@ export interface AddNetworkProps {
  * the password, because that is the consequence and nobody should have to
  * already know it.
  */
-export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkProps): ReactNode {
+export function AddNetwork({
+  open,
+  onClose,
+  onAdd,
+  editing,
+  defaultIdentity = EMPTY_IDENTITY,
+  newId,
+}: AddNetworkProps): ReactNode {
   const [choice, setChoice] = useState<string>('libera-chat');
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
@@ -175,7 +196,10 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
       setHost('');
       setPort(String(PORT_FOR.encrypted));
       setPortEdited(false);
-      setNick('');
+      // Starts from the name given at first run, so the common case is one
+      // fewer field to fill in. Still editable: a different name on one
+      // network is ordinary.
+      setNick(defaultIdentity.nick);
       setSecurity('encrypted');
       setCertAccepted(false);
       setSocketUrl('');
@@ -202,7 +226,7 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     setAccount(accountOf(editing.auth));
     setPasswordSaved(hasSecret(secretOf(editing.auth)));
     setOperatorCommands(editing.operatorCommands === true);
-  }, [open, editing]);
+  }, [open, editing, defaultIdentity.nick]);
 
   const chosen = findNetwork(choice);
   // An edit always shows the fields directly: the directory is a shortcut for
@@ -265,7 +289,9 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     connectCommands: editing?.connectCommands ?? [],
     encoding: editing?.encoding ?? 'utf-8',
     autoReconnect: editing?.autoReconnect ?? true,
-    logging: editing?.logging ?? defaultLoggingPolicy,
+    // Absent means "follow the global logging policy", which is what a network
+    // nobody has given its own policy should do.
+    ...(editing?.logging === undefined ? {} : { logging: editing.logging }),
     operatorCommands,
   };
 
@@ -280,13 +306,10 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
   const identityFor = (chosenNick: string): NetworkProfile['identity'] => {
     const derived = [`${chosenNick}_`, `${chosenNick}__`];
     if (editing === undefined) {
-      return {
-        nick: chosenNick,
-        // A second and third try, so a taken name does not stop the connection.
-        altNicks: derived,
-        username: chosenNick,
-        realname: chosenNick,
-      };
+      // A new network starts from what was given at first run: the fallbacks
+      // and the real name come from there, and only the name itself is what
+      // this form may have changed.
+      return identityFrom(defaultIdentity, chosenNick);
     }
     const previous = editing.identity;
     const wasGenerated =
@@ -528,7 +551,11 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
           value={nick}
           placeholder="marmot"
           onChange={(event) => setNick(event.target.value)}
-          hint="Other people see this. You can change it later."
+          hint={
+            defaultIdentity.nick !== '' && nick === defaultIdentity.nick
+              ? 'Other people see this. Change it to use a different name here only.'
+              : 'Other people see this. You can change it later.'
+          }
         />
 
         <RadioGroup

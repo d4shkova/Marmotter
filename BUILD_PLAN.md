@@ -482,6 +482,66 @@ human sentence, not a numeric — assert this in tests.
 **Acceptance:** Logs write, purge on schedule, export correctly, and search
 returns accurate results across networks. The web bundle test passes.
 
+> **Phase 7 complete, 2026-08-12.** Both formats, the retention sweep, the
+> per-network overrides, open-folder, export and full-text search all exist, and
+> the web-bundle test passes.
+>
+> **The store is an interface, and web has no implementation.** `LogStore` lives
+> in `packages/shared` alongside `Transport`, and the browser build is passed
+> nothing. That absence *is* the guarantee CLAUDE.md asks for: there is no
+> implementation to import, so there is no path by which message content could
+> be written. A runtime `if (platform === 'web')` would have been a promise; this
+> is a structure, and the acceptance test checks the structure held.
+>
+> **The acceptance test reads the real bundle.** It runs the production Vite
+> build and scans the emitted JavaScript for `localStorage`, `sessionStorage`,
+> `indexedDB`, `openDatabase`, the desktop store's own command names, a service
+> worker registration and a cookie write — plus one assertion that the bundle
+> still contains the client, so deleting the app would not make the rest pass. A
+> source-level check of `apps/web` would have missed a dependency three levels
+> down reaching for `localStorage`, which would be as much of a breach.
+>
+> **Every decision is pure; the stores only sequence file operations.** Whether
+> a message is logged, what the retention cutoff is, how an override folds into
+> the global policy, what a line looks like and how it reads back are all in
+> `packages/client/src/logging`. Rust owns file handles and nothing else, and
+> refuses a path that climbs out of the log folder — the front end builds those
+> names from channel names, and a channel may be called `../../../etc/passwd`.
+>
+> Five things worth recording, each a decision rather than a transcription:
+>
+> - **A conversation seen for the first time starts at its end.** A
+>   `draft/chathistory` backfill is the server handing over what was said before
+>   logging was switched on, and writing it would be inventing a log the user
+>   never kept. The place is kept while logging is off too, so switching it on
+>   does not flush the backlog already sitting in the buffer.
+> - **A per-network override cannot outlive the global switch.** Somebody
+>   reaching for "stop logging" means everywhere, so the merge ANDs `enabled`.
+>   This is why **`NetworkProfile.logging` became optional**, which is a
+>   deviation from CLAUDE.md's schema: "per-network overrides" needs a way to say
+>   "no override", and a required field can only say it by carrying a copy of the
+>   global policy that then silently stops tracking it. Absent means inherit.
+> - **Plaintext is HexChat's layout because of the tools, not nostalgia.**
+>   Somebody arriving with years of logs already has something they read them
+>   with. The format carries no year, which is HexChat's; a line stamped later
+>   than the file's own modification time is read as the year before, so a
+>   December line read in January lands in the past rather than the future.
+> - **Search terms are quoted into FTS5.** Its query language reads `-`, `*` and
+>   `:` as operators, and somebody typing `foo-bar` means the text — an unquoted
+>   term silently searches for "foo NOT bar" and returns a confidently wrong
+>   answer.
+> - **Several masks go out as one MODE line each** — unrelated to logging, but
+>   the same class of bug: how many parameters a MODE may carry differs by
+>   network, and a truncated line does half of what was asked without saying so.
+>
+> **A first-run identity setup landed alongside**, because Phase 7's storage is
+> what it needed. mIRC opens on this and Marmotter did not, so a third network
+> meant typing the same nick a third time. Name, two fallbacks, and an optional
+> real name and email; kept in a JSON file in the app data folder, which holds no
+> secrets — passwords still resolve against the keychain through a `SecretRef`.
+> The two optional fields say who can see them, because "Full name" reads as
+> private and `WHOIS` hands it to any stranger who asks.
+
 ---
 
 ## Phase 8 — Web app

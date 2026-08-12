@@ -30,6 +30,7 @@ import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
+import { FirstRun } from './app/FirstRun.js';
 import { LogSearch } from './app/LogSearch.js';
 import { LoggingSettings } from './app/LoggingSettings.js';
 import { Settings } from './app/Settings.js';
@@ -454,6 +455,7 @@ describe('every component passes axe', () => {
       />,
     ],
     ['RawLog', <RawLog key="rl" network={networkFixture()} onCopy={noop} />],
+    ['FirstRun', <FirstRun key="fr" open onDone={noop} onSkip={noop} />],
     [
       'LoggingSettings',
       <LoggingSettings
