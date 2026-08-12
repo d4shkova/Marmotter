@@ -18,6 +18,10 @@ marmotter-transport = { path = "../../../crates/marmotter-transport" }
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
+# The local log database. CLAUDE.md names this plugin for the job, so the
+# schema and every query live in TypeScript where they can be tested, and Rust
+# stays the thing that owns the file handle.
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 # Opening a link in the platform's browser. Worth a dependency rather than a
 # hand-rolled subprocess: on Windows this is `ShellExecuteW`, the API the

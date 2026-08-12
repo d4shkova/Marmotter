@@ -12,5 +12,6 @@
 export type { CloseReason, ConnectOptions, Transport, Unsubscribe } from '@marmotter/shared';
 export * from './transport/index.js';
 export * from './state/index.js';
+export * from './logging/index.js';
 export * from './session.js';
 export * from './store.js';
