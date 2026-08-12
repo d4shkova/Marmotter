@@ -124,12 +124,16 @@ describe('the DCC monitor store', () => {
     expect(remaining[0]?.status).toBe('downloading');
   });
 
-  it('keeps a requested pack waiting on its bot', () => {
+  it('clears a requested pack, which it used to keep waiting on its bot for ever', () => {
+    // This deliberately reverses an earlier decision. A `requested` row is a
+    // message sent to a bot, not a running transfer — there is no socket to
+    // orphan — and keeping it made a request that went unanswered impossible to
+    // shift: no control on the row, and Clear passed over it every time.
     useView.getState().recordDccOffer(offer());
     const { id } = useView.getState().dccOffers[0]!;
     useView.getState().setDccOfferStatus(id, { status: 'requested' });
     useView.getState().clearDccOffers();
-    expect(useView.getState().dccOffers).toHaveLength(1);
+    expect(useView.getState().dccOffers).toHaveLength(0);
   });
 
   it("drops a removed network's offers", () => {
@@ -235,5 +239,70 @@ describe('classifying a serving bot re-offer', () => {
     expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'requested' }, active)).toBe('ignore');
+  });
+});
+
+describe('getting rid of a row', () => {
+  it('removes one whatever state it is in', () => {
+    for (const status of [
+      'available',
+      'requested',
+      'downloading',
+      'downloaded',
+      'failed',
+    ] as const) {
+      useView.setState({ dccOffers: [] });
+      useView.getState().recordDccOffer(offer());
+      const id = useView.getState().dccOffers[0]?.id ?? '';
+      useView.getState().setDccOfferStatus(id, { status });
+
+      useView.getState().removeDccOffer(id);
+      expect(useView.getState().dccOffers, status).toHaveLength(0);
+    }
+  });
+
+  it('leaves the other rows alone', () => {
+    useView.setState({ dccOffers: [] });
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'one.zip' } }));
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'two.zip' } }));
+    const first = useView.getState().dccOffers[0]?.id ?? '';
+
+    useView.getState().removeDccOffer(first);
+
+    expect(useView.getState().dccOffers.map((entry) => entry.filename)).toEqual(['two.zip']);
+  });
+
+  it('does nothing for an id that is not there', () => {
+    useView.setState({ dccOffers: [] });
+    useView.getState().recordDccOffer(offer());
+    useView.getState().removeDccOffer('not-a-row');
+    expect(useView.getState().dccOffers).toHaveLength(1);
+  });
+
+  it('clears a pack the bot never answered, which it used to keep for ever', () => {
+    // `requested` is a message sent to a bot, not a running transfer. Treating
+    // it as in flight left the row pinned to the top with no control on it and
+    // surviving every Clear.
+    useView.setState({ dccOffers: [] });
+    useView.getState().recordDccOffer(offer());
+    const id = useView.getState().dccOffers[0]?.id ?? '';
+    useView.getState().setDccOfferStatus(id, { status: 'requested' });
+
+    useView.getState().clearDccOffers();
+
+    expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('still keeps a download that is actually running', () => {
+    // The reason Clear ever kept anything: dropping the row of a live transfer
+    // leaves the socket running with nothing on screen to stop it.
+    useView.setState({ dccOffers: [] });
+    useView.getState().recordDccOffer(offer());
+    const id = useView.getState().dccOffers[0]?.id ?? '';
+    useView.getState().setDccOfferStatus(id, { status: 'downloading' });
+
+    useView.getState().clearDccOffers();
+
+    expect(useView.getState().dccOffers).toHaveLength(1);
   });
 });

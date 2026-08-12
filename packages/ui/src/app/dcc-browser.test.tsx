@@ -36,6 +36,7 @@ describe('DccBrowser download controls', () => {
         onCancel={onCancel}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -70,6 +71,7 @@ describe('DccBrowser download controls', () => {
         onCancel={noop}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -93,6 +95,7 @@ describe('DccBrowser download controls', () => {
         onCancel={noop}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -116,6 +119,7 @@ describe('DccBrowser download controls', () => {
         onCancel={noop}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -139,6 +143,7 @@ describe('DccBrowser download controls', () => {
         onCancel={noop}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -168,6 +173,7 @@ describe('DccBrowser download controls', () => {
         onCancel={noop}
         onChooseFolder={noop}
         onClear={noop}
+        onDismiss={noop}
         now={2_000}
       />,
     );
@@ -188,11 +194,84 @@ describe('DccBrowser download controls', () => {
           onCancel={noop}
           onChooseFolder={noop}
           onClear={noop}
+          onDismiss={noop}
           now={2_000}
         />,
       );
       expect(screen.queryByRole('button', { name: /Cancel downloading/ })).toBeNull();
       cleanup();
     }
+  });
+});
+
+describe('getting a row off the list', () => {
+  const render_ = (offers: DccOfferRecord[], onDismiss: () => void) =>
+    render(
+      <DccBrowser
+        offers={offers}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={onDismiss}
+        now={2_000}
+      />,
+    );
+
+  it('offers a way out of a pack a bot never answered', () => {
+    // `requested` is the state with no other control on it: the download button
+    // is replaced by a disabled "Requested", and there is nothing to cancel
+    // because nothing is running. Without this the row pinned itself to the top
+    // of the list for good.
+    const onDismiss = vi.fn();
+    render_([offer({ status: 'requested', filename: 'holiday.zip' })], onDismiss);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove holiday.zip from the list' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers it in every other tracked state too', () => {
+    for (const status of ['downloading', 'downloaded', 'failed'] as const) {
+      const onDismiss = vi.fn();
+      render_([offer({ status, filename: 'holiday.zip' })], onDismiss);
+      expect(
+        screen.getAllByRole('button', { name: /holiday\.zip.*from the list/ }).length,
+        status,
+      ).toBeGreaterThan(0);
+      cleanup();
+    }
+  });
+
+  it('says it stops the transfer when that is what it will do', () => {
+    // Removing a running download cancels it. Saying only "remove from the
+    // list" there would understate what the button does.
+    const onDismiss = vi.fn();
+    render_([offer({ status: 'downloading', filename: 'holiday.zip' })], onDismiss);
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Stop downloading holiday.zip and remove it from the list',
+      }),
+    ).toBeDefined();
+  });
+
+  it('is not confused with the cancel button beside it', () => {
+    // A downloading row carries both. They must not be the same control twice.
+    render_([offer({ status: 'downloading', filename: 'holiday.zip' })], vi.fn());
+
+    expect(screen.getByRole('button', { name: 'Cancel downloading holiday.zip' })).toBeDefined();
+    expect(
+      screen.getByRole('button', {
+        name: 'Stop downloading holiday.zip and remove it from the list',
+      }),
+    ).toBeDefined();
+  });
+
+  it('leaves the catalogue below it alone', () => {
+    // Only the pinned rows get one; an untouched offer is removed by clearing,
+    // and a bin on every one of thousands of catalogue rows would be noise.
+    render_([offer({ status: 'available', filename: 'holiday.zip' })], vi.fn());
+    expect(screen.queryByRole('button', { name: /from the list/ })).toBeNull();
   });
 });

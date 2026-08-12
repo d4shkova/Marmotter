@@ -87,6 +87,7 @@ import {
   type TargetRef,
   classifyDccReoffer,
   draftFor,
+  isTransferInFlight,
   isHighlight,
   orderNetworks,
   sameRef,
@@ -1156,6 +1157,61 @@ export function Marmotter({
     [toast],
   );
 
+  /**
+   * Forgetting an XDCC request we are still waiting on.
+   *
+   * Without this, dropping a `requested` row would leave its id in the pending
+   * queue, and a bot answering late would be matched back to a row that no
+   * longer exists — a file downloading with nothing on screen to show or stop
+   * it. Forgotten, a late answer is simply an unsolicited offer, which is what
+   * it now is.
+   */
+  const forgetPendingRequest = useCallback((offerId: string): void => {
+    for (const [key, queue] of pendingXdcc.current) {
+      const rest = queue.filter((id) => id !== offerId);
+      if (rest.length === queue.length) {
+        continue;
+      }
+      if (rest.length === 0) {
+        pendingXdcc.current.delete(key);
+      } else {
+        pendingXdcc.current.set(key, rest);
+      }
+    }
+  }, []);
+
+  /**
+   * Taking a row off the list, whatever state it is in.
+   *
+   * The way out of a row nothing else can shift: a pack a bot never answered
+   * sits at `requested` with no control on it, and used to survive Clear too.
+   * Anything still running is stopped first — removing the row of a live
+   * transfer without cancelling it would leave the socket running with nothing
+   * on screen to stop it, which is the thing Clear was avoiding.
+   */
+  const dismissOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      const transfer = transfers.current.get(offer.id);
+      if (transfer !== undefined) {
+        cancelledOffers.current.add(offer.id);
+        transfer.cancel();
+      }
+      forgetPendingRequest(offer.id);
+      useView.getState().removeDccOffer(offer.id);
+    },
+    [forgetPendingRequest],
+  );
+
+  /** Clearing the list, forgetting the requests the dropped rows were waiting on. */
+  const clearOffers = useCallback((): void => {
+    for (const offer of useView.getState().dccOffers) {
+      if (!isTransferInFlight(offer.status)) {
+        forgetPendingRequest(offer.id);
+      }
+    }
+    useView.getState().clearDccOffers();
+  }, [forgetPendingRequest]);
+
   // Opening the file manager on a saved download. Only wired where the platform
   // can do it — desktop — and only ever on a path the shell itself returned.
   const revealOffer = useCallback(
@@ -1861,7 +1917,8 @@ export function Marmotter({
           onCancel={cancelOffer}
           onChooseFolder={chooseDownloadFolder}
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
-          onClear={view.clearDccOffers}
+          onClear={clearOffers}
+          onDismiss={dismissOffer}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (
         <LogSearch className="min-h-0 flex-1" store={logs} />

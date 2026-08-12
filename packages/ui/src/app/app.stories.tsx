@@ -501,6 +501,7 @@ export const BrowsingFiles: StoryObj = {
         onCancel={() => {}}
         onChooseFolder={() => {}}
         onClear={() => {}}
+        onDismiss={() => {}}
       />
     </div>
   ),

@@ -68,14 +68,20 @@ export function isTrackedTransfer(status: DccStatus): boolean {
 }
 
 /**
- * Whether a transfer is still running and would be lost if its row went away.
+ * Whether a transfer is actually running and would be lost if its row went away.
  *
  * Clearing the list keeps these: dropping the row of a file that is still
  * arriving would leave it downloading with nothing to show it, and no way to
  * stop it.
+ *
+ * `requested` is deliberately **not** one of them. Nothing is running there —
+ * an XDCC request is a message sent to a bot that may never answer — and
+ * treating it as in flight made a request that went unanswered impossible to
+ * clear: the row pinned itself to the top of the list with no control on it and
+ * survived every Clear.
  */
 export function isTransferInFlight(status: DccStatus): boolean {
-  return status === 'requested' || status === 'downloading';
+  return status === 'downloading';
 }
 
 /**
@@ -376,6 +382,15 @@ export interface ViewState {
    * the progress and carries the button that stops it.
    */
   clearDccOffers(): void;
+  /**
+   * Drops one row, whatever state it is in.
+   *
+   * The escape hatch for a row nothing else can shift — a pack a bot never
+   * answered, a transfer that failed in a way the retry cannot see past. The
+   * caller is responsible for stopping anything still running first; the store
+   * only knows about the row.
+   */
+  removeDccOffer(id: string): void;
   /** Drops everything for a network that has been removed. */
   forgetNetwork(networkId: string): void;
 }
@@ -623,6 +638,9 @@ export const useView = create<ViewState>((set, get) => ({
     set((current) => ({
       dccOffers: current.dccOffers.filter((entry) => isTransferInFlight(entry.status)),
     })),
+
+  removeDccOffer: (id) =>
+    set((current) => ({ dccOffers: current.dccOffers.filter((entry) => entry.id !== id) })),
 
   forgetNetwork(networkId) {
     set((current) => {
