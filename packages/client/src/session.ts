@@ -693,14 +693,21 @@ export function createSession(options: SessionOptions): Session {
   /**
    * Following a reconnecting transport while it works.
    *
-   * Between a drop and the attempt that fixes it the transport emits no close —
-   * that is the point of it — so without this the phase would sit at
-   * `registered` and the sidebar would show a connected network that is not
-   * carrying anything. What the user needs to see there is "connecting".
+   * Two jobs, and the second is the one whose absence is silent. Between a drop
+   * and the attempt that fixes it the transport emits no close — that is the
+   * point of it — so the phase has to be moved to `connecting` here or the
+   * sidebar shows a connected network that is not carrying anything.
+   *
+   * And every connection it establishes has to be registered on. Nobody calls
+   * `connect` for the ones it makes on its own, so without this a reconnect
+   * would open a socket, send no `NICK`, and sit there until the server gave up
+   * — a reconnection that reconnects and then goes quiet.
    */
-  if ('onStateChange' in transport) {
+  const reconnecting = 'onStateChange' in transport ? transport : undefined;
+
+  if (reconnecting !== undefined) {
     subscriptions.push(
-      transport.onStateChange((connection) => {
+      reconnecting.onStateChange((connection) => {
         if (connection.kind === 'connecting' || connection.kind === 'waiting') {
           watch.current?.stop();
           // Only from a state that claimed otherwise. A first connection
@@ -709,6 +716,11 @@ export function createSession(options: SessionOptions): Session {
           if (state.phase === 'registered' || state.phase === 'registering') {
             publish({ ...state, phase: 'connecting', registeredAt: undefined });
           }
+          return;
+        }
+
+        if (connection.kind === 'connected' && !destroyed) {
+          void register();
         }
       }),
     );
@@ -759,6 +771,32 @@ export function createSession(options: SessionOptions): Session {
     }
   };
 
+  /**
+   * Everything a new connection needs before it is usable.
+   *
+   * Extracted because it runs once per *connection*, not once per session: a
+   * reconnecting transport establishes a new socket without anybody calling
+   * `connect`, and a socket that is never sent `NICK` and `USER` sits there
+   * until the server gives up on it. Leaving this inside `connect` was a
+   * reconnection that reconnected and then went quiet.
+   */
+  const register = async (): Promise<void> => {
+    events.emit({ kind: 'connected' });
+
+    const opening = startRegistration(state, profile.identity);
+    publish(opening.state);
+
+    // A server password is not SASL and goes before NICK, so it is prepended
+    // rather than sent alongside the rest.
+    if (profile.auth?.type === 'server-password') {
+      const password = await options.resolveSecret?.(profile.auth.password);
+      if (password !== undefined && !destroyed) {
+        write([`PASS ${password}`]);
+      }
+    }
+    write(opening.send);
+  };
+
   return {
     id: profile.id,
 
@@ -799,20 +837,18 @@ export function createSession(options: SessionOptions): Session {
         throw error;
       }
 
-      events.emit({ kind: 'connected' });
-
-      const opening = startRegistration(state, profile.identity);
-      publish(opening.state);
-
-      // A server password is not SASL and goes before NICK, so it is prepended
-      // rather than sent alongside the rest.
-      if (profile.auth?.type === 'server-password') {
-        const password = await options.resolveSecret?.(profile.auth.password);
-        if (password !== undefined && !destroyed) {
-          write([`PASS ${password}`]);
-        }
+      // A reconnecting transport never rejects: a permanent failure arrives as
+      // a close, which `handleClose` has already turned into a disconnected
+      // phase, and a retry is still in flight. Registering on top of either
+      // would emit `connected`, publish `registering`, and then throw on the
+      // first write to a socket that is not there. Those transports register
+      // from their own state instead, below, which is also what covers the
+      // connections they establish later without anybody calling `connect`.
+      if (reconnecting !== undefined) {
+        return;
       }
-      write(opening.send);
+
+      await register();
     },
 
     disconnect(reason) {

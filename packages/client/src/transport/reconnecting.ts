@@ -20,6 +20,7 @@ import type {
   Transport,
   Unsubscribe,
 } from '@marmotter/shared';
+import { connectErrorReason } from './connect-error.js';
 import { Listeners } from './listeners.js';
 
 export interface BackoffPolicy {
@@ -257,11 +258,18 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
       if (stopped) {
         return;
       }
-      const reason: CloseReason = {
+      // The classification the transport made, kept. A rejected certificate
+      // arrives as a `TransportConnectError` carrying `tls-error`, and
+      // flattening that into a generic network failure is precisely what stops
+      // the interface offering to trust it — the certificate failure ends up
+      // looking identical to the server being down. It also makes the failure
+      // look retryable when it is not: `isPermanent` reads this kind, and a
+      // certificate does not change between attempts.
+      const reason: CloseReason = connectErrorReason(error) ?? {
         kind: 'network-error',
         message: error instanceof Error ? error.message : String(error),
       };
-      if (!options.autoReconnect) {
+      if (!options.autoReconnect || isPermanent(reason)) {
         stop(reason);
         return;
       }

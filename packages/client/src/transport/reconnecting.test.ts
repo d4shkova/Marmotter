@@ -1,6 +1,7 @@
 import type { CloseReason, ServerEndpoint, Transport } from '@marmotter/shared';
 import { describe, expect, it } from 'vitest';
 import { Listeners } from './listeners.js';
+import { TransportConnectError } from './connect-error.js';
 import {
   DEFAULT_BACKOFF,
   type ConnectionState,
@@ -500,5 +501,98 @@ describe('a connection that died without closing', () => {
     const after = transport.state;
     transport.dropped(dead);
     expect(transport.state).toBe(after);
+  });
+});
+
+describe('a certificate that will not verify', () => {
+  /** A transport whose connect rejects the way the real ones do. */
+  class RejectingTransport extends FakeTransport {
+    constructor(private readonly reason: CloseReason) {
+      super();
+    }
+    override connect(): Promise<void> {
+      return Promise.reject(new TransportConnectError(this.reason));
+    }
+  }
+
+  const tls: CloseReason = {
+    kind: 'tls-error',
+    message: 'invalid peer certificate: certificate not valid for name "irc.dashkova.co.uk"',
+  };
+
+  const build = (reason: CloseReason) => {
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('irc.dashkova.co.uk')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = new RejectingTransport(reason);
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+    const closes: CloseReason[] = [];
+    transport.onClose((entry) => closes.push(entry));
+    return { transport, clock, created, closes };
+  };
+
+  it('keeps the reason the transport classified, rather than flattening it', async () => {
+    // Flattening this into a generic network failure is what stops the
+    // interface offering to trust the certificate: the failure ends up looking
+    // identical to the server being down, and the "Connect anyway" prompt never
+    // appears.
+    const { transport, closes } = build(tls);
+    await transport.connect();
+
+    expect(closes).toHaveLength(1);
+    expect(closes[0]?.kind).toBe('tls-error');
+    expect(closes[0]).toEqual(tls);
+  });
+
+  it('does not retry it, because a certificate does not change between attempts', async () => {
+    const { transport, clock, created } = build(tls);
+    await transport.connect();
+
+    expect(created).toHaveLength(1);
+    expect(clock.pendingDelays()).toEqual([]);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('still retries a connect that failed for an ordinary reason', async () => {
+    // The classification has to narrow what is retried, not stop retrying.
+    const { transport, clock, created } = build({ kind: 'network-error', message: 'refused' });
+    await transport.connect();
+    await clock.runPending();
+
+    expect(created).toHaveLength(2);
+  });
+
+  it('falls back to a network error when the rejection carries no reason', async () => {
+    // Not every transport throws a classified error — a bare `Error` from a
+    // WebSocket, say — and that must still be retried rather than dropped.
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = new FakeTransport('something went wrong');
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    await transport.connect();
+    expect(transport.state.kind).toBe('waiting');
+    if (transport.state.kind === 'waiting') {
+      expect(transport.state.reason.kind).toBe('network-error');
+    }
   });
 });
