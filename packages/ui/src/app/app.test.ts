@@ -13,7 +13,12 @@ import {
   stripFormatting,
 } from './format.js';
 import { buildRows, summarise } from './rows.js';
-import { isHighlight, orderNetworks } from './view-store.js';
+import {
+  TOAST_SECONDS_RANGE,
+  clampToastSeconds,
+  isHighlight,
+  orderNetworks,
+} from './view-store.js';
 
 const at = (iso: string) => new Date(iso);
 
@@ -427,5 +432,26 @@ describe('network order', () => {
 
   it('leaves an unordered list alone', () => {
     expect(orderNetworks(['a', 'b'], [])).toEqual(['a', 'b']);
+  });
+});
+
+describe('the notice timeout', () => {
+  it('keeps a chosen value inside the range it offers', () => {
+    expect(clampToastSeconds(30)).toBe(30);
+    expect(clampToastSeconds(TOAST_SECONDS_RANGE.min - 5)).toBe(TOAST_SECONDS_RANGE.min);
+    expect(clampToastSeconds(TOAST_SECONDS_RANGE.max + 500)).toBe(TOAST_SECONDS_RANGE.max);
+  });
+
+  it('falls back to the default rather than trusting a value that is not a number', () => {
+    // Restored settings come off disk, and a file somebody has edited by hand
+    // is the normal way a NaN reaches this. A toast with a NaN timeout never
+    // leaves the screen.
+    expect(clampToastSeconds(Number.NaN)).toBe(TOAST_SECONDS_RANGE.default);
+    expect(clampToastSeconds(Number.POSITIVE_INFINITY)).toBe(TOAST_SECONDS_RANGE.default);
+  });
+
+  it('rounds a fractional value, since the stepper counts whole seconds', () => {
+    expect(clampToastSeconds(7.4)).toBe(7);
+    expect(clampToastSeconds(7.6)).toBe(8);
   });
 });

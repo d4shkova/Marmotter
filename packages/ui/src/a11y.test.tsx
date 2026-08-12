@@ -36,6 +36,7 @@ import { CreateChannel } from './app/CreateChannel.js';
 import { ListPrompt } from './app/ListPrompt.js';
 import { TextPrompt } from './app/TextPrompt.js';
 import { buildRows } from './app/rows.js';
+import { DEFAULT_USER_OPTIONS } from './app/view-store.js';
 import { Decoder } from './decoder/Decoder.js';
 import { ListGroup, SectionHeader } from './layout/ListGroup.js';
 import { NavBar } from './layout/NavBar.js';
@@ -468,7 +469,7 @@ describe('every component passes axe', () => {
         onAppearanceChange={noop}
         ctcp={DEFAULT_CTCP_POLICY}
         onCtcpChange={noop}
-        userOptions={{ dccMonitorEnabled: false, downloadFolder: undefined }}
+        userOptions={DEFAULT_USER_OPTIONS}
         onUserOptionsChange={noop}
         dccAvailable={false}
         onChooseDownloadFolder={noop}

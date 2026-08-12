@@ -911,6 +911,7 @@ export const SettingsScreen: StoryObj = {
     const [userOptions, setUserOptions] = useState({
       dccMonitorEnabled: false,
       downloadFolder: undefined as string | undefined,
+      toastSeconds: 10,
     });
 
     return (

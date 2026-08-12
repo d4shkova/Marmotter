@@ -1,6 +1,6 @@
 import type { DccSend, XdccPack } from '@marmotter/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { classifyDccReoffer, useView } from './view-store.js';
+import { DEFAULT_USER_OPTIONS, classifyDccReoffer, useView } from './view-store.js';
 
 const send: DccSend = {
   filename: 'holiday.jpg',
@@ -25,7 +25,7 @@ const offer = (overrides: Partial<OfferArg> = {}): OfferArg => ({
 describe('the DCC monitor store', () => {
   beforeEach(() => {
     useView.setState({
-      userOptions: { dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
       dccActive: true,
       dccOffers: [],
     });
@@ -39,7 +39,9 @@ describe('the DCC monitor store', () => {
   });
 
   it('ignores offers when the monitor is switched off', () => {
-    useView.setState({ userOptions: { dccMonitorEnabled: false, downloadFolder: '/tmp/dl' } });
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: false, downloadFolder: '/tmp/dl' },
+    });
     useView.getState().recordDccOffer(offer());
     expect(useView.getState().dccOffers).toHaveLength(0);
   });
@@ -165,7 +167,7 @@ const xdcc = (overrides: Partial<XdccArg> = {}): XdccArg => ({
 describe('the XDCC side of the monitor', () => {
   beforeEach(() => {
     useView.setState({
-      userOptions: { dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
       dccActive: true,
       dccOffers: [],
     });

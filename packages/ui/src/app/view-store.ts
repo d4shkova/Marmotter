@@ -160,11 +160,32 @@ export interface UserOptions {
   readonly dccMonitorEnabled: boolean;
   /** Where downloaded files are written. Undefined until the user picks one. */
   readonly downloadFolder: string | undefined;
+  /**
+   * How long a notice at the bottom of the screen stays, in seconds.
+   *
+   * Reading speed is not a thing the interface can guess, and the same ten
+   * seconds is too long for somebody who has read the message already and too
+   * short for somebody who has not. Clamped where it is set rather than trusted
+   * from storage.
+   */
+  readonly toastSeconds: number;
+}
+
+/** The bounds on the notice timeout: long enough to read, short enough to end. */
+export const TOAST_SECONDS_RANGE = { min: 2, max: 60, default: 10 } as const;
+
+/** Holds a chosen timeout inside the range, whatever it arrived as. */
+export function clampToastSeconds(seconds: number): number {
+  if (!Number.isFinite(seconds)) {
+    return TOAST_SECONDS_RANGE.default;
+  }
+  return Math.min(TOAST_SECONDS_RANGE.max, Math.max(TOAST_SECONDS_RANGE.min, Math.round(seconds)));
 }
 
 export const DEFAULT_USER_OPTIONS: UserOptions = {
   dccMonitorEnabled: false,
   downloadFolder: undefined,
+  toastSeconds: TOAST_SECONDS_RANGE.default,
 };
 
 export interface Unread {

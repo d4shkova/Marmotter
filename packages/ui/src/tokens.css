@@ -192,10 +192,24 @@
   --easing-sheet: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-press: 120ms;
   --easing-press: ease-out;
+
+  /**
+   * A pure opacity fade, for something leaving the screen on its own.
+   *
+   * Separate from --duration-sheet because it survives the reduced-motion
+   * override below: CLAUDE.md asks for transforms to be cut and opacity changes
+   * kept, and a toast that vanishes between frames is harder to notice leaving
+   * than one that fades. This is the token for that exception; anything that
+   * moves must not use it.
+   */
+  --duration-fade: 200ms;
 }
 
 /**
  * Reduced motion: cut transforms, keep opacity changes only, per CLAUDE.md.
+ *
+ * --duration-fade is deliberately absent: it drives opacity and nothing else,
+ * which is the change this preference asks to keep rather than remove.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {

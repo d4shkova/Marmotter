@@ -8,7 +8,12 @@ import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
-import type { Appearance, UserOptions } from './view-store.js';
+import {
+  TOAST_SECONDS_RANGE,
+  clampToastSeconds,
+  type Appearance,
+  type UserOptions,
+} from './view-store.js';
 
 export interface SettingsProps {
   readonly networks: readonly NetworkState[];
@@ -313,6 +318,23 @@ export function Settings({
                 onAppearanceChange({ showBrowseChannelsShortcut })
               }
             />
+          </div>
+
+          <div className="px-4 py-3">
+            <Stepper
+              label="How long notices stay"
+              value={userOptions.toastSeconds}
+              min={TOAST_SECONDS_RANGE.min}
+              max={TOAST_SECONDS_RANGE.max}
+              format={(seconds) => `${seconds} seconds`}
+              onChange={(toastSeconds) =>
+                onUserOptionsChange({ toastSeconds: clampToastSeconds(toastSeconds) })
+              }
+            />
+            <p className="mt-1 text-footnote text-[var(--label-tertiary)]">
+              The messages that appear at the bottom of the screen. Clicking one clears it sooner,
+              and pointing at one holds it until you look away.
+            </p>
           </div>
 
           {!dccAvailable ? null : (
