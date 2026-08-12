@@ -17,6 +17,7 @@ import {
   type DccSend,
   type XdccPack,
 } from '@marmotter/protocol';
+import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import { create } from 'zustand';
 
 /** A conversation the interface can be showing. */
@@ -27,7 +28,15 @@ export interface TargetRef {
 }
 
 export type Pane =
-  'chat' | 'raw-log' | 'settings' | 'channel-browser' | 'people' | 'account' | 'dcc';
+  | 'chat'
+  | 'raw-log'
+  | 'settings'
+  | 'channel-browser'
+  | 'people'
+  | 'account'
+  | 'dcc'
+  /** Searching what has been written to disk, rather than what is in memory. */
+  | 'log-search';
 
 /** How far a file offered over DCC has got. */
 export type DccStatus =
@@ -59,14 +68,20 @@ export function isTrackedTransfer(status: DccStatus): boolean {
 }
 
 /**
- * Whether a transfer is still running and would be lost if its row went away.
+ * Whether a transfer is actually running and would be lost if its row went away.
  *
  * Clearing the list keeps these: dropping the row of a file that is still
  * arriving would leave it downloading with nothing to show it, and no way to
  * stop it.
+ *
+ * `requested` is deliberately **not** one of them. Nothing is running there —
+ * an XDCC request is a message sent to a bot that may never answer — and
+ * treating it as in flight made a request that went unanswered impossible to
+ * clear: the row pinned itself to the top of the list with no control on it and
+ * survived every Clear.
  */
 export function isTransferInFlight(status: DccStatus): boolean {
-  return status === 'requested' || status === 'downloading';
+  return status === 'downloading';
 }
 
 /**
@@ -160,12 +175,42 @@ export interface UserOptions {
   readonly dccMonitorEnabled: boolean;
   /** Where downloaded files are written. Undefined until the user picks one. */
   readonly downloadFolder: string | undefined;
+  /**
+   * How long a notice at the bottom of the screen stays, in seconds.
+   *
+   * Reading speed is not a thing the interface can guess, and the same ten
+   * seconds is too long for somebody who has read the message already and too
+   * short for somebody who has not. Clamped where it is set rather than trusted
+   * from storage.
+   */
+  readonly toastSeconds: number;
+}
+
+/** The bounds on the notice timeout: long enough to read, short enough to end. */
+export const TOAST_SECONDS_RANGE = { min: 2, max: 60, default: 10 } as const;
+
+/** Holds a chosen timeout inside the range, whatever it arrived as. */
+export function clampToastSeconds(seconds: number): number {
+  if (!Number.isFinite(seconds)) {
+    return TOAST_SECONDS_RANGE.default;
+  }
+  return Math.min(TOAST_SECONDS_RANGE.max, Math.max(TOAST_SECONDS_RANGE.min, Math.round(seconds)));
 }
 
 export const DEFAULT_USER_OPTIONS: UserOptions = {
   dccMonitorEnabled: false,
   downloadFolder: undefined,
+  toastSeconds: TOAST_SECONDS_RANGE.default,
 };
+
+/**
+ * The logging policy every network follows unless it says otherwise.
+ *
+ * Interface state rather than network state, and the same shape as a network's
+ * own override so the two merge without translation. Off, like the per-network
+ * default — CLAUDE.md makes switching it on an explicit, informed choice.
+ */
+export const DEFAULT_LOGGING = defaultLoggingPolicy;
 
 export interface Unread {
   /** Messages since the conversation was last read. */
@@ -244,6 +289,8 @@ export interface ViewState {
   readonly ctcp: CtcpPolicy;
   /** Per-person options, including the DCC file monitor. */
   readonly userOptions: UserOptions;
+  /** The logging policy networks follow unless they carry their own. */
+  readonly logging: LoggingPolicy;
   /**
    * Whether the monitor is actively collecting offers right now.
    *
@@ -269,6 +316,22 @@ export interface ViewState {
   updateAppearance(changes: Partial<Appearance>): void;
   updateCtcp(changes: Partial<CtcpPolicy>): void;
   updateUserOptions(changes: Partial<UserOptions>): void;
+  updateLogging(changes: Partial<LoggingPolicy>): void;
+  /**
+   * Puts every setting back the way it shipped.
+   *
+   * Settings only. Networks, the saved name, and anything already written to
+   * disk are somebody's data rather than a preference, and a button labelled
+   * "reset settings" must not quietly take them.
+   */
+  resetSettings(): void;
+  /** Applies settings read from disk, wholesale, at startup. */
+  applySettings(settings: {
+    appearance: Appearance;
+    ctcp: CtcpPolicy;
+    userOptions: UserOptions;
+    logging: LoggingPolicy;
+  }): void;
   /** Starts or pauses collection of DCC offers. */
   setDccActive(active: boolean): void;
   /**
@@ -319,6 +382,15 @@ export interface ViewState {
    * the progress and carries the button that stops it.
    */
   clearDccOffers(): void;
+  /**
+   * Drops one row, whatever state it is in.
+   *
+   * The escape hatch for a row nothing else can shift — a pack a bot never
+   * answered, a transfer that failed in a way the retry cannot see past. The
+   * caller is responsible for stopping anything still running first; the store
+   * only knows about the row.
+   */
+  removeDccOffer(id: string): void;
   /** Drops everything for a network that has been removed. */
   forgetNetwork(networkId: string): void;
 }
@@ -355,6 +427,7 @@ export const useView = create<ViewState>((set, get) => ({
   appearance: DEFAULT_APPEARANCE,
   ctcp: DEFAULT_CTCP_POLICY,
   userOptions: DEFAULT_USER_OPTIONS,
+  logging: DEFAULT_LOGGING,
   dccActive: true,
   dccOffers: [],
 
@@ -436,6 +509,24 @@ export const useView = create<ViewState>((set, get) => ({
 
   updateUserOptions: (changes) =>
     set((current) => ({ userOptions: { ...current.userOptions, ...changes } })),
+
+  updateLogging: (changes) => set((current) => ({ logging: { ...current.logging, ...changes } })),
+
+  resetSettings: () =>
+    set({
+      appearance: DEFAULT_APPEARANCE,
+      ctcp: DEFAULT_CTCP_POLICY,
+      userOptions: DEFAULT_USER_OPTIONS,
+      logging: DEFAULT_LOGGING,
+    }),
+
+  applySettings: (settings) =>
+    set({
+      appearance: settings.appearance,
+      ctcp: settings.ctcp,
+      userOptions: settings.userOptions,
+      logging: settings.logging,
+    }),
 
   setDccActive: (dccActive) => set({ dccActive }),
 
@@ -547,6 +638,9 @@ export const useView = create<ViewState>((set, get) => ({
     set((current) => ({
       dccOffers: current.dccOffers.filter((entry) => isTransferInFlight(entry.status)),
     })),
+
+  removeDccOffer: (id) =>
+    set((current) => ({ dccOffers: current.dccOffers.filter((entry) => entry.id !== id) })),
 
   forgetNetwork(networkId) {
     set((current) => {

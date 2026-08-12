@@ -1,6 +1,7 @@
 import type { CloseReason, ServerEndpoint, Transport } from '@marmotter/shared';
 import { describe, expect, it } from 'vitest';
 import { Listeners } from './listeners.js';
+import { TransportConnectError } from './connect-error.js';
 import {
   DEFAULT_BACKOFF,
   type ConnectionState,
@@ -123,6 +124,7 @@ describe('createReconnectingTransport', () => {
     options: {
       endpoints?: ServerEndpoint[];
       autoReconnect?: boolean;
+      maxAttempts?: number;
       transports?: FakeTransport[];
     } = {},
   ) => {
@@ -134,6 +136,7 @@ describe('createReconnectingTransport', () => {
     const transport = createReconnectingTransport({
       endpoints: options.endpoints ?? [endpoint('one.example')],
       autoReconnect: options.autoReconnect ?? true,
+      ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
       createTransport: () => {
         const next = queue[index] ?? new FakeTransport();
         index += 1;
@@ -358,5 +361,238 @@ describe('createReconnectingTransport', () => {
       kind: 'network-error',
       message: 'This network has no servers configured.',
     });
+  });
+});
+
+describe('giving up, and saying so', () => {
+  const build = (options: { maxAttempts?: number; transports?: FakeTransport[] } = {}) => {
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const queue = options.transports ?? [];
+    let index = 0;
+
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
+      createTransport: () => {
+        const next = queue[index] ?? new FakeTransport('refused');
+        index += 1;
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    const closes: CloseReason[] = [];
+    transport.onClose((reason) => closes.push(reason));
+    return { transport, clock, created, closes };
+  };
+
+  it('retries three times and then reports a close', async () => {
+    // Retrying forever is what a bouncer does. A desktop client that does it
+    // quietly looks connected while it is not, with nothing saying why.
+    const { transport, clock, created, closes } = build();
+
+    await transport.connect();
+    expect(created).toHaveLength(1);
+    expect(closes).toHaveLength(0);
+
+    for (let round = 0; round < 3; round += 1) {
+      await clock.runPending();
+    }
+
+    expect(created).toHaveLength(4);
+    expect(closes).toHaveLength(1);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('schedules nothing more once it has given up', async () => {
+    const { transport, clock } = build();
+    await transport.connect();
+    for (let round = 0; round < 3; round += 1) {
+      await clock.runPending();
+    }
+
+    expect(clock.pendingDelays()).toEqual([]);
+  });
+
+  it('honours a limit of its own, for somebody pointing at their own bouncer', async () => {
+    const { transport, clock, created } = build({ maxAttempts: 1 });
+    await transport.connect();
+    await clock.runPending();
+
+    expect(created).toHaveLength(2);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('starts counting again after a connection that worked', async () => {
+    // Three attempts per outage, not three for the life of the app. Somebody
+    // on a flaky link would otherwise be cut off for good by lunchtime.
+    const first = new FakeTransport();
+    const { transport, clock, created, closes } = build({ transports: [first] });
+    await transport.connect();
+
+    first.closes.emit({ kind: 'server' });
+    await clock.runPending();
+    expect(created.length).toBeGreaterThan(1);
+
+    // Two more failures is still inside the allowance for this outage.
+    await clock.runPending();
+    expect(closes).toHaveLength(0);
+  });
+});
+
+describe('a connection that died without closing', () => {
+  it('retries when it is told the connection is dead', async () => {
+    // The half-open socket: no close will ever arrive, so the keepalive says so
+    // and the same machinery has to run.
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const live = new FakeTransport();
+    let first = true;
+
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = first ? live : new FakeTransport();
+        first = false;
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    await transport.connect();
+    transport.dropped({ kind: 'network-error', message: 'The server stopped responding.' });
+
+    // The socket that was never going to close is closed by us, or the handle
+    // leaks once per drop — on a flaky link, one every few minutes.
+    expect(live.disconnected).toBe(true);
+    expect(transport.state.kind).toBe('waiting');
+
+    await clock.runPending();
+    expect(created).toHaveLength(2);
+  });
+
+  it('ignores being told twice, and ignores it when not connected', async () => {
+    const clock = fakeClock();
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => new FakeTransport(),
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    const dead: CloseReason = { kind: 'network-error', message: 'gone' };
+    // Before connecting at all.
+    transport.dropped(dead);
+    expect(transport.state.kind).toBe('idle');
+
+    await transport.connect();
+    transport.dropped(dead);
+    const after = transport.state;
+    transport.dropped(dead);
+    expect(transport.state).toBe(after);
+  });
+});
+
+describe('a certificate that will not verify', () => {
+  /** A transport whose connect rejects the way the real ones do. */
+  class RejectingTransport extends FakeTransport {
+    constructor(private readonly reason: CloseReason) {
+      super();
+    }
+    override connect(): Promise<void> {
+      return Promise.reject(new TransportConnectError(this.reason));
+    }
+  }
+
+  const tls: CloseReason = {
+    kind: 'tls-error',
+    message: 'invalid peer certificate: certificate not valid for name "irc.dashkova.co.uk"',
+  };
+
+  const build = (reason: CloseReason) => {
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('irc.dashkova.co.uk')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = new RejectingTransport(reason);
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+    const closes: CloseReason[] = [];
+    transport.onClose((entry) => closes.push(entry));
+    return { transport, clock, created, closes };
+  };
+
+  it('keeps the reason the transport classified, rather than flattening it', async () => {
+    // Flattening this into a generic network failure is what stops the
+    // interface offering to trust the certificate: the failure ends up looking
+    // identical to the server being down, and the "Connect anyway" prompt never
+    // appears.
+    const { transport, closes } = build(tls);
+    await transport.connect();
+
+    expect(closes).toHaveLength(1);
+    expect(closes[0]?.kind).toBe('tls-error');
+    expect(closes[0]).toEqual(tls);
+  });
+
+  it('does not retry it, because a certificate does not change between attempts', async () => {
+    const { transport, clock, created } = build(tls);
+    await transport.connect();
+
+    expect(created).toHaveLength(1);
+    expect(clock.pendingDelays()).toEqual([]);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('still retries a connect that failed for an ordinary reason', async () => {
+    // The classification has to narrow what is retried, not stop retrying.
+    const { transport, clock, created } = build({ kind: 'network-error', message: 'refused' });
+    await transport.connect();
+    await clock.runPending();
+
+    expect(created).toHaveLength(2);
+  });
+
+  it('falls back to a network error when the rejection carries no reason', async () => {
+    // Not every transport throws a classified error — a bare `Error` from a
+    // WebSocket, say — and that must still be retried rather than dropped.
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = new FakeTransport('something went wrong');
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    await transport.connect();
+    expect(transport.state.kind).toBe('waiting');
+    if (transport.state.kind === 'waiting') {
+      expect(transport.state.reason.kind).toBe('network-error');
+    }
   });
 });

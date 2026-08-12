@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 
 /**
@@ -7,8 +7,21 @@ import { cn } from '../lib/cn.js';
  * Ten seconds: long enough to finish reading a two-line sentence, short enough
  * that a stack of them clears on its own. Hovering or focusing pauses the
  * countdown, and the close button is there for anyone who wants it gone sooner.
+ *
+ * This is the default rather than the rule — Settings lets somebody who reads
+ * slower, or who wants them gone faster, set their own. Both ends of that range
+ * are enforced where the setting is edited, not here.
  */
-const AUTO_DISMISS_MS = 10_000;
+export const DEFAULT_TOAST_DISMISS_MS = 10_000;
+
+/**
+ * How long the fade out takes.
+ *
+ * Kept in step with --duration-fade in tokens.css: the class below drives the
+ * animation and this number decides when the toast is actually removed, so if
+ * the two disagree the toast either jumps at the end or lingers invisibly.
+ */
+const FADE_MS = 200;
 
 /**
  * What a toast is reporting.
@@ -30,6 +43,8 @@ export interface ToastMessage {
 
 export interface ToastProps extends ToastMessage {
   readonly onDismiss: (id: string) => void;
+  /** How long it stays before dismissing itself. Defaults to ten seconds. */
+  readonly dismissMs?: number;
   readonly className?: string;
 }
 
@@ -39,19 +54,41 @@ export function Toast({
   tone = 'info',
   action,
   onDismiss,
+  dismissMs = DEFAULT_TOAST_DISMISS_MS,
   className,
 }: ToastProps): ReactNode {
   // Pointer-over and keyboard-focus pause the countdown, so somebody reading
   // the toast doesn't lose it mid-sentence.
   const [paused, setPaused] = useState(false);
+  // Whether it is on its way out. The toast stays mounted through the fade so
+  // there is something to fade; `onDismiss` is what finally removes it.
+  const [leaving, setLeaving] = useState(false);
+  const fadeTimer = useRef<number | undefined>(undefined);
 
-  useEffect(() => {
-    if (paused) {
+  /**
+   * Starts the fade, then reports the dismissal once it has finished.
+   *
+   * Guarded against running twice: clicking a toast that is already fading —
+   * or its countdown expiring mid-fade — would otherwise schedule a second
+   * removal for an id that has already gone.
+   */
+  const dismiss = useCallback(() => {
+    if (fadeTimer.current !== undefined) {
       return;
     }
-    const timer = window.setTimeout(() => onDismiss(id), AUTO_DISMISS_MS);
+    setLeaving(true);
+    fadeTimer.current = window.setTimeout(() => onDismiss(id), FADE_MS);
+  }, [id, onDismiss]);
+
+  useEffect(() => () => window.clearTimeout(fadeTimer.current), []);
+
+  useEffect(() => {
+    if (paused || leaving) {
+      return;
+    }
+    const timer = window.setTimeout(dismiss, dismissMs);
     return () => window.clearTimeout(timer);
-  }, [id, paused, onDismiss]);
+  }, [paused, leaving, dismissMs, dismiss]);
 
   return (
     <div
@@ -63,12 +100,17 @@ export function Toast({
       onBlurCapture={() => setPaused(false)}
       // Clicking anywhere on the toast dismisses it — the close button stays for
       // anyone who wants the explicit target, but the whole surface is a way out.
-      onClick={() => onDismiss(id)}
+      onClick={dismiss}
       className={cn(
         'flex cursor-pointer items-center gap-3 rounded-card px-4 py-3 shadow-xl',
         'bg-[var(--bg-elevated-3)] [backdrop-filter:var(--blur-vibrancy)]',
         'border',
         tone === 'error' ? 'border-[var(--danger)]' : 'border-[var(--separator)]',
+        // Fading rather than cutting: a toast that vanishes between frames is
+        // easy to miss leaving, and easy to mistake for one that was never
+        // there. Opacity only, so this survives reduced motion.
+        'transition-opacity duration-[var(--duration-fade)] ease-[var(--easing-press)]',
+        leaving ? 'opacity-0' : 'opacity-100',
         className,
       )}
     >
@@ -90,7 +132,7 @@ export function Toast({
           onClick={(event) => {
             event.stopPropagation();
             action.onSelect();
-            onDismiss(id);
+            dismiss();
           }}
           className="shrink-0 text-callout font-medium text-[var(--accent)]"
         >
@@ -103,7 +145,7 @@ export function Toast({
         aria-label="Dismiss"
         onClick={(event) => {
           event.stopPropagation();
-          onDismiss(id);
+          dismiss();
         }}
         className="grid size-6 shrink-0 place-items-center rounded-full text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]"
       >
@@ -120,11 +162,18 @@ export function Toast({
 export interface ToastRegionProps {
   readonly toasts: readonly ToastMessage[];
   readonly onDismiss: (id: string) => void;
+  /** How long each one stays. Defaults to ten seconds. */
+  readonly dismissMs?: number;
   readonly className?: string;
 }
 
 /** Where toasts stack. One per app, at the bottom edge. */
-export function ToastRegion({ toasts, onDismiss, className }: ToastRegionProps): ReactNode {
+export function ToastRegion({
+  toasts,
+  onDismiss,
+  dismissMs,
+  className,
+}: ToastRegionProps): ReactNode {
   return (
     <div
       aria-label="Notifications"
@@ -142,7 +191,11 @@ export function ToastRegion({ toasts, onDismiss, className }: ToastRegionProps):
           key={toast.id}
           className="pointer-events-auto w-fit max-w-[min(92vw,34rem)] min-w-[16rem]"
         >
-          <Toast {...toast} onDismiss={onDismiss} />
+          <Toast
+            {...toast}
+            onDismiss={onDismiss}
+            {...(dismissMs === undefined ? {} : { dismissMs })}
+          />
         </div>
       ))}
     </div>

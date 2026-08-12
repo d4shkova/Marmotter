@@ -5,7 +5,13 @@ import type {
   ServerEndpoint,
   TlsConfig,
 } from '@marmotter/shared';
-import { NETWORKS, defaultLoggingPolicy, findNetwork } from '@marmotter/shared';
+import {
+  EMPTY_IDENTITY,
+  NETWORKS,
+  type DefaultIdentity,
+  findNetwork,
+  identityFrom,
+} from '@marmotter/shared';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../primitives/Button.js';
 import { RadioGroup } from '../primitives/Radio.js';
@@ -13,7 +19,7 @@ import { Select, type SelectOption } from '../primitives/Select.js';
 import { Sheet } from '../primitives/Sheet.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
-import { hasSecret, putSecret, replaceSecret } from './secrets.js';
+import { putSecret, replaceSecret } from './secrets.js';
 
 /** The value the network picker uses for "not one of these". */
 const CUSTOM = 'custom';
@@ -121,6 +127,23 @@ export interface AddNetworkProps {
    * cannot quietly discard the rest of somebody's setup.
    */
   readonly editing?: NetworkProfile;
+  /**
+   * The name and fallbacks the user gave once, at first run.
+   *
+   * Fills the nick field on a new network so it is not typed again per network.
+   * The field stays editable: one network wanting a different name is ordinary,
+   * and the fallbacks and real name still come from here.
+   */
+  readonly defaultIdentity?: DefaultIdentity;
+  /**
+   * Whether a password typed here will still be here next launch.
+   *
+   * False on web, and on a desktop machine with no keychain — a Linux session
+   * with no Secret Service running has nowhere to put one. The field says which
+   * it is, because "remembered" and "not remembered" are both fine and being
+   * wrong about which is not.
+   */
+  readonly remembersPasswords?: boolean;
   /** Generates the profile ID. Injected so tests are deterministic. */
   readonly newId?: () => string;
 }
@@ -135,7 +158,15 @@ export interface AddNetworkProps {
  * the password, because that is the consequence and nobody should have to
  * already know it.
  */
-export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkProps): ReactNode {
+export function AddNetwork({
+  open,
+  onClose,
+  onAdd,
+  editing,
+  defaultIdentity = EMPTY_IDENTITY,
+  remembersPasswords = false,
+  newId,
+}: AddNetworkProps): ReactNode {
   const [choice, setChoice] = useState<string>('libera-chat');
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
@@ -175,7 +206,10 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
       setHost('');
       setPort(String(PORT_FOR.encrypted));
       setPortEdited(false);
-      setNick('');
+      // Starts from the name given at first run, so the common case is one
+      // fewer field to fill in. Still editable: a different name on one
+      // network is ordinary.
+      setNick(defaultIdentity.nick);
       setSecurity('encrypted');
       setCertAccepted(false);
       setSocketUrl('');
@@ -200,9 +234,13 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     setSocketUrl(endpoint?.tls.mode === 'websocket' ? endpoint.tls.url : '');
     setLogin(loginOf(editing.auth));
     setAccount(accountOf(editing.auth));
-    setPasswordSaved(hasSecret(secretOf(editing.auth)));
+    // A reference is enough: on a profile restored from disk the value itself
+    // is in the keychain rather than in this session's memory, and reading the
+    // in-memory store would report "no password saved" for every network the
+    // user configured last week.
+    setPasswordSaved(secretOf(editing.auth) !== undefined);
     setOperatorCommands(editing.operatorCommands === true);
-  }, [open, editing]);
+  }, [open, editing, defaultIdentity.nick]);
 
   const chosen = findNetwork(choice);
   // An edit always shows the fields directly: the directory is a shortcut for
@@ -265,7 +303,9 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
     connectCommands: editing?.connectCommands ?? [],
     encoding: editing?.encoding ?? 'utf-8',
     autoReconnect: editing?.autoReconnect ?? true,
-    logging: editing?.logging ?? defaultLoggingPolicy,
+    // Absent means "follow the global logging policy", which is what a network
+    // nobody has given its own policy should do.
+    ...(editing?.logging === undefined ? {} : { logging: editing.logging }),
     operatorCommands,
   };
 
@@ -280,13 +320,10 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
   const identityFor = (chosenNick: string): NetworkProfile['identity'] => {
     const derived = [`${chosenNick}_`, `${chosenNick}__`];
     if (editing === undefined) {
-      return {
-        nick: chosenNick,
-        // A second and third try, so a taken name does not stop the connection.
-        altNicks: derived,
-        username: chosenNick,
-        realname: chosenNick,
-      };
+      // A new network starts from what was given at first run: the fallbacks
+      // and the real name come from there, and only the name itself is what
+      // this form may have changed.
+      return identityFrom(defaultIdentity, chosenNick);
     }
     const previous = editing.identity;
     const wasGenerated =
@@ -528,7 +565,11 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
           value={nick}
           placeholder="marmot"
           onChange={(event) => setNick(event.target.value)}
-          hint="Other people see this. You can change it later."
+          hint={
+            defaultIdentity.nick !== '' && nick === defaultIdentity.nick
+              ? 'Other people see this. Change it to use a different name here only.'
+              : 'Other people see this. You can change it later.'
+          }
         />
 
         <RadioGroup
@@ -604,7 +645,12 @@ export function AddNetwork({ open, onClose, onAdd, editing, newId }: AddNetworkP
                   ? 'A password is saved for this network. Leave this empty to keep it.'
                   : security === 'off'
                     ? 'This network is set to connect unencrypted, so this password is readable by anyone in between.'
-                    : 'Kept for this session only, and never written to disk.'
+                    : remembersPasswords
+                      ? // The keychain, not the settings file. Worth naming: it
+                        // is the difference between "somewhere the operating
+                        // system protects" and "a file in a folder".
+                        "Saved to this device's keychain, not to a file, so you do not have to type it again."
+                      : 'Kept for this session only. This device has nowhere to store a password safely, so you will be asked again next time.'
               }
             />
           </>

@@ -1,5 +1,6 @@
 import {
   CHANNEL_LIST_LIMIT,
+  createReconnectingTransport,
   type Member,
   type NetworkState,
   type Session,
@@ -10,7 +11,21 @@ import {
   useNetworks,
 } from '@marmotter/client';
 import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
-import type { NetworkProfile, Transport } from '@marmotter/shared';
+import type { CloseReason } from '@marmotter/shared';
+import { effectivePolicy, retentionCutoff } from '@marmotter/client';
+import {
+  EMPTY_IDENTITY,
+  type DefaultIdentity,
+  type LogLocation,
+  type LogStore,
+  type LoggingPolicy,
+  type NetworkProfile,
+  type PreferenceStore,
+  type SecretStore,
+  type StoredPreferences,
+  secretRefsOf,
+  type Transport,
+} from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
@@ -24,7 +39,7 @@ import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
-import { ChannelPanel } from './ChannelPanel.js';
+import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { DccBrowser } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
@@ -41,6 +56,10 @@ import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSe
 import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
+import { LogSearch } from './LogSearch.js';
+import { readStoredSettings, writeStoredSettings } from './stored-settings.js';
+import { FirstRun } from './FirstRun.js';
+import { useMessageLogging, usePurge } from './logging.js';
 import {
   type ServiceName,
   serviceCommandBody,
@@ -63,16 +82,71 @@ import {
 } from './notify.js';
 import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import {
+  DEFAULT_LOGGING,
   type DccOfferRecord,
   type TargetRef,
   classifyDccReoffer,
   draftFor,
+  isTransferInFlight,
   isHighlight,
   orderNetworks,
   sameRef,
   unreadFor,
   useView,
 } from './view-store.js';
+
+/**
+ * The ceiling on one export.
+ *
+ * An export reads every matching line into memory to write it out, so it has to
+ * have one. High enough that an ordinary person exports everything they have;
+ * the number is stated in the file when it bites.
+ */
+const EXPORT_LIMIT = 1_000_000;
+
+/**
+ * What to say when a connection has gone and retrying has not brought it back.
+ *
+ * Names what happened and what to do, per CLAUDE.md's copy rules, and never
+ * apologises. The reasons are told apart because the answers differ: a network
+ * that refused us is not the same problem as a laptop with no wifi, and telling
+ * somebody to check their connection when the server rejected them wastes their
+ * time.
+ */
+export function lostConnectionText(name: string, reason: CloseReason): string {
+  switch (reason.kind) {
+    case 'timeout':
+      return `${name} did not respond. It may be down, or the address may have changed.`;
+    case 'server':
+      return `${name} closed the connection and did not accept a new one.`;
+    case 'tls-error':
+      return `Could not verify ${name}'s certificate, so the connection was not made.`;
+    case 'network-error':
+      return reason.message === ''
+        ? `Lost the connection to ${name}. Check your internet connection.`
+        : `Lost the connection to ${name}. ${reason.message}`;
+    case 'user':
+      return `Disconnected from ${name}.`;
+  }
+}
+
+/**
+ * Whether to put the setup screen in front of somebody on launch.
+ *
+ * Two conditions, and the second is the one that is easy to lose. There has to
+ * be no name yet — and there has to be somewhere to keep the answer. A platform
+ * with no preference store, which is the browser build, would otherwise show
+ * the same modal on every page load forever and never remember what was typed.
+ * Asking a question you will ask again in thirty seconds is worse than not
+ * asking; the name is entered on the "Add a network" form there instead, which
+ * is the path Skip already relies on.
+ *
+ * Pure and exported because losing this is invisible in every unit test and
+ * shows up only as a modal nobody can dismiss for good.
+ */
+export function shouldAskForIdentity(identity: DefaultIdentity, canRemember: boolean): boolean {
+  return identity.nick === '' && canRemember;
+}
 
 export interface MarmotterProps {
   /**
@@ -116,6 +190,45 @@ export interface MarmotterProps {
    * with a link anyway.
    */
   readonly openExternal?: (url: string) => void;
+  /**
+   * Builds the store conversations are written to.
+   *
+   * Desktop passes a factory; **web passes nothing, and must keep passing
+   * nothing**. There being no implementation is what guarantees the browser
+   * build cannot persist message content — see CLAUDE.md and
+   * `packages/shared/src/logging.ts`.
+   *
+   * A factory rather than a store, because the format and the folder are the
+   * user's to change and each answer is a different store. Rebuilt when either
+   * moves; the lines already written stay where they were written.
+   */
+  readonly createLogStore?: (options: {
+    readonly policy: LoggingPolicy;
+    /** Maps a network's display name back to its ID, for plaintext logs. */
+    readonly networkIdFor: (networkName: string) => string;
+  }) => Promise<LogStore>;
+  /** Opens the platform folder picker for where logs are written. */
+  readonly chooseLogFolder?: () => Promise<string | undefined>;
+  /** Opens the platform save dialog for an export, returning the chosen path. */
+  readonly chooseExportFile?: () => Promise<string | undefined>;
+  /**
+   * Where settings are kept between launches.
+   *
+   * Desktop passes a file-backed one. Web passes nothing and the identity given
+   * at first run lives in memory for the session — which still saves typing
+   * across several networks added in one sitting, and keeps nothing after the
+   * tab closes.
+   */
+  readonly preferences?: PreferenceStore;
+  /**
+   * Where passwords are kept between launches.
+   *
+   * Desktop passes one backed by the OS keychain. **Web passes nothing**, and a
+   * password typed there lives in memory for the session — the only honest
+   * option, since a browser has nowhere to put a secret that a page cannot also
+   * read.
+   */
+  readonly secrets?: SecretStore;
 }
 
 /** The whole client. */
@@ -126,6 +239,11 @@ export function Marmotter({
   notifier,
   dcc,
   openExternal,
+  createLogStore,
+  chooseLogFolder,
+  chooseExportFile,
+  preferences,
+  secrets,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -148,6 +266,40 @@ export function Marmotter({
   const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
   /** Whether the channel settings and moderation sheet is open. */
   const [channelPanelOpen, setChannelPanelOpen] = useState(false);
+  /** Which tab the channel panel opens on, when something opened it at one. */
+  const [channelPanelTab, setChannelPanelTab] = useState<ChannelPanelTab>('settings');
+  /** Somebody a server operator has chosen to disconnect, pending a reason. */
+  const [killing, setKilling] = useState<Member | undefined>(undefined);
+  /** Where the logs are and what they cost, once the store has been asked. */
+  const [logLocation, setLogLocation] = useState<LogLocation | undefined>(undefined);
+  /** The store itself, rebuilt when the format or the folder changes. */
+  const [logs, setLogs] = useState<LogStore | undefined>(undefined);
+  /**
+   * The name and fallbacks given at first run.
+   *
+   * Held here rather than in the view store because it is the one piece of
+   * interface state a platform may persist, and the store's own comment says
+   * nothing in it is worth persisting. Undefined means "not yet loaded", which
+   * is different from "loaded and empty" — the setup screen must not flash up
+   * before the file has been read.
+   */
+  const [identity, setIdentity] = useState<DefaultIdentity | undefined>(undefined);
+  /** Whether the setup screen is open, either at first run or from Settings. */
+  const [settingUp, setSettingUp] = useState(false);
+  /**
+   * The identity and the session builder, reachable from effects that run once.
+   *
+   * Both change as the component renders; the restore effect and the save path
+   * must see the current one without being rebuilt, since rebuilding either
+   * would re-register profiles over live sessions.
+   */
+  const identityRef = useRef<DefaultIdentity | undefined>(undefined);
+  /** Whether this machine has a keychain, so the password field can say so. */
+  const [remembersPasswords, setRemembersPasswords] = useState(false);
+  const startSessionRef = useRef<
+    (profile: NetworkProfile, options?: { readonly connect?: boolean }) => void
+  >(() => {});
+  const reconnectRef = useRef<(networkId: string) => void>(() => {});
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -270,7 +422,7 @@ export function Marmotter({
   // Picking a command drops its shape into the composer for this conversation
   // rather than sending it, because most of them take an argument only the user
   // has and a services command sent by mistake is not always reversible.
-  const openServiceMenu = (service: ServiceName, anchor: HTMLElement): void => {
+  const openServiceMenu = (service: ServiceName, at: { x: number; y: number }): void => {
     if (selection === undefined) {
       return;
     }
@@ -282,13 +434,18 @@ export function Marmotter({
       startsGroup: command.operator === true && commands[index - 1]?.operator !== true,
       onSelect: () => view.setDraft(selection, serviceCommandBody(command)),
     }));
-    const rect = anchor.getBoundingClientRect();
     setServiceMenu({
       label: `${serviceDisplayName(service)} commands`,
       items,
-      x: rect.left,
-      y: rect.bottom + 4,
+      x: at.x,
+      y: at.y,
     });
+  };
+
+  /** The same menu, hung under the button in the header that opens it. */
+  const openServiceMenuUnder = (service: ServiceName, anchor: HTMLElement): void => {
+    const rect = anchor.getBoundingClientRect();
+    openServiceMenu(service, { x: rect.left, y: rect.bottom + 4 });
   };
 
   // Opening a link the user has confirmed. The platform's own browser where the
@@ -323,6 +480,338 @@ export function Marmotter({
   const permission = useRef<boolean | undefined>(undefined);
   /** Whether that question is currently outstanding, so it is only asked once. */
   const asking = useRef(false);
+
+  // Loading what was saved: the name, and the networks that were set up.
+  //
+  // Restored networks are registered but **not connected**. A client that dials
+  // out the moment it opens cannot be started to change a setting, and somebody
+  // who left three networks configured has not thereby asked to be signed in to
+  // all three the next time they open the app. Each comes back as a row in the
+  // sidebar with Connect on its right-click menu.
+  //
+  // Runs once. Re-running it would re-register profiles over live sessions and
+  // tear down their sockets.
+  const restored = useRef(false);
+
+  useEffect(() => {
+    if (restored.current) {
+      return;
+    }
+    restored.current = true;
+
+    let live = true;
+    const finish = (
+      loaded: DefaultIdentity,
+      networks: readonly NetworkProfile[],
+      settings: Readonly<Record<string, unknown>> | undefined,
+    ): void => {
+      if (!live) {
+        return;
+      }
+      // Applied before anything renders against them, so the window does not
+      // flash the defaults on the way to the chosen layout. A file with no
+      // settings in it — an install from before they were kept — reads as the
+      // defaults rather than as nothing.
+      useView.getState().applySettings(readStoredSettings(settings ?? {}));
+      setIdentity(loaded);
+      for (const profile of networks) {
+        startSessionRef.current(profile, { connect: false });
+      }
+      // Somebody who skips is not asked again this session either: they get it
+      // on the next launch, which is less rude than a screen that will not take
+      // no for an answer. Settings opens it on request either way.
+      if (shouldAskForIdentity(loaded, preferences !== undefined)) {
+        setSettingUp(true);
+      }
+    };
+
+    if (preferences === undefined) {
+      finish(EMPTY_IDENTITY, [], undefined);
+      return () => {
+        live = false;
+      };
+    }
+
+    void preferences
+      .load()
+      .then((stored) =>
+        finish(stored?.identity ?? EMPTY_IDENTITY, stored?.networks ?? [], stored?.settings),
+      )
+      // A settings file that cannot be read starts blank rather than stopping
+      // the client. Nothing in it is needed to connect.
+      .catch(() => finish(EMPTY_IDENTITY, [], undefined));
+
+    return () => {
+      live = false;
+    };
+  }, [preferences]);
+
+  /**
+   * Writes the settings file.
+   *
+   * The whole file each time rather than a patch: it is small, and one writer
+   * means the identity and the network list cannot drift apart. Reads the
+   * registry at call time so a save triggered by one change carries every other.
+   */
+  const persist = useCallback(
+    (changes: { identity?: DefaultIdentity; networks?: readonly NetworkProfile[] } = {}): void => {
+      if (preferences === undefined) {
+        return;
+      }
+      const view = useView.getState();
+      const next: StoredPreferences = {
+        identity: changes.identity ?? identityRef.current ?? EMPTY_IDENTITY,
+        networks: changes.networks ?? [...registry.profiles.values()],
+        settings: writeStoredSettings({
+          appearance: view.appearance,
+          ctcp: view.ctcp,
+          userOptions: view.userOptions,
+          logging: view.logging,
+        }),
+      };
+      void preferences.save(next).catch((error: unknown) => {
+        toast(`Could not save your settings. ${String(error)}`, 'error');
+      });
+    },
+    [preferences, registry.profiles, toast],
+  );
+
+  identityRef.current = identity;
+
+  // Asked once. Probing writes to the keychain, so it is not a thing to do on
+  // every render of a form.
+  useEffect(() => {
+    let live = true;
+    void secrets
+      ?.available()
+      .then((yes) => {
+        if (live) {
+          setRemembersPasswords(yes);
+        }
+      })
+      .catch(() => setRemembersPasswords(false));
+    return () => {
+      live = false;
+    };
+  }, [secrets]);
+
+  /**
+   * Writing the settings back as they are changed.
+   *
+   * Debounced, because a stepper held down fires a change per tick and each one
+   * would otherwise be a disk write. Held off until the initial load has
+   * finished, so the defaults are never written over what is on disk in the
+   * moment between the component mounting and the file being read.
+   */
+  const settingsToSave = `${JSON.stringify(view.appearance)}${JSON.stringify(view.ctcp)}${JSON.stringify(view.userOptions)}${JSON.stringify(view.logging)}`;
+  const savedSettings = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (identity === undefined) {
+      // Still loading; the file has not been read yet.
+      return;
+    }
+    if (savedSettings.current === undefined) {
+      // First pass after the load: record what is on disk without rewriting it.
+      savedSettings.current = settingsToSave;
+      return;
+    }
+    if (savedSettings.current === settingsToSave) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      savedSettings.current = settingsToSave;
+      persist();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [settingsToSave, identity, persist]);
+
+  /** Saves the identity, and carries on if the platform cannot keep it. */
+  const saveIdentity = (next: DefaultIdentity): void => {
+    setIdentity(next);
+    setSettingUp(false);
+    persist({ identity: next });
+  };
+
+  // ---------------------------------------------------------------- logging
+  //
+  // Building the store. Keyed on the format and the folder alone: those are the
+  // two answers that make it a different store, and rebuilding it whenever the
+  // scope or the retention changed would drop lines waiting to be written for
+  // no reason.
+  const logFormat = view.logging.format;
+  const logPath = view.logging.path;
+  const profileNames = registry.profiles;
+
+  useEffect(() => {
+    if (createLogStore === undefined) {
+      return;
+    }
+    let live = true;
+    void createLogStore({
+      policy: {
+        ...DEFAULT_LOGGING,
+        format: logFormat,
+        ...(logPath === undefined ? {} : { path: logPath }),
+      },
+      // Plaintext logs are filed under a network's name, since a folder has to
+      // make sense to somebody reading it without the app. This maps a folder
+      // back to the network it belongs to; a folder whose network has since
+      // been removed resolves to nothing rather than to a guess.
+      networkIdFor: (name) => {
+        for (const [id, profile] of profileNames) {
+          if (profile.name === name) {
+            return id;
+          }
+        }
+        return '';
+      },
+    })
+      .then((store) => {
+        if (live) {
+          setLogs(store);
+        }
+      })
+      .catch((error: unknown) => {
+        // No store rather than a broken one. The logging settings are absent
+        // without it, which is honest: there is nowhere to write, and a switch
+        // that wrote nothing would be worse than no switch.
+        setLogs(undefined);
+        toast(`Could not open your logs. ${String(error)}`, 'error');
+      });
+    return () => {
+      live = false;
+    };
+    // `profileNames` is read inside the resolver, which is called later rather
+    // than now; rebuilding the store whenever a profile changes would discard
+    // pending writes for a name lookup that is already current by then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createLogStore, logFormat, logPath, toast]);
+
+  // The policy a network follows: its own where it carries one, the global one
+  // otherwise. Merged rather than either-or, so switching logging off globally
+  // switches it off everywhere — an override that kept writing past that would
+  // be a setting that lies.
+  const policyFor = useCallback(
+    (networkId: string) => effectivePolicy(view.logging, registry.profiles.get(networkId)?.logging),
+    [view.logging, registry.profiles],
+  );
+
+  const logError = useCallback(
+    (message: string) => toast(`Could not write to your logs. ${message}`, 'error'),
+    [toast],
+  );
+
+  useMessageLogging({
+    networks,
+    store: logs,
+    policyFor,
+    isChannelTarget: (networkId, target) => {
+      const support = registry.networks.get(networkId)?.support;
+      return support !== undefined && isChannel(target, support);
+    },
+    onError: logError,
+  });
+
+  usePurge({
+    store: logs,
+    networkIds: networks.map((state) => state.id),
+    cutoffFor: (networkId) => retentionCutoff(policyFor(networkId), new Date()),
+    onError: logError,
+  });
+
+  /** Asks the store where it is and what it costs, for the settings screen. */
+  const refreshLogLocation = useCallback(() => {
+    if (logs === undefined) {
+      return;
+    }
+    void logs
+      .location()
+      .then(setLogLocation)
+      .catch(() => setLogLocation(undefined));
+  }, [logs]);
+
+  // Refreshed when the settings screen opens rather than continuously: it is a
+  // disk measurement, and nobody watches a number tick up while they read.
+  useEffect(() => {
+    if (view.pane === 'settings') {
+      refreshLogLocation();
+    }
+  }, [view.pane, refreshLogLocation]);
+
+  /**
+   * The things the logging settings do.
+   *
+   * All of them report what happened rather than acting silently: these touch
+   * files on somebody's own disk, and "did that work" should not need checking
+   * in a file manager.
+   */
+  const changeLogFolder = (): void => {
+    if (chooseLogFolder === undefined) {
+      return;
+    }
+    void chooseLogFolder().then((folder) => {
+      if (folder === undefined) {
+        return;
+      }
+      // Only where new logs go. Moving what is already written is the user's to
+      // do — a client that quietly relocated somebody's files would be making a
+      // decision about their disk that is not its to make.
+      view.updateLogging({ path: folder });
+      refreshLogLocation();
+      toast(`New logs will be written to ${folder}. What is already written stays where it is.`);
+    });
+  };
+
+  const openLogFolder = (): void => {
+    void logs?.reveal().catch((error: unknown) => logError(String(error)));
+  };
+
+  const exportLogs = (): void => {
+    if (logs === undefined || chooseExportFile === undefined) {
+      return;
+    }
+    void chooseExportFile().then((path) => {
+      if (path === undefined) {
+        return;
+      }
+      void logs
+        .export({ text: '', limit: EXPORT_LIMIT }, path)
+        .then((written) => toast(`Logs written to ${written}.`))
+        .catch((error: unknown) => toast(`Could not write the export. ${String(error)}`, 'error'));
+    });
+  };
+
+  const clearLogs = (): void => {
+    void logs
+      ?.clear()
+      .then((removed) => {
+        refreshLogLocation();
+        toast(removed === 1 ? 'Deleted one logged line.' : `Deleted ${removed} logged lines.`);
+      })
+      .catch((error: unknown) => logError(String(error)));
+  };
+
+  const purgeLogsNow = (): void => {
+    if (logs === undefined) {
+      return;
+    }
+    void (async () => {
+      let removed = 0;
+      for (const state of networks) {
+        const cutoff = retentionCutoff(policyFor(state.id), new Date());
+        if (cutoff !== undefined) {
+          removed += await logs.purge(cutoff, state.id);
+        }
+      }
+      refreshLogLocation();
+      toast(
+        removed === 0
+          ? 'Nothing was old enough to delete.'
+          : `Deleted ${removed} logged ${removed === 1 ? 'line' : 'lines'}.`,
+      );
+    })().catch((error: unknown) => logError(String(error)));
+  };
 
   // A change to what strangers may ask takes effect now, not at the next
   // reconnect — somebody who switches off answering VERSION means this one.
@@ -400,9 +889,25 @@ export function Marmotter({
   // than reusing a spent socket.
   const startSession = useCallback(
     (profile: NetworkProfile, options: { readonly connect?: boolean } = {}): void => {
+      /**
+       * The reconnecting wrapper, around a fresh transport per attempt.
+       *
+       * This was built in Phase 2 and, until now, never used: the shell handed
+       * the session a bare transport, so a dropped connection stayed dropped
+       * and nothing retried. It works down the profile's endpoint list with
+       * backoff and jitter, and gives up after three attempts so somebody is
+       * told rather than left watching a window that looks connected.
+       */
+      const transport = createReconnectingTransport({
+        endpoints: profile.servers,
+        // A used transport is never reconnected; each attempt gets its own.
+        createTransport: () => createTransport(profile),
+        autoReconnect: profile.autoReconnect,
+      });
+
       const built: Session = createSession({
         profile,
-        transport: createTransport(profile),
+        transport,
         ctcp: useView.getState().ctcp,
         // The platform's own store first, where it has one, and the session
         // store behind it. A password typed into the form this run is in the
@@ -415,6 +920,12 @@ export function Marmotter({
           toast(sessionEvent.reason, 'error');
         } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind === 'tls-error') {
           handleTlsError.current(profile);
+        } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind !== 'user') {
+          // Reconnection has already been tried and given up — the wrapper only
+          // reports a close once it is out of attempts — so this is the point
+          // at which somebody needs telling, with the way back in the same
+          // notice rather than somewhere they have to go looking.
+          reportLostConnection.current(profile, sessionEvent.reason);
         } else if (sessionEvent.kind === 'dcc-offer') {
           // Routed through a ref so this long-lived listener always runs the
           // latest logic — the pending-request map and the folder both change
@@ -455,8 +966,43 @@ export function Marmotter({
     [createTransport, resolveSecret, registry, toast],
   );
 
+  // Reachable from the restore effect, which runs once and must not be rebuilt
+  // when this is: rebuilding it would re-register every profile over its own
+  // live session.
+  startSessionRef.current = startSession;
+
+  /**
+   * Moves the passwords a form just took into the platform's keychain.
+   *
+   * They arrive in the in-memory store as a `SecretRef`; this copies the value
+   * the reference stands for into the keychain under the same key, so the
+   * profile written to disk resolves on the next launch. A machine with no
+   * keychain simply keeps them in memory, and the network asks again next time
+   * — which the "Add a network" form says up front.
+   */
+  const keepSecrets = useCallback(
+    (profile: NetworkProfile): void => {
+      if (secrets === undefined) {
+        return;
+      }
+      for (const ref of secretRefsOf(profile)) {
+        const value = readSecret(ref);
+        if (value === undefined) {
+          continue;
+        }
+        void secrets.save(ref, value).catch(() => {
+          // Not worth interrupting for: the session in front of them works, and
+          // the form already said passwords may not be remembered here.
+        });
+      }
+    },
+    [secrets],
+  );
+
   const addNetwork = (profile: NetworkProfile): void => {
     startSession(profile);
+    keepSecrets(profile);
+    persist({ networks: [...registry.profiles.values(), profile] });
     view.select({ networkId: profile.id, target: undefined });
   };
 
@@ -466,6 +1012,10 @@ export function Marmotter({
       startSession(profile);
     }
   };
+
+  // Reachable from the long-lived session listener, which is built once per
+  // session and cannot close over a function that changes every render.
+  reconnectRef.current = reconnect;
 
   // Saving an edit. The transport is built around the profile's endpoints and
   // the identity goes out during registration, so a changed profile reaches the
@@ -477,6 +1027,12 @@ export function Marmotter({
     // Registering the session writes the profile back with it, so there is
     // nothing to save separately.
     startSession(profile, { connect: live });
+    keepSecrets(profile);
+    persist({
+      networks: [...registry.profiles.values()].map((entry) =>
+        entry.id === profile.id ? profile : entry,
+      ),
+    });
     setEditingId(undefined);
     toast(
       live
@@ -486,8 +1042,20 @@ export function Marmotter({
   };
 
   const removeNetwork = (networkId: string): void => {
+    const profile = registry.profiles.get(networkId);
     registry.removeProfile(networkId);
     view.forgetNetwork(networkId);
+    persist({
+      networks: [...registry.profiles.values()].filter((entry) => entry.id !== networkId),
+    });
+    // A password for a network nobody has any more is left in the keychain
+    // otherwise, which is somebody's credential outliving their decision to
+    // delete it.
+    if (profile !== undefined && secrets !== undefined) {
+      for (const ref of secretRefsOf(profile)) {
+        void secrets.forget(ref).catch(() => {});
+      }
+    }
   };
 
   const disconnect = (networkId: string): void => {
@@ -589,6 +1157,61 @@ export function Marmotter({
     [toast],
   );
 
+  /**
+   * Forgetting an XDCC request we are still waiting on.
+   *
+   * Without this, dropping a `requested` row would leave its id in the pending
+   * queue, and a bot answering late would be matched back to a row that no
+   * longer exists — a file downloading with nothing on screen to show or stop
+   * it. Forgotten, a late answer is simply an unsolicited offer, which is what
+   * it now is.
+   */
+  const forgetPendingRequest = useCallback((offerId: string): void => {
+    for (const [key, queue] of pendingXdcc.current) {
+      const rest = queue.filter((id) => id !== offerId);
+      if (rest.length === queue.length) {
+        continue;
+      }
+      if (rest.length === 0) {
+        pendingXdcc.current.delete(key);
+      } else {
+        pendingXdcc.current.set(key, rest);
+      }
+    }
+  }, []);
+
+  /**
+   * Taking a row off the list, whatever state it is in.
+   *
+   * The way out of a row nothing else can shift: a pack a bot never answered
+   * sits at `requested` with no control on it, and used to survive Clear too.
+   * Anything still running is stopped first — removing the row of a live
+   * transfer without cancelling it would leave the socket running with nothing
+   * on screen to stop it, which is the thing Clear was avoiding.
+   */
+  const dismissOffer = useCallback(
+    (offer: DccOfferRecord): void => {
+      const transfer = transfers.current.get(offer.id);
+      if (transfer !== undefined) {
+        cancelledOffers.current.add(offer.id);
+        transfer.cancel();
+      }
+      forgetPendingRequest(offer.id);
+      useView.getState().removeDccOffer(offer.id);
+    },
+    [forgetPendingRequest],
+  );
+
+  /** Clearing the list, forgetting the requests the dropped rows were waiting on. */
+  const clearOffers = useCallback((): void => {
+    for (const offer of useView.getState().dccOffers) {
+      if (!isTransferInFlight(offer.status)) {
+        forgetPendingRequest(offer.id);
+      }
+    }
+    useView.getState().clearDccOffers();
+  }, [forgetPendingRequest]);
+
   // Opening the file manager on a saved download. Only wired where the platform
   // can do it — desktop — and only ever on a path the shell itself returned.
   const revealOffer = useCallback(
@@ -632,6 +1255,27 @@ export function Marmotter({
   // silently trusted; the user is told plainly and offered a one-click way to
   // trust it and remember the choice. Held in a ref so the long-lived session
   // listener always runs the current version.
+  /**
+   * Telling somebody the connection is gone, once retrying has stopped.
+   *
+   * Held in a ref for the same reason as the TLS handler: the session listener
+   * outlives every render, and a closure captured at build time would keep
+   * calling last week's `toast`.
+   *
+   * Deliberately not raised for each failed attempt. Three notices for one
+   * outage is noise, and the sidebar's own status dot already shows the network
+   * is not up while it is trying.
+   */
+  const reportLostConnection = useRef<(profile: NetworkProfile, reason: CloseReason) => void>(
+    () => {},
+  );
+  reportLostConnection.current = (profile, reason) => {
+    toast(`${lostConnectionText(profile.name, reason)}`, 'error', {
+      label: 'Try again',
+      onSelect: () => reconnectRef.current(profile.id),
+    });
+  };
+
   const handleTlsError = useRef<(profile: NetworkProfile) => void>(() => {});
   handleTlsError.current = (profile) => {
     const verifying = profile.servers.some(
@@ -875,6 +1519,7 @@ export function Marmotter({
       network,
       channel: conversation,
       ourNick: network.nick,
+      operator: isOperator,
       callbacks: {
         onMessage: messageMember,
         onWhois: openProfile,
@@ -888,6 +1533,14 @@ export function Marmotter({
         // so both open a builder rather than firing a default.
         onBanBuilder: (target) => setActing({ member: target, kind: 'ban' }),
         onKickBuilder: (target) => setActing({ member: target, kind: 'kick' }),
+        // The tables, which fetch what they show. This is the route to lifting
+        // a ban the client has not seen yet, and the reason the menu's own
+        // lift entries can be honest about only knowing what they know.
+        onOpenList: (kind) => {
+          setChannelPanelTab(kind);
+          setChannelPanelOpen(true);
+        },
+        onKillBuilder: (target) => setKilling(target),
       },
     });
   };
@@ -973,6 +1626,7 @@ export function Marmotter({
               label: 'Channel settings…',
               onSelect: () => {
                 view.select(ref);
+                setChannelPanelTab('settings');
                 setChannelPanelOpen(true);
               },
             },
@@ -1129,7 +1783,10 @@ export function Marmotter({
         network !== undefined &&
         isChannel(selection.target, network.support)
           ? {
-              onTitleActivate: () => setChannelPanelOpen(true),
+              onTitleActivate: () => {
+                setChannelPanelTab('settings');
+                setChannelPanelOpen(true);
+              },
               titleHint: 'Double-click to open channel settings',
             }
           : {})}
@@ -1159,7 +1816,14 @@ export function Marmotter({
                 onOpenAccount={() => view.setPane('account')}
               />
             )}
-            {network === undefined ? null : (
+            {/* The raw log is the network's whole line stream, not one
+                conversation's, so it belongs to the network rather than to
+                whatever channel happens to be open. It appears on the server
+                tab, which is the thing in the sidebar that means "the network
+                itself" — from a channel it read as though it were that
+                channel's log, which it never was. Selecting a conversation
+                returns the pane to chat on its own. */}
+            {network === undefined || selection?.target !== undefined ? null : (
               <IconButton
                 label={view.pane === 'raw-log' ? 'Back to messages' : 'Show the raw log'}
                 icon={<span aria-hidden="true">{'</>'}</span>}
@@ -1185,7 +1849,9 @@ export function Marmotter({
                     label={`${serviceDisplayName(conversationService)} commands`}
                     icon={<span aria-hidden="true">⌘</span>}
                     pressed={serviceMenu !== undefined}
-                    onClick={(event) => openServiceMenu(conversationService, event.currentTarget)}
+                    onClick={(event) =>
+                      openServiceMenuUnder(conversationService, event.currentTarget)
+                    }
                   />
                 ) : null}
                 {isChannel(selection.target, network.support) ? (
@@ -1212,6 +1878,24 @@ export function Marmotter({
           onCtcpChange={view.updateCtcp}
           userOptions={view.userOptions}
           onUserOptionsChange={view.updateUserOptions}
+          {...(identity === undefined
+            ? {}
+            : { identity: { nick: identity.nick, onEdit: () => setSettingUp(true) } })}
+          {...(logs === undefined
+            ? {}
+            : {
+                logging: {
+                  policy: view.logging,
+                  onChange: view.updateLogging,
+                  location: logLocation,
+                  onChooseFolder: changeLogFolder,
+                  onOpenFolder: openLogFolder,
+                  onExport: exportLogs,
+                  onClear: clearLogs,
+                  onPurgeNow: purgeLogsNow,
+                  onSearch: () => view.setPane('log-search'),
+                },
+              })}
           dccAvailable={dcc !== undefined}
           onChooseDownloadFolder={chooseDownloadFolder}
           onReconnect={reconnect}
@@ -1219,6 +1903,10 @@ export function Marmotter({
           onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
+          onResetSettings={() => {
+            view.resetSettings();
+            toast('Settings are back to their defaults. Your networks are untouched.');
+          }}
         />
       ) : view.pane === 'dcc' ? (
         <DccBrowser
@@ -1229,8 +1917,11 @@ export function Marmotter({
           onCancel={cancelOffer}
           onChooseFolder={chooseDownloadFolder}
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
-          onClear={view.clearDccOffers}
+          onClear={clearOffers}
+          onDismiss={dismissOffer}
         />
+      ) : view.pane === 'log-search' && logs !== undefined ? (
+        <LogSearch className="min-h-0 flex-1" store={logs} />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
       ) : view.pane === 'account' && network !== undefined && session !== undefined ? (
@@ -1351,6 +2042,12 @@ export function Marmotter({
             channels={[...network.channels.values()].map((entry) => entry.name)}
             fold={(text) => fold(text, network.support.caseMapping)}
             operatorCommands={registry.profiles.get(network.id)?.operatorCommands === true}
+            {...(conversationService !== undefined && isOperator
+              ? {
+                  onServiceMenu: (at: { x: number; y: number }) =>
+                    openServiceMenu(conversationService, at),
+                }
+              : {})}
             disabled={network.phase !== 'registered'}
             disabledReason="Not connected yet"
           />
@@ -1406,7 +2103,13 @@ export function Marmotter({
         main={main}
       />
 
-      <AddNetwork open={adding} onClose={() => setAdding(false)} onAdd={addNetwork} />
+      <AddNetwork
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdd={addNetwork}
+        {...(identity === undefined ? {} : { defaultIdentity: identity })}
+        remembersPasswords={remembersPasswords}
+      />
 
       {editingProfile === undefined ? null : (
         <AddNetwork
@@ -1414,6 +2117,7 @@ export function Marmotter({
           editing={editingProfile}
           onClose={() => setEditingId(undefined)}
           onAdd={saveNetwork}
+          remembersPasswords={remembersPasswords}
         />
       )}
 
@@ -1445,6 +2149,19 @@ export function Marmotter({
         />
       )}
 
+      {/* The first thing Marmotter asks, and the thing Settings reopens. Held
+          back until the saved identity has been read, so it does not flash up
+          in front of somebody who answered it last week. */}
+      {identity === undefined ? null : (
+        <FirstRun
+          open={settingUp}
+          initial={identity}
+          confirmLabel={identity.nick === '' ? 'Continue' : 'Save'}
+          onDone={saveIdentity}
+          onSkip={() => setSettingUp(false)}
+        />
+      )}
+
       <TextPrompt
         open={joiningNetwork !== undefined}
         title="Join a channel"
@@ -1456,6 +2173,30 @@ export function Marmotter({
         onCancel={() => setJoiningNetwork(undefined)}
       />
 
+      {/* Disconnecting somebody is a server operator's action and asks for a
+          reason, because the person on the other end is shown it and because a
+          reason is the difference between a record and a mystery. It does not
+          keep them off the network — they can reconnect — and the copy says so
+          rather than letting somebody expect otherwise. */}
+      <TextPrompt
+        open={killing !== undefined}
+        title={killing === undefined ? 'Disconnect' : `Disconnect ${killing.nick}`}
+        label="Reason"
+        placeholder="Why they are being disconnected"
+        hint="They are shown this, and can reconnect straight away. To keep somebody out of a channel, ban them instead."
+        confirmLabel="Disconnect"
+        onConfirm={(reason) => {
+          const target = killing;
+          setKilling(undefined);
+          if (target === undefined || session === undefined) {
+            return;
+          }
+          session.send(`KILL ${target.nick} :${reason.trim()}`);
+          toast(`Asked the network to disconnect ${target.nick}.`);
+        }}
+        onCancel={() => setKilling(undefined)}
+      />
+
       {network === undefined ||
       conversation === undefined ||
       session === undefined ||
@@ -1464,6 +2205,7 @@ export function Marmotter({
         <>
           <ChannelPanel
             open={channelPanelOpen}
+            initialTab={channelPanelTab}
             onClose={() => setChannelPanelOpen(false)}
             network={network}
             channel={conversation}
@@ -1542,6 +2284,7 @@ export function Marmotter({
 
       <ToastRegion
         toasts={toasts}
+        dismissMs={view.userOptions.toastSeconds * 1000}
         onDismiss={(id) => setToasts((current) => current.filter((entry) => entry.id !== id))}
       />
 

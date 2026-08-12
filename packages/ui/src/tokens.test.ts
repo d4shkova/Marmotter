@@ -250,6 +250,18 @@ describe('typography, geometry, and motion', () => {
     expect(declaredValue('--duration-sheet')).toBe('200ms');
     expect(declaredValue('--easing-sheet')).toBe('cubic-bezier(0.32, 0.72, 0, 1)');
     expect(declaredValue('--duration-press')).toBe('120ms');
+    expect(declaredValue('--duration-fade')).toBe('200ms');
+  });
+
+  it('keeps the fade out of the reduced-motion override', () => {
+    // CLAUDE.md: reduced motion cuts transforms and keeps opacity changes. The
+    // two duration tokens that drive movement are zeroed there; --duration-fade
+    // drives opacity alone and must survive, or a toast disappears between
+    // frames for exactly the people least able to track that.
+    const reduced = tokensCss.slice(tokensCss.indexOf('prefers-reduced-motion'));
+    expect(reduced).toContain('--duration-sheet: 0ms');
+    expect(reduced).toContain('--duration-press: 0ms');
+    expect(reduced).not.toContain('--duration-fade:');
   });
 });
 

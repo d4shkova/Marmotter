@@ -20,6 +20,7 @@ import type {
   Transport,
   Unsubscribe,
 } from '@marmotter/shared';
+import { connectErrorReason } from './connect-error.js';
 import { Listeners } from './listeners.js';
 
 export interface BackoffPolicy {
@@ -44,6 +45,18 @@ export const DEFAULT_BACKOFF: BackoffPolicy = {
   factor: 2,
   jitter: 0.5,
 };
+
+/**
+ * How many times a dropped connection is retried before the user is told.
+ *
+ * Three. Retrying forever is what a bouncer does, and a desktop client that
+ * does it quietly is one that looks connected while it is not — the person sees
+ * a sidebar full of channels and no messages, with nothing saying why. Three
+ * attempts covers the ordinary cases (a router rebooting, a laptop waking, a
+ * server bouncing) and anything longer than that is worth interrupting for,
+ * with a way to try again.
+ */
+export const DEFAULT_MAX_ATTEMPTS = 3;
 
 /** Computes the wait before a given attempt, jitter included. */
 export function backoffDelay(
@@ -78,6 +91,13 @@ export interface ReconnectingOptions {
   /** Builds a fresh transport per attempt. A used one is never reconnected. */
   readonly createTransport: (endpoint: ServerEndpoint) => Transport;
   readonly autoReconnect: boolean;
+  /**
+   * Attempts before giving up and reporting a close. Defaults to three.
+   *
+   * `Infinity` retries forever, which is what somebody pointing Marmotter at
+   * their own bouncer would want and is not the default.
+   */
+  readonly maxAttempts?: number;
   readonly backoff?: BackoffPolicy;
   readonly timeoutMs?: number;
   readonly clientCertPath?: string;
@@ -101,6 +121,14 @@ export interface ReconnectingTransport extends Omit<Transport, 'connect'> {
   /** Current state, for the connection indicator in the sidebar. */
   readonly state: ConnectionState;
   onStateChange(callback: (state: ConnectionState) => void): Unsubscribe;
+  /**
+   * Reports that the connection is dead although the socket has not said so.
+   *
+   * The half-open case: the network went away without anything being closed, so
+   * no close event will ever arrive and the keepalive noticed the silence. This
+   * puts the same machinery in motion that a real close would.
+   */
+  dropped(reason: CloseReason): void;
 }
 
 /**
@@ -118,6 +146,7 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
   const states = new Listeners<ConnectionState>();
 
   const backoff = options.backoff ?? DEFAULT_BACKOFF;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const schedule = options.setTimeoutFn ?? ((handler, ms) => setTimeout(handler, ms));
   const unschedule = options.clearTimeoutFn ?? ((handle) => clearTimeout(handle as never));
   const random = options.random ?? Math.random;
@@ -160,6 +189,13 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
 
   const scheduleRetry = (reason: CloseReason): void => {
     attempt += 1;
+    // Out of attempts. Reported as a close, which is what the session and the
+    // interface already know how to react to — and what puts a "try again" in
+    // front of somebody rather than leaving them watching a dead window.
+    if (attempt > maxAttempts) {
+      stop(reason);
+      return;
+    }
     // Move to the next endpoint every attempt, wrapping around. A profile with
     // one endpoint simply retries it.
     endpointIndex = (endpointIndex + 1) % Math.max(1, options.endpoints.length);
@@ -222,11 +258,18 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
       if (stopped) {
         return;
       }
-      const reason: CloseReason = {
+      // The classification the transport made, kept. A rejected certificate
+      // arrives as a `TransportConnectError` carrying `tls-error`, and
+      // flattening that into a generic network failure is precisely what stops
+      // the interface offering to trust it — the certificate failure ends up
+      // looking identical to the server being down. It also makes the failure
+      // look retryable when it is not: `isPermanent` reads this kind, and a
+      // certificate does not change between attempts.
+      const reason: CloseReason = connectErrorReason(error) ?? {
         kind: 'network-error',
         message: error instanceof Error ? error.message : String(error),
       };
-      if (!options.autoReconnect) {
+      if (!options.autoReconnect || isPermanent(reason)) {
         stop(reason);
         return;
       }
@@ -256,6 +299,19 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
     onLine: (callback) => lines.add(callback),
     onClose: (callback) => closes.add(callback),
     onStateChange: (callback) => states.add(callback),
+
+    dropped(reason: CloseReason): void {
+      if (stopped || state.kind !== 'connected') {
+        return;
+      }
+      // Tear the socket down before retrying. It is not going to close on its
+      // own — that is the whole problem — and leaving it open would leak a
+      // handle per drop, which on a flaky link is a handle every few minutes.
+      const current = active;
+      detach();
+      current?.disconnect();
+      handleClose(reason);
+    },
 
     disconnect(): void {
       if (stopped) {

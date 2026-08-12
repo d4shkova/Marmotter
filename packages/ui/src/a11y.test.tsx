@@ -30,12 +30,17 @@ import { MemberList } from './app/MemberList.js';
 import { MessageList } from './app/MessageList.js';
 import { MessageRow } from './app/MessageRow.js';
 import { RawLog } from './app/RawLog.js';
+import { FirstRun } from './app/FirstRun.js';
+import { LogSearch } from './app/LogSearch.js';
+import { LoggingSettings } from './app/LoggingSettings.js';
 import { Settings } from './app/Settings.js';
 import { Sidebar } from './app/Sidebar.js';
 import { CreateChannel } from './app/CreateChannel.js';
 import { ListPrompt } from './app/ListPrompt.js';
 import { TextPrompt } from './app/TextPrompt.js';
 import { buildRows } from './app/rows.js';
+import { defaultLoggingPolicy } from '@marmotter/shared';
+import { DEFAULT_USER_OPTIONS } from './app/view-store.js';
 import { Decoder } from './decoder/Decoder.js';
 import { ListGroup, SectionHeader } from './layout/ListGroup.js';
 import { NavBar } from './layout/NavBar.js';
@@ -450,6 +455,37 @@ describe('every component passes axe', () => {
       />,
     ],
     ['RawLog', <RawLog key="rl" network={networkFixture()} onCopy={noop} />],
+    ['FirstRun', <FirstRun key="fr" open onDone={noop} onSkip={noop} />],
+    [
+      'LoggingSettings',
+      <LoggingSettings
+        key="ls"
+        policy={{ ...defaultLoggingPolicy, enabled: true, retentionDays: 30 }}
+        onChange={noop}
+        location={{ path: '/logs', bytes: 4096 }}
+        onChooseFolder={noop}
+        onOpenFolder={noop}
+        onExport={noop}
+        onClear={noop}
+        onPurgeNow={noop}
+        onSearch={noop}
+      />,
+    ],
+    [
+      'LogSearch',
+      <LogSearch
+        key="lsearch"
+        store={{
+          append: async () => {},
+          search: async () => [],
+          purge: async () => 0,
+          export: async (_query, path) => path,
+          location: async () => ({ path: '/logs', bytes: 0 }),
+          reveal: async () => {},
+          clear: async () => 0,
+        }}
+      />,
+    ],
     [
       'Settings',
       <Settings
@@ -468,7 +504,7 @@ describe('every component passes axe', () => {
         onAppearanceChange={noop}
         ctcp={DEFAULT_CTCP_POLICY}
         onCtcpChange={noop}
-        userOptions={{ dccMonitorEnabled: false, downloadFolder: undefined }}
+        userOptions={DEFAULT_USER_OPTIONS}
         onUserOptionsChange={noop}
         dccAvailable={false}
         onChooseDownloadFolder={noop}
@@ -477,6 +513,7 @@ describe('every component passes axe', () => {
         onEdit={noop}
         onRemove={noop}
         onAddNetwork={noop}
+        onResetSettings={noop}
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],

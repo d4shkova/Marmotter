@@ -12,8 +12,15 @@ import {
   segment,
   stripFormatting,
 } from './format.js';
+import { EMPTY_IDENTITY } from '@marmotter/shared';
+import { lostConnectionText, shouldAskForIdentity } from './Marmotter.js';
 import { buildRows, summarise } from './rows.js';
-import { isHighlight, orderNetworks } from './view-store.js';
+import {
+  TOAST_SECONDS_RANGE,
+  clampToastSeconds,
+  isHighlight,
+  orderNetworks,
+} from './view-store.js';
 
 const at = (iso: string) => new Date(iso);
 
@@ -427,5 +434,91 @@ describe('network order', () => {
 
   it('leaves an unordered list alone', () => {
     expect(orderNetworks(['a', 'b'], [])).toEqual(['a', 'b']);
+  });
+});
+
+describe('the notice timeout', () => {
+  it('keeps a chosen value inside the range it offers', () => {
+    expect(clampToastSeconds(30)).toBe(30);
+    expect(clampToastSeconds(TOAST_SECONDS_RANGE.min - 5)).toBe(TOAST_SECONDS_RANGE.min);
+    expect(clampToastSeconds(TOAST_SECONDS_RANGE.max + 500)).toBe(TOAST_SECONDS_RANGE.max);
+  });
+
+  it('falls back to the default rather than trusting a value that is not a number', () => {
+    // Restored settings come off disk, and a file somebody has edited by hand
+    // is the normal way a NaN reaches this. A toast with a NaN timeout never
+    // leaves the screen.
+    expect(clampToastSeconds(Number.NaN)).toBe(TOAST_SECONDS_RANGE.default);
+    expect(clampToastSeconds(Number.POSITIVE_INFINITY)).toBe(TOAST_SECONDS_RANGE.default);
+  });
+
+  it('rounds a fractional value, since the stepper counts whole seconds', () => {
+    expect(clampToastSeconds(7.4)).toBe(7);
+    expect(clampToastSeconds(7.6)).toBe(8);
+  });
+});
+
+describe('what to say when a connection is lost for good', () => {
+  it('tells the reasons apart, because the answers differ', () => {
+    // Telling somebody to check their internet when the server rejected them
+    // wastes their time looking in the wrong place.
+    expect(lostConnectionText('Libera.Chat', { kind: 'timeout' })).toContain('did not respond');
+    expect(lostConnectionText('Libera.Chat', { kind: 'server' })).toContain(
+      'closed the connection',
+    );
+    expect(lostConnectionText('Libera.Chat', { kind: 'tls-error', message: 'expired' })).toContain(
+      'certificate',
+    );
+  });
+
+  it('points at the connection when there is nothing more specific to say', () => {
+    expect(lostConnectionText('Libera.Chat', { kind: 'network-error', message: '' })).toContain(
+      'Check your internet connection',
+    );
+  });
+
+  it('carries the reason the transport gave, where it gave one', () => {
+    expect(
+      lostConnectionText('Libera.Chat', {
+        kind: 'network-error',
+        message: 'The server stopped responding.',
+      }),
+    ).toContain('The server stopped responding.');
+  });
+
+  it('names the network and never apologises', () => {
+    for (const reason of [
+      { kind: 'timeout' },
+      { kind: 'server' },
+      { kind: 'network-error', message: '' },
+      { kind: 'user' },
+    ] as const) {
+      const text = lostConnectionText('Libera.Chat', reason);
+      expect(text).toContain('Libera.Chat');
+      expect(text.toLowerCase()).not.toContain('sorry');
+      expect(text).toMatch(/\.$/);
+    }
+  });
+});
+
+describe('whether to ask for a name on launch', () => {
+  const blank = EMPTY_IDENTITY;
+  const named = { ...EMPTY_IDENTITY, nick: 'tamsin' };
+
+  it('asks on a first launch where the answer can be kept', () => {
+    expect(shouldAskForIdentity(blank, true)).toBe(true);
+  });
+
+  it('does not ask again once there is a name', () => {
+    expect(shouldAskForIdentity(named, true)).toBe(false);
+  });
+
+  it('never asks where the answer cannot be kept', () => {
+    // The browser build. Without this the same modal covers the app on every
+    // page load, forever, and could never remember what was typed — which is
+    // exactly what it did, and what the end-to-end suite caught by being
+    // unable to click anything behind it.
+    expect(shouldAskForIdentity(blank, false)).toBe(false);
+    expect(shouldAskForIdentity(named, false)).toBe(false);
   });
 });

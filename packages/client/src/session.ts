@@ -39,6 +39,7 @@ import type {
   Transport,
   Unsubscribe,
 } from '@marmotter/shared';
+import { type Keepalive, createKeepalive } from './keepalive.js';
 import { Listeners } from './transport/listeners.js';
 import { connectErrorReason } from './transport/connect-error.js';
 import type { ReconnectingTransport } from './transport/reconnecting.js';
@@ -89,6 +90,15 @@ export interface SessionOptions {
   readonly historyPageSize?: number;
   /** Which automatic CTCP answers are switched on. Defaults to all of them. */
   readonly ctcp?: CtcpPolicy;
+  /**
+   * How long the connection may be silent before the session checks it is alive.
+   *
+   * Zero switches the check off, which is what a test driving a scripted
+   * transcript wants — there is no socket there to go half-open.
+   */
+  readonly keepaliveIdleMs?: number;
+  /** How long to wait for any answer before calling the connection dead. */
+  readonly keepaliveTimeoutMs?: number;
 }
 
 /** Something the session did that the interface may want to react to. */
@@ -590,9 +600,18 @@ export function createSession(options: SessionOptions): Session {
     }
   };
 
+  /**
+   * The liveness watch, in a holder because it and `handleClose` refer to each
+   * other: the watch stops when the connection closes, and a connection that
+   * has gone silent is closed by the watch. A holder rather than a `let` so the
+   * binding itself is fixed and only its contents are filled in below.
+   */
+  const watch: { current: Keepalive | undefined } = { current: undefined };
+
   const handleClose = (reason: CloseReason): void => {
     mechanism = undefined;
     mechanismStarted = false;
+    watch.current?.stop();
     // Batches do not survive a connection, and a half-open one would silently
     // absorb the first messages of the next.
     publish({
@@ -614,14 +633,98 @@ export function createSession(options: SessionOptions): Session {
   };
 
   /**
+   * Watching for a connection that has died without saying so.
+   *
+   * The half-open socket: the network goes away, nothing sends a FIN, and the
+   * client sits showing "connected" forever. Started once registration
+   * completes — before that the server is talking to us anyway — and told about
+   * every inbound line, which is what counts as proof of life.
+   */
+  watch.current = createKeepalive({
+    send: (line) => {
+      try {
+        transport.send(line);
+      } catch {
+        // The transport refusing to send is itself the answer: there is nothing
+        // to ping through. The timeout below reaches the same conclusion.
+      }
+    },
+    onDead: () => {
+      const reason: CloseReason = {
+        kind: 'network-error',
+        message: 'The server stopped responding.',
+      };
+      // A reconnecting transport is told, so it retries. Anything else is
+      // disconnected, which at least stops the interface claiming otherwise.
+      if ('dropped' in transport) {
+        transport.dropped(reason);
+      } else {
+        transport.disconnect();
+        handleClose(reason);
+      }
+    },
+    ...(options.keepaliveIdleMs === undefined ? {} : { idleMs: options.keepaliveIdleMs }),
+    ...(options.keepaliveTimeoutMs === undefined ? {} : { timeoutMs: options.keepaliveTimeoutMs }),
+  });
+
+  /**
    * Listens from the moment the session exists, not from `connect`.
    *
    * A reconnecting transport re-establishes on its own schedule and starts
    * delivering lines again without anyone calling `connect`. A session that
    * only listened while it thought it was connected would miss them.
    */
-  subscriptions.push(transport.onLine(handleLine));
+  subscriptions.push(
+    transport.onLine((line) => {
+      // Started from the first line rather than from `connect`: a reconnecting
+      // transport re-establishes on its own schedule without anyone calling
+      // `connect`, and the watch has to cover those connections too. `start` is
+      // a no-op once it is running.
+      //
+      // Noted before the line is parsed — an unparseable line is still evidence
+      // that the other end is there, which is all this needs to know.
+      watch.current?.start();
+      watch.current?.noteActivity();
+      handleLine(line);
+    }),
+  );
   subscriptions.push(transport.onClose(handleClose));
+
+  /**
+   * Following a reconnecting transport while it works.
+   *
+   * Two jobs, and the second is the one whose absence is silent. Between a drop
+   * and the attempt that fixes it the transport emits no close — that is the
+   * point of it — so the phase has to be moved to `connecting` here or the
+   * sidebar shows a connected network that is not carrying anything.
+   *
+   * And every connection it establishes has to be registered on. Nobody calls
+   * `connect` for the ones it makes on its own, so without this a reconnect
+   * would open a socket, send no `NICK`, and sit there until the server gave up
+   * — a reconnection that reconnects and then goes quiet.
+   */
+  const reconnecting = 'onStateChange' in transport ? transport : undefined;
+
+  if (reconnecting !== undefined) {
+    subscriptions.push(
+      reconnecting.onStateChange((connection) => {
+        if (connection.kind === 'connecting' || connection.kind === 'waiting') {
+          watch.current?.stop();
+          // Only from a state that claimed otherwise. A first connection
+          // already sets this in `connect`, and republishing would discard the
+          // `lastClose` it deliberately cleared.
+          if (state.phase === 'registered' || state.phase === 'registering') {
+            publish({ ...state, phase: 'connecting', registeredAt: undefined });
+          }
+          return;
+        }
+
+        if (connection.kind === 'connected' && !destroyed) {
+          void register();
+        }
+      }),
+    );
+  }
 
   const detach = (): void => {
     for (const stop of subscriptions) {
@@ -668,6 +771,32 @@ export function createSession(options: SessionOptions): Session {
     }
   };
 
+  /**
+   * Everything a new connection needs before it is usable.
+   *
+   * Extracted because it runs once per *connection*, not once per session: a
+   * reconnecting transport establishes a new socket without anybody calling
+   * `connect`, and a socket that is never sent `NICK` and `USER` sits there
+   * until the server gives up on it. Leaving this inside `connect` was a
+   * reconnection that reconnected and then went quiet.
+   */
+  const register = async (): Promise<void> => {
+    events.emit({ kind: 'connected' });
+
+    const opening = startRegistration(state, profile.identity);
+    publish(opening.state);
+
+    // A server password is not SASL and goes before NICK, so it is prepended
+    // rather than sent alongside the rest.
+    if (profile.auth?.type === 'server-password') {
+      const password = await options.resolveSecret?.(profile.auth.password);
+      if (password !== undefined && !destroyed) {
+        write([`PASS ${password}`]);
+      }
+    }
+    write(opening.send);
+  };
+
   return {
     id: profile.id,
 
@@ -708,20 +837,18 @@ export function createSession(options: SessionOptions): Session {
         throw error;
       }
 
-      events.emit({ kind: 'connected' });
-
-      const opening = startRegistration(state, profile.identity);
-      publish(opening.state);
-
-      // A server password is not SASL and goes before NICK, so it is prepended
-      // rather than sent alongside the rest.
-      if (profile.auth?.type === 'server-password') {
-        const password = await options.resolveSecret?.(profile.auth.password);
-        if (password !== undefined && !destroyed) {
-          write([`PASS ${password}`]);
-        }
+      // A reconnecting transport never rejects: a permanent failure arrives as
+      // a close, which `handleClose` has already turned into a disconnected
+      // phase, and a retry is still in flight. Registering on top of either
+      // would emit `connected`, publish `registering`, and then throw on the
+      // first write to a socket that is not there. Those transports register
+      // from their own state instead, below, which is also what covers the
+      // connections they establish later without anybody calling `connect`.
+      if (reconnecting !== undefined) {
+        return;
       }
-      write(opening.send);
+
+      await register();
     },
 
     disconnect(reason) {

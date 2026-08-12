@@ -1,6 +1,6 @@
 import type { NetworkState } from '@marmotter/client';
 import { DEFAULT_VERSION_TEXT, type CtcpPolicy } from '@marmotter/protocol';
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { StatusDot, type ConnectionStatus } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
@@ -8,7 +8,13 @@ import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
-import type { Appearance, UserOptions } from './view-store.js';
+import { LoggingSettings, type LoggingSettingsProps } from './LoggingSettings.js';
+import {
+  TOAST_SECONDS_RANGE,
+  clampToastSeconds,
+  type Appearance,
+  type UserOptions,
+} from './view-store.js';
 
 export interface SettingsProps {
   readonly networks: readonly NetworkState[];
@@ -18,6 +24,16 @@ export interface SettingsProps {
   readonly onCtcpChange: (changes: Partial<CtcpPolicy>) => void;
   readonly userOptions: UserOptions;
   readonly onUserOptionsChange: (changes: Partial<UserOptions>) => void;
+  /**
+   * The logging controls, or absent where the platform keeps nothing.
+   *
+   * Absent on web rather than disabled: there is no store there to configure,
+   * and a greyed-out group would imply logging is a thing that could be
+   * switched on in a browser tab. It cannot.
+   */
+  readonly logging?: LoggingSettingsProps;
+  /** The name new networks start from, and a way back to the form that set it. */
+  readonly identity?: { readonly nick: string; readonly onEdit: () => void };
   /**
    * Whether this platform can run the DCC file monitor at all.
    *
@@ -36,6 +52,14 @@ export interface SettingsProps {
   /** Forgets a network and tears its connection down. */
   readonly onRemove: (networkId: string) => void;
   readonly onAddNetwork: () => void;
+  /**
+   * Puts every setting on this screen back the way it shipped.
+   *
+   * Settings only. Networks, the saved name and anything already written to
+   * disk are the user's data rather than a preference, and the copy says so —
+   * a button that took those under this label would be a nasty surprise.
+   */
+  readonly onResetSettings: () => void;
   readonly className?: string;
 }
 
@@ -103,6 +127,8 @@ export function Settings({
   onCtcpChange,
   userOptions,
   onUserOptionsChange,
+  logging,
+  identity,
   dccAvailable,
   onChooseDownloadFolder,
   onReconnect,
@@ -110,12 +136,34 @@ export function Settings({
   onEdit,
   onRemove,
   onAddNetwork,
+  onResetSettings,
   className,
 }: SettingsProps): ReactNode {
+  // Two steps, like deleting the logs: it undoes every choice on this screen at
+  // once, and a misplaced click should not be able to do that.
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
   return (
     <div className={className} style={SETTINGS_TEXT_SCALE}>
       <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6">
         <h1 className="text-title-2 font-bold text-[var(--label-primary)]">Settings</h1>
+
+        {identity === undefined ? null : (
+          <ListGroup
+            header="You"
+            footer="The name new networks start from. Each network can still use a different one."
+          >
+            <ListRow
+              title="Your name"
+              subtitle={identity.nick === '' ? 'Not set' : identity.nick}
+              trailing={
+                <Button size="small" onClick={identity.onEdit}>
+                  {identity.nick === '' ? 'Set' : 'Change'}
+                </Button>
+              }
+            />
+          </ListGroup>
+        )}
 
         <ListGroup
           header="Networks"
@@ -300,6 +348,8 @@ export function Settings({
           </div>
         </ListGroup>
 
+        {logging === undefined ? null : <LoggingSettings {...logging} />}
+
         <ListGroup
           header="User options"
           footer="Small conveniences for how Marmotter behaves for you."
@@ -313,6 +363,23 @@ export function Settings({
                 onAppearanceChange({ showBrowseChannelsShortcut })
               }
             />
+          </div>
+
+          <div className="px-4 py-3">
+            <Stepper
+              label="How long notices stay"
+              value={userOptions.toastSeconds}
+              min={TOAST_SECONDS_RANGE.min}
+              max={TOAST_SECONDS_RANGE.max}
+              format={(seconds) => `${seconds} seconds`}
+              onChange={(toastSeconds) =>
+                onUserOptionsChange({ toastSeconds: clampToastSeconds(toastSeconds) })
+              }
+            />
+            <p className="mt-1 text-footnote text-[var(--label-tertiary)]">
+              The messages that appear at the bottom of the screen. Clicking one clears it sooner,
+              and pointing at one holds it until you look away.
+            </p>
           </div>
 
           {!dccAvailable ? null : (
@@ -341,6 +408,43 @@ export function Settings({
               </div>
             </>
           )}
+        </ListGroup>
+
+        <ListGroup
+          header="Start over"
+          footer="Your networks, your name and anything already saved to this device are left alone."
+        >
+          <ListRow
+            title="Reset settings to their defaults"
+            subtitle={
+              confirmingReset
+                ? 'Every choice on this screen goes back to how it shipped. This cannot be undone.'
+                : 'Puts everything on this screen back the way it was when you installed Marmotter.'
+            }
+            trailing={
+              confirmingReset ? (
+                <div className="flex items-center gap-1.5">
+                  <Button size="small" onClick={() => setConfirmingReset(false)}>
+                    Keep them
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="destructive"
+                    onClick={() => {
+                      setConfirmingReset(false);
+                      onResetSettings();
+                    }}
+                  >
+                    Reset
+                  </Button>
+                </div>
+              ) : (
+                <Button size="small" variant="destructive" onClick={() => setConfirmingReset(true)}>
+                  Reset
+                </Button>
+              )
+            }
+          />
         </ListGroup>
       </div>
     </div>

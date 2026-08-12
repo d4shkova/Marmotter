@@ -86,7 +86,16 @@ export interface NetworkProfile {
   /** Defaults to 'utf-8'; overridable for legacy networks. */
   encoding: string;
   autoReconnect: boolean;
-  logging: LoggingPolicy;
+  /**
+   * This network's own logging policy, or absent to follow the global one.
+   *
+   * CLAUDE.md's schema writes this as required; it is optional here because
+   * "per-network overrides" needs a way to say "no override", and a required
+   * field can only say it by carrying a copy of the global policy that then
+   * silently stops tracking it. Absent means inherit, which is what somebody
+   * who has never opened the per-network settings means.
+   */
+  logging?: LoggingPolicy;
 }
 
 /** Logging is off by default, everywhere. The user opts in explicitly. */

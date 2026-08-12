@@ -35,6 +35,49 @@ describe('serviceCommands', () => {
     expect(serviceCommands('chanserv').some((command) => command.name === 'REGISTER')).toBe(true);
     expect(serviceCommands('chanserv').some((command) => command.name === 'ACCESS')).toBe(true);
   });
+
+  it('covers the account commands somebody actually reaches for', () => {
+    const names = serviceCommands('nickserv', { operator: true }).map((command) => command.name);
+    for (const name of ['ACCESS', 'AJOIN', 'ALIST', 'CERT', 'CONFIRM', 'DROP', 'GLIST']) {
+      expect(names).toContain(name);
+    }
+  });
+
+  it('covers the channel commands somebody actually reaches for', () => {
+    const names = serviceCommands('chanserv', { operator: true }).map((command) => command.name);
+    for (const name of ['BAN', 'UNBAN', 'DROP', 'GETKEY', 'HELP', 'INFO', 'LIST', 'REGISTER']) {
+      expect(names).toContain(name);
+    }
+  });
+
+  it('names each command once, so the menu has no duplicate rows', () => {
+    for (const service of ['nickserv', 'chanserv'] as const) {
+      const names = serviceCommands(service, { operator: true }).map((command) => command.name);
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it('groups the operator commands together at the end', () => {
+    // The menu draws its separator where the first operator command starts, so
+    // an ordinary command below one would land on the wrong side of the line.
+    for (const service of ['nickserv', 'chanserv'] as const) {
+      const commands = serviceCommands(service, { operator: true });
+      const first = commands.findIndex((command) => command.operator === true);
+      expect(first).toBeGreaterThan(-1);
+      expect(commands.slice(first).every((command) => command.operator === true)).toBe(true);
+    }
+  });
+
+  it('writes every summary as a sentence, not a syntax line', () => {
+    // CLAUDE.md: plain verbs, sentence case, and never a raw protocol token in
+    // primary copy. The shape goes in the label; the sentence explains it.
+    for (const service of ['nickserv', 'chanserv'] as const) {
+      for (const command of serviceCommands(service, { operator: true })) {
+        expect(command.summary).toMatch(/^[A-Z].*\.$/);
+        expect(command.summary).not.toContain('<');
+      }
+    }
+  });
 });
 
 describe('serviceCommandBody', () => {

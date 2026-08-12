@@ -37,6 +37,14 @@ export interface DccBrowserProps {
    */
   readonly onReveal?: (offer: DccOfferRecord) => void;
   readonly onClear: () => void;
+  /**
+   * Takes a row off the list whatever state it is in, stopping it first.
+   *
+   * Every other control is state-specific — Download only appears on an
+   * available row, Cancel only on a downloading one — which left a pack a bot
+   * never answered pinned to the top with nothing on it at all.
+   */
+  readonly onDismiss: (offer: DccOfferRecord) => void;
   /** Injectable for tests; defaults to now. */
   readonly now?: number;
   readonly className?: string;
@@ -59,6 +67,7 @@ export function DccBrowser({
   onChooseFolder,
   onReveal,
   onClear,
+  onDismiss,
   now = Date.now(),
   className,
 }: DccBrowserProps): ReactNode {
@@ -212,13 +221,16 @@ export function DccBrowser({
                       {formatBytes(offer.size)} · {offer.from} · {offer.networkName}
                     </p>
                   </div>
-                  <DownloadCell
-                    offer={offer}
-                    disabled={downloadFolder === undefined}
-                    onDownload={onDownload}
-                    onCancel={onCancel}
-                    {...(onReveal === undefined ? {} : { onReveal })}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <DownloadCell
+                      offer={offer}
+                      disabled={downloadFolder === undefined}
+                      onDownload={onDownload}
+                      onCancel={onCancel}
+                      {...(onReveal === undefined ? {} : { onReveal })}
+                    />
+                    <DismissButton offer={offer} onDismiss={onDismiss} />
+                  </div>
                 </li>
               ))}
             </ul>
@@ -340,6 +352,48 @@ function DownloadProgress({
         {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
       </span>
     </div>
+  );
+}
+
+/**
+ * Taking a row off the list.
+ *
+ * Present in every state, which is the point: it is the only control a
+ * `requested` row has, since a bot that never answers leaves nothing else to
+ * press. A bin rather than a second cross, so it is not mistaken for the cancel
+ * button beside it on a row that is downloading — and on that row the label
+ * says it stops the transfer, because it does.
+ */
+function DismissButton({
+  offer,
+  onDismiss,
+}: {
+  offer: DccOfferRecord;
+  onDismiss: (offer: DccOfferRecord) => void;
+}): ReactNode {
+  const stops = offer.status === 'downloading';
+  return (
+    <button
+      type="button"
+      aria-label={
+        stops
+          ? `Stop downloading ${offer.filename} and remove it from the list`
+          : `Remove ${offer.filename} from the list`
+      }
+      title={stops ? 'Stop and remove from list' : 'Remove from list'}
+      onClick={() => onDismiss(offer)}
+      className="grid size-6 shrink-0 place-items-center rounded-control text-[var(--label-tertiary)] hover:bg-[var(--danger-muted)] hover:text-[var(--danger)]"
+    >
+      <span aria-hidden="true">
+        <svg viewBox="0 0 16 16" className="size-3.5 fill-none stroke-current stroke-[1.5]">
+          <path
+            d="M2.5 4.5h11M6 4.5V3a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v1.5"
+            strokeLinecap="round"
+          />
+          <path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8" strokeLinejoin="round" />
+        </svg>
+      </span>
+    </button>
   );
 }
 

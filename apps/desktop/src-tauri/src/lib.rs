@@ -4,7 +4,10 @@
 //! logic lives in `packages/protocol`, in TypeScript.
 
 pub mod dcc;
+pub mod logstore;
 pub mod opener;
+pub mod prefs;
+pub mod secrets;
 pub mod transport;
 
 /// Builds and runs the Tauri application.
@@ -22,6 +25,10 @@ pub fn run() {
         // the browser build has no such capability, and the file monitor is
         // absent there entirely.
         .plugin(tauri_plugin_dialog::init())
+        // The local log database. Off by default and empty until somebody
+        // switches logging on; the plugin only opens what the front end asks
+        // it to open, so an unused install has no database file at all.
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .manage(transport::Transports::default())
         .invoke_handler(tauri::generate_handler![
             transport::transport_connect,
@@ -31,6 +38,19 @@ pub fn run() {
             dcc::dcc_cancel_download,
             dcc::dcc_reveal_file,
             opener::open_external_url,
+            logstore::log_default_dir,
+            logstore::log_append,
+            logstore::log_read,
+            logstore::log_list,
+            logstore::log_write,
+            logstore::log_delete,
+            logstore::log_reveal,
+            prefs::prefs_read,
+            prefs::prefs_write,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_delete,
+            secrets::secret_available,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marmotter");
