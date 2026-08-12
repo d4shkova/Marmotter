@@ -36,6 +36,15 @@ export interface ComposerProps {
    * this decides what is suggested, not what is permitted.
    */
   readonly operatorCommands?: boolean;
+  /**
+   * Opens a services command menu at a point, instead of the command list.
+   *
+   * Set only in a NickServ or ChanServ conversation. What somebody wants from
+   * a blank message box in front of a service is that service's own commands —
+   * `ACCESS`, `AJOIN`, `GETKEY` — not the client's slash commands, which do
+   * almost nothing useful there.
+   */
+  readonly onServiceMenu?: (at: { readonly x: number; readonly y: number }) => void;
   readonly className?: string;
 }
 
@@ -66,6 +75,7 @@ export function Composer({
   disabledReason,
   commandsOnly = false,
   operatorCommands = false,
+  onServiceMenu,
   className,
 }: ComposerProps): ReactNode {
   const field = useRef<HTMLTextAreaElement>(null);
@@ -390,11 +400,18 @@ export function Composer({
           // typing `/` produces, without having to know that `/` produces it.
           // With text in it the platform menu is the useful one and is left
           // alone.
+          //
+          // In front of NickServ or ChanServ the answer to "what can I do here"
+          // is a different list: the service's own commands, not the client's.
           onContextMenu={(event) => {
             if (value !== '') {
               return;
             }
             event.preventDefault();
+            if (onServiceMenu !== undefined) {
+              onServiceMenu({ x: event.clientX, y: event.clientY });
+              return;
+            }
             setDismissed(false);
             setHighlighted(0);
             setBrowsing(true);

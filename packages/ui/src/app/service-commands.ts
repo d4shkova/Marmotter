@@ -65,21 +65,55 @@ const NICKSERV_COMMANDS: readonly ServiceCommand[] = [
     args: '<password> <email>',
     summary: 'Registers the name you are using now so it stays yours.',
   },
+  {
+    name: 'CONFIRM',
+    args: '<code>',
+    summary: 'Finishes a registration with the code you were emailed.',
+  },
   { name: 'IDENTIFY', args: '<password>', summary: 'Signs in to your account for this name.' },
+  { name: 'LOGOUT', summary: 'Signs out of your account.' },
   {
     name: 'GROUP',
     args: '<account> <password>',
     summary: 'Links this name to an account you already have.',
   },
+  { name: 'UNGROUP', args: '[name]', summary: 'Separates a name from your account again.' },
+  { name: 'GLIST', summary: 'Lists every name linked to your account.' },
+  { name: 'ALIST', args: '[account]', summary: 'Lists the channels an account has access to.' },
+  {
+    name: 'ACCESS',
+    args: 'ADD|DEL|LIST [mask]',
+    summary: 'Addresses that may use your account without a password.',
+  },
+  {
+    name: 'CERT',
+    args: 'ADD|DEL|LIST [fingerprint]',
+    summary: 'Certificates that sign you in without a password.',
+  },
+  {
+    name: 'AJOIN',
+    args: 'ADD|DEL|LIST [#channel]',
+    summary: 'Channels joined for you whenever you sign in.',
+  },
   { name: 'INFO', args: '<name>', summary: 'Shows what is registered about a name.' },
+  {
+    name: 'STATUS',
+    args: '<name>',
+    summary: 'Says whether somebody is signed in as who they say.',
+  },
   { name: 'SET', args: '<option> <value>', summary: 'Changes a setting on your account.' },
+  {
+    name: 'RESETPASS',
+    args: '<account> <email>',
+    summary: 'Emails a way back in when the password is lost.',
+  },
   {
     name: 'GHOST',
     args: '<name> <password>',
     summary: 'Disconnects an old session still holding your name.',
   },
   { name: 'RECOVER', args: '<name>', summary: 'Takes your name back from something using it.' },
-  { name: 'LOGOUT', summary: 'Signs out of your account.' },
+  { name: 'UPDATE', summary: 'Refreshes what the service thinks your status is.' },
   { name: 'DROP', args: '<name>', summary: 'Deletes a registration you own.' },
 
   // Operator-level.
@@ -102,6 +136,18 @@ const NICKSERV_COMMANDS: readonly ServiceCommand[] = [
     summary: 'Finds accounts registered to an email address.',
     operator: true,
   },
+  {
+    name: 'SASET',
+    args: '<account> <option> <value>',
+    summary: "Changes a setting on somebody else's account.",
+    operator: true,
+  },
+  {
+    name: 'SENDPASS',
+    args: '<account>',
+    summary: 'Emails an account holder a way back in.',
+    operator: true,
+  },
 ];
 
 const CHANSERV_COMMANDS: readonly ServiceCommand[] = [
@@ -111,7 +157,18 @@ const CHANSERV_COMMANDS: readonly ServiceCommand[] = [
   { name: 'SET', args: '<#channel> <option> <value>', summary: 'Changes a channel setting.' },
   { name: 'ACCESS', args: '<#channel> LIST', summary: 'Shows who has access to a channel.' },
   { name: 'FLAGS', args: '<#channel>', summary: 'Shows or changes who may do what.' },
+  { name: 'LEVELS', args: '<#channel> LIST', summary: 'Shows what each level of access may do.' },
+  {
+    name: 'AKICK',
+    args: '<#channel> ADD|DEL|LIST <mask>',
+    summary: 'Keeps somebody out for good, however they come back.',
+  },
   { name: 'OP', args: '<#channel> [name]', summary: 'Gives operator in a channel you control.' },
+  { name: 'DEOP', args: '<#channel> [name]', summary: 'Takes operator back.' },
+  { name: 'VOICE', args: '<#channel> [name]', summary: 'Gives voice in a channel you control.' },
+  { name: 'DEVOICE', args: '<#channel> [name]', summary: 'Takes voice back.' },
+  { name: 'UP', args: '<#channel>', summary: 'Takes the roles your access entitles you to.' },
+  { name: 'DOWN', args: '<#channel>', summary: 'Drops those roles again for now.' },
   { name: 'INVITE', args: '<#channel>', summary: 'Invites you into a channel you control.' },
   {
     name: 'KICK',
@@ -123,6 +180,20 @@ const CHANSERV_COMMANDS: readonly ServiceCommand[] = [
     args: '<#channel> <name> [reason]',
     summary: 'Bans somebody through the service.',
   },
+  { name: 'UNBAN', args: '<#channel> [name]', summary: 'Lifts a ban so somebody can come back.' },
+  {
+    name: 'CLEAR',
+    args: '<#channel> BANS|OPS|VOICES|USERS',
+    summary: 'Clears bans, or roles, or everybody, in one go.',
+  },
+  { name: 'TOPIC', args: '<#channel> <topic>', summary: 'Sets the topic through the service.' },
+  {
+    name: 'MODE',
+    args: '<#channel> LOCK|SET <modes>',
+    summary: 'Sets channel settings, or holds them where they are.',
+  },
+  { name: 'SYNC', args: '<#channel>', summary: "Reapplies everybody's access as it is recorded." },
+  { name: 'STATUS', args: '<#channel> <name>', summary: 'Says what access somebody has here.' },
   { name: 'DROP', args: '<#channel>', summary: 'Deletes a channel registration you own.' },
 
   // Operator-level.
@@ -143,6 +214,12 @@ const CHANSERV_COMMANDS: readonly ServiceCommand[] = [
     name: 'GETKEY',
     args: '<#channel>',
     summary: 'Shows a channel key so you can enter it.',
+    operator: true,
+  },
+  {
+    name: 'SASET',
+    args: '<#channel> <option> <value>',
+    summary: "Changes a setting on somebody else's channel.",
     operator: true,
   },
 ];
