@@ -19,3 +19,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
+# Opening a link in the platform's browser. Worth a dependency rather than a
+# hand-rolled subprocess: on Windows this is `ShellExecuteW`, the API the
+# platform documents for the job, and the subprocess approaches all have a
+# failure mode where the link lands somewhere other than the browser.
+opener = { version = "0.8", default-features = false }
