@@ -1159,7 +1159,14 @@ export function Marmotter({
                 onOpenAccount={() => view.setPane('account')}
               />
             )}
-            {network === undefined ? null : (
+            {/* The raw log is the network's whole line stream, not one
+                conversation's, so it belongs to the network rather than to
+                whatever channel happens to be open. It appears on the server
+                tab, which is the thing in the sidebar that means "the network
+                itself" — from a channel it read as though it were that
+                channel's log, which it never was. Selecting a conversation
+                returns the pane to chat on its own. */}
+            {network === undefined || selection?.target !== undefined ? null : (
               <IconButton
                 label={view.pane === 'raw-log' ? 'Back to messages' : 'Show the raw log'}
                 icon={<span aria-hidden="true">{'</>'}</span>}
@@ -1542,6 +1549,7 @@ export function Marmotter({
 
       <ToastRegion
         toasts={toasts}
+        dismissMs={view.userOptions.toastSeconds * 1000}
         onDismiss={(id) => setToasts((current) => current.filter((entry) => entry.id !== id))}
       />
 
