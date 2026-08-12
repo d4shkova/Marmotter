@@ -1,5 +1,6 @@
 import {
   CHANNEL_LIST_LIMIT,
+  createReconnectingTransport,
   type Member,
   type NetworkState,
   type Session,
@@ -10,6 +11,7 @@ import {
   useNetworks,
 } from '@marmotter/client';
 import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
+import type { CloseReason } from '@marmotter/shared';
 import { effectivePolicy, retentionCutoff } from '@marmotter/client';
 import {
   EMPTY_IDENTITY,
@@ -99,6 +101,32 @@ import {
  * the number is stated in the file when it bites.
  */
 const EXPORT_LIMIT = 1_000_000;
+
+/**
+ * What to say when a connection has gone and retrying has not brought it back.
+ *
+ * Names what happened and what to do, per CLAUDE.md's copy rules, and never
+ * apologises. The reasons are told apart because the answers differ: a network
+ * that refused us is not the same problem as a laptop with no wifi, and telling
+ * somebody to check their connection when the server rejected them wastes their
+ * time.
+ */
+export function lostConnectionText(name: string, reason: CloseReason): string {
+  switch (reason.kind) {
+    case 'timeout':
+      return `${name} did not respond. It may be down, or the address may have changed.`;
+    case 'server':
+      return `${name} closed the connection and did not accept a new one.`;
+    case 'tls-error':
+      return `Could not verify ${name}'s certificate, so the connection was not made.`;
+    case 'network-error':
+      return reason.message === ''
+        ? `Lost the connection to ${name}. Check your internet connection.`
+        : `Lost the connection to ${name}. ${reason.message}`;
+    case 'user':
+      return `Disconnected from ${name}.`;
+  }
+}
 
 export interface MarmotterProps {
   /**
@@ -251,6 +279,7 @@ export function Marmotter({
   const startSessionRef = useRef<
     (profile: NetworkProfile, options?: { readonly connect?: boolean }) => void
   >(() => {});
+  const reconnectRef = useRef<(networkId: string) => void>(() => {});
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -792,9 +821,25 @@ export function Marmotter({
   // than reusing a spent socket.
   const startSession = useCallback(
     (profile: NetworkProfile, options: { readonly connect?: boolean } = {}): void => {
+      /**
+       * The reconnecting wrapper, around a fresh transport per attempt.
+       *
+       * This was built in Phase 2 and, until now, never used: the shell handed
+       * the session a bare transport, so a dropped connection stayed dropped
+       * and nothing retried. It works down the profile's endpoint list with
+       * backoff and jitter, and gives up after three attempts so somebody is
+       * told rather than left watching a window that looks connected.
+       */
+      const transport = createReconnectingTransport({
+        endpoints: profile.servers,
+        // A used transport is never reconnected; each attempt gets its own.
+        createTransport: () => createTransport(profile),
+        autoReconnect: profile.autoReconnect,
+      });
+
       const built: Session = createSession({
         profile,
-        transport: createTransport(profile),
+        transport,
         ctcp: useView.getState().ctcp,
         // The platform's own store first, where it has one, and the session
         // store behind it. A password typed into the form this run is in the
@@ -807,6 +852,12 @@ export function Marmotter({
           toast(sessionEvent.reason, 'error');
         } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind === 'tls-error') {
           handleTlsError.current(profile);
+        } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind !== 'user') {
+          // Reconnection has already been tried and given up — the wrapper only
+          // reports a close once it is out of attempts — so this is the point
+          // at which somebody needs telling, with the way back in the same
+          // notice rather than somewhere they have to go looking.
+          reportLostConnection.current(profile, sessionEvent.reason);
         } else if (sessionEvent.kind === 'dcc-offer') {
           // Routed through a ref so this long-lived listener always runs the
           // latest logic — the pending-request map and the folder both change
@@ -893,6 +944,10 @@ export function Marmotter({
       startSession(profile);
     }
   };
+
+  // Reachable from the long-lived session listener, which is built once per
+  // session and cannot close over a function that changes every render.
+  reconnectRef.current = reconnect;
 
   // Saving an edit. The transport is built around the profile's endpoints and
   // the identity goes out during registration, so a changed profile reaches the
@@ -1077,6 +1132,27 @@ export function Marmotter({
   // silently trusted; the user is told plainly and offered a one-click way to
   // trust it and remember the choice. Held in a ref so the long-lived session
   // listener always runs the current version.
+  /**
+   * Telling somebody the connection is gone, once retrying has stopped.
+   *
+   * Held in a ref for the same reason as the TLS handler: the session listener
+   * outlives every render, and a closure captured at build time would keep
+   * calling last week's `toast`.
+   *
+   * Deliberately not raised for each failed attempt. Three notices for one
+   * outage is noise, and the sidebar's own status dot already shows the network
+   * is not up while it is trying.
+   */
+  const reportLostConnection = useRef<(profile: NetworkProfile, reason: CloseReason) => void>(
+    () => {},
+  );
+  reportLostConnection.current = (profile, reason) => {
+    toast(`${lostConnectionText(profile.name, reason)}`, 'error', {
+      label: 'Try again',
+      onSelect: () => reconnectRef.current(profile.id),
+    });
+  };
+
   const handleTlsError = useRef<(profile: NetworkProfile) => void>(() => {});
   handleTlsError.current = (profile) => {
     const verifying = profile.servers.some(

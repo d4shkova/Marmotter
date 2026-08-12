@@ -13,5 +13,6 @@ export type { CloseReason, ConnectOptions, Transport, Unsubscribe } from '@marmo
 export * from './transport/index.js';
 export * from './state/index.js';
 export * from './logging/index.js';
+export * from './keepalive.js';
 export * from './session.js';
 export * from './store.js';

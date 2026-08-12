@@ -12,6 +12,7 @@ import {
   segment,
   stripFormatting,
 } from './format.js';
+import { lostConnectionText } from './Marmotter.js';
 import { buildRows, summarise } from './rows.js';
 import {
   TOAST_SECONDS_RANGE,
@@ -453,5 +454,48 @@ describe('the notice timeout', () => {
   it('rounds a fractional value, since the stepper counts whole seconds', () => {
     expect(clampToastSeconds(7.4)).toBe(7);
     expect(clampToastSeconds(7.6)).toBe(8);
+  });
+});
+
+describe('what to say when a connection is lost for good', () => {
+  it('tells the reasons apart, because the answers differ', () => {
+    // Telling somebody to check their internet when the server rejected them
+    // wastes their time looking in the wrong place.
+    expect(lostConnectionText('Libera.Chat', { kind: 'timeout' })).toContain('did not respond');
+    expect(lostConnectionText('Libera.Chat', { kind: 'server' })).toContain(
+      'closed the connection',
+    );
+    expect(lostConnectionText('Libera.Chat', { kind: 'tls-error', message: 'expired' })).toContain(
+      'certificate',
+    );
+  });
+
+  it('points at the connection when there is nothing more specific to say', () => {
+    expect(lostConnectionText('Libera.Chat', { kind: 'network-error', message: '' })).toContain(
+      'Check your internet connection',
+    );
+  });
+
+  it('carries the reason the transport gave, where it gave one', () => {
+    expect(
+      lostConnectionText('Libera.Chat', {
+        kind: 'network-error',
+        message: 'The server stopped responding.',
+      }),
+    ).toContain('The server stopped responding.');
+  });
+
+  it('names the network and never apologises', () => {
+    for (const reason of [
+      { kind: 'timeout' },
+      { kind: 'server' },
+      { kind: 'network-error', message: '' },
+      { kind: 'user' },
+    ] as const) {
+      const text = lostConnectionText('Libera.Chat', reason);
+      expect(text).toContain('Libera.Chat');
+      expect(text.toLowerCase()).not.toContain('sorry');
+      expect(text).toMatch(/\.$/);
+    }
   });
 });

@@ -123,6 +123,7 @@ describe('createReconnectingTransport', () => {
     options: {
       endpoints?: ServerEndpoint[];
       autoReconnect?: boolean;
+      maxAttempts?: number;
       transports?: FakeTransport[];
     } = {},
   ) => {
@@ -134,6 +135,7 @@ describe('createReconnectingTransport', () => {
     const transport = createReconnectingTransport({
       endpoints: options.endpoints ?? [endpoint('one.example')],
       autoReconnect: options.autoReconnect ?? true,
+      ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
       createTransport: () => {
         const next = queue[index] ?? new FakeTransport();
         index += 1;
@@ -358,5 +360,145 @@ describe('createReconnectingTransport', () => {
       kind: 'network-error',
       message: 'This network has no servers configured.',
     });
+  });
+});
+
+describe('giving up, and saying so', () => {
+  const build = (options: { maxAttempts?: number; transports?: FakeTransport[] } = {}) => {
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const queue = options.transports ?? [];
+    let index = 0;
+
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
+      createTransport: () => {
+        const next = queue[index] ?? new FakeTransport('refused');
+        index += 1;
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    const closes: CloseReason[] = [];
+    transport.onClose((reason) => closes.push(reason));
+    return { transport, clock, created, closes };
+  };
+
+  it('retries three times and then reports a close', async () => {
+    // Retrying forever is what a bouncer does. A desktop client that does it
+    // quietly looks connected while it is not, with nothing saying why.
+    const { transport, clock, created, closes } = build();
+
+    await transport.connect();
+    expect(created).toHaveLength(1);
+    expect(closes).toHaveLength(0);
+
+    for (let round = 0; round < 3; round += 1) {
+      await clock.runPending();
+    }
+
+    expect(created).toHaveLength(4);
+    expect(closes).toHaveLength(1);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('schedules nothing more once it has given up', async () => {
+    const { transport, clock } = build();
+    await transport.connect();
+    for (let round = 0; round < 3; round += 1) {
+      await clock.runPending();
+    }
+
+    expect(clock.pendingDelays()).toEqual([]);
+  });
+
+  it('honours a limit of its own, for somebody pointing at their own bouncer', async () => {
+    const { transport, clock, created } = build({ maxAttempts: 1 });
+    await transport.connect();
+    await clock.runPending();
+
+    expect(created).toHaveLength(2);
+    expect(transport.state.kind).toBe('stopped');
+  });
+
+  it('starts counting again after a connection that worked', async () => {
+    // Three attempts per outage, not three for the life of the app. Somebody
+    // on a flaky link would otherwise be cut off for good by lunchtime.
+    const first = new FakeTransport();
+    const { transport, clock, created, closes } = build({ transports: [first] });
+    await transport.connect();
+
+    first.closes.emit({ kind: 'server' });
+    await clock.runPending();
+    expect(created.length).toBeGreaterThan(1);
+
+    // Two more failures is still inside the allowance for this outage.
+    await clock.runPending();
+    expect(closes).toHaveLength(0);
+  });
+});
+
+describe('a connection that died without closing', () => {
+  it('retries when it is told the connection is dead', async () => {
+    // The half-open socket: no close will ever arrive, so the keepalive says so
+    // and the same machinery has to run.
+    const clock = fakeClock();
+    const created: FakeTransport[] = [];
+    const live = new FakeTransport();
+    let first = true;
+
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => {
+        const next = first ? live : new FakeTransport();
+        first = false;
+        created.push(next);
+        return next;
+      },
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    await transport.connect();
+    transport.dropped({ kind: 'network-error', message: 'The server stopped responding.' });
+
+    // The socket that was never going to close is closed by us, or the handle
+    // leaks once per drop — on a flaky link, one every few minutes.
+    expect(live.disconnected).toBe(true);
+    expect(transport.state.kind).toBe('waiting');
+
+    await clock.runPending();
+    expect(created).toHaveLength(2);
+  });
+
+  it('ignores being told twice, and ignores it when not connected', async () => {
+    const clock = fakeClock();
+    const transport = createReconnectingTransport({
+      endpoints: [endpoint('one.example')],
+      autoReconnect: true,
+      createTransport: () => new FakeTransport(),
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      random: () => 0.5,
+    });
+
+    const dead: CloseReason = { kind: 'network-error', message: 'gone' };
+    // Before connecting at all.
+    transport.dropped(dead);
+    expect(transport.state.kind).toBe('idle');
+
+    await transport.connect();
+    transport.dropped(dead);
+    const after = transport.state;
+    transport.dropped(dead);
+    expect(transport.state).toBe(after);
   });
 });
