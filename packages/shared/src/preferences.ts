@@ -12,7 +12,7 @@
  * not be: they go to the platform keychain through a `SecretRef`.
  */
 
-import type { Identity } from './profile.js';
+import type { Identity, NetworkProfile } from './profile.js';
 
 /** The identity a new network starts from. */
 export interface DefaultIdentity {
@@ -53,6 +53,18 @@ export const EMPTY_IDENTITY: DefaultIdentity = {
  */
 export interface StoredPreferences {
   readonly identity: DefaultIdentity;
+  /**
+   * The networks that have been set up.
+   *
+   * Restored on the next launch but **not connected**: a client that dials out
+   * the moment it opens is one that cannot be started to change a setting, and
+   * the same reasoning already applies to adding a network. Each one comes back
+   * as a row in the sidebar with Connect on its menu.
+   *
+   * Carries no password. Profiles hold a `SecretRef`, and the value it stands
+   * for lives in the OS keychain.
+   */
+  readonly networks: readonly NetworkProfile[];
 }
 
 /**

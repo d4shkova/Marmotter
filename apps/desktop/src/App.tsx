@@ -5,6 +5,7 @@ import { createDesktopDcc } from './dcc';
 import { createDesktopLogStore } from './logging';
 import { createDesktopNotifier } from './notifier';
 import { createDesktopPreferences } from './preferences';
+import { createDesktopSecrets } from './secrets';
 import { openExternalUrl } from './opener';
 import { createDesktopTransport } from './transport';
 
@@ -19,6 +20,7 @@ export function App(): JSX.Element {
   const notifier = useMemo(() => createDesktopNotifier(), []);
   const dcc = useMemo(() => createDesktopDcc(), []);
   const preferences = useMemo(() => createDesktopPreferences(), []);
+  const secrets = useMemo(() => createDesktopSecrets(), []);
 
   return (
     <Marmotter
@@ -34,6 +36,12 @@ export function App(): JSX.Element {
       // The name and fallbacks given at first run, kept in the app data folder.
       // No password ever goes in that file; those resolve against the keychain.
       preferences={preferences}
+      // Passwords live in the OS keychain, never in the settings file. The
+      // shell reads them through `resolveSecret` and writes them through
+      // `secrets`; a machine with no keychain keeps them in memory instead and
+      // asks again next launch.
+      secrets={secrets}
+      resolveSecret={(ref) => secrets.read(ref)}
       chooseLogFolder={async () => {
         const chosen = await openDialog({
           directory: true,

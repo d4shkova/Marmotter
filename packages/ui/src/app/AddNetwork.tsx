@@ -19,7 +19,7 @@ import { Select, type SelectOption } from '../primitives/Select.js';
 import { Sheet } from '../primitives/Sheet.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
-import { hasSecret, putSecret, replaceSecret } from './secrets.js';
+import { putSecret, replaceSecret } from './secrets.js';
 
 /** The value the network picker uses for "not one of these". */
 const CUSTOM = 'custom';
@@ -135,6 +135,15 @@ export interface AddNetworkProps {
    * and the fallbacks and real name still come from here.
    */
   readonly defaultIdentity?: DefaultIdentity;
+  /**
+   * Whether a password typed here will still be here next launch.
+   *
+   * False on web, and on a desktop machine with no keychain — a Linux session
+   * with no Secret Service running has nowhere to put one. The field says which
+   * it is, because "remembered" and "not remembered" are both fine and being
+   * wrong about which is not.
+   */
+  readonly remembersPasswords?: boolean;
   /** Generates the profile ID. Injected so tests are deterministic. */
   readonly newId?: () => string;
 }
@@ -155,6 +164,7 @@ export function AddNetwork({
   onAdd,
   editing,
   defaultIdentity = EMPTY_IDENTITY,
+  remembersPasswords = false,
   newId,
 }: AddNetworkProps): ReactNode {
   const [choice, setChoice] = useState<string>('libera-chat');
@@ -224,7 +234,11 @@ export function AddNetwork({
     setSocketUrl(endpoint?.tls.mode === 'websocket' ? endpoint.tls.url : '');
     setLogin(loginOf(editing.auth));
     setAccount(accountOf(editing.auth));
-    setPasswordSaved(hasSecret(secretOf(editing.auth)));
+    // A reference is enough: on a profile restored from disk the value itself
+    // is in the keychain rather than in this session's memory, and reading the
+    // in-memory store would report "no password saved" for every network the
+    // user configured last week.
+    setPasswordSaved(secretOf(editing.auth) !== undefined);
     setOperatorCommands(editing.operatorCommands === true);
   }, [open, editing, defaultIdentity.nick]);
 
@@ -631,7 +645,12 @@ export function AddNetwork({
                   ? 'A password is saved for this network. Leave this empty to keep it.'
                   : security === 'off'
                     ? 'This network is set to connect unencrypted, so this password is readable by anyone in between.'
-                    : 'Kept for this session only, and never written to disk.'
+                    : remembersPasswords
+                      ? // The keychain, not the settings file. Worth naming: it
+                        // is the difference between "somewhere the operating
+                        // system protects" and "a file in a folder".
+                        "Saved to this device's keychain, not to a file, so you do not have to type it again."
+                      : 'Kept for this session only. This device has nowhere to store a password safely, so you will be asked again next time.'
               }
             />
           </>

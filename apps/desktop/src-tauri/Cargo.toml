@@ -28,3 +28,7 @@ serde = { version = "1", features = ["derive"] }
 # platform documents for the job, and the subprocess approaches all have a
 # failure mode where the link lands somewhere other than the browser.
 opener = { version = "0.8", default-features = false }
+# Passwords, in the platform's own keychain — CLAUDE.md puts them there and
+# nowhere else. Windows Credential Manager and the Secret Service on Linux; a
+# machine with neither degrades to asking each time rather than to a file.
+keyring = { version = "4", features = ["windows-native-keyring-store", "zbus-secret-service-keyring-store"] }

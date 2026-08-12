@@ -11,7 +11,13 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { EMPTY_IDENTITY, type PreferenceStore, type StoredPreferences } from '@marmotter/shared';
+import {
+  EMPTY_IDENTITY,
+  type PreferenceStore,
+  type StoredPreferences,
+  readStoredNetworks,
+  writeStoredNetwork,
+} from '@marmotter/shared';
 
 /** A string field, or an empty one if the file did not have a usable value. */
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -31,6 +37,9 @@ function parse(raw: string): StoredPreferences | undefined {
   const identity = (parsed as { identity?: unknown }).identity;
   const fields = typeof identity === 'object' && identity !== null ? identity : {};
   return {
+    // Validated field by field in `@marmotter/shared`, which drops a profile it
+    // cannot use rather than restoring a row that can only fail at connect time.
+    networks: readStoredNetworks((parsed as { networks?: unknown }).networks),
     identity: {
       ...EMPTY_IDENTITY,
       nick: text((fields as Record<string, unknown>)['nick']),
@@ -49,7 +58,18 @@ export function createDesktopPreferences(): PreferenceStore {
       return raw === null ? undefined : parse(raw);
     },
     async save(preferences) {
-      await invoke('prefs_write', { contents: JSON.stringify(preferences, null, 2) });
+      // Written through the profile serializer rather than by spreading, so a
+      // field added to `NetworkProfile` later is never persisted without
+      // somebody deciding it should be — which is how a secret reaches a file.
+      const contents = JSON.stringify(
+        {
+          identity: preferences.identity,
+          networks: preferences.networks.map(writeStoredNetwork),
+        },
+        null,
+        2,
+      );
+      await invoke('prefs_write', { contents });
     },
   };
 }

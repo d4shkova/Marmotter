@@ -19,6 +19,9 @@ import {
   type LoggingPolicy,
   type NetworkProfile,
   type PreferenceStore,
+  type SecretStore,
+  type StoredPreferences,
+  secretRefsOf,
   type Transport,
 } from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -169,6 +172,15 @@ export interface MarmotterProps {
    * tab closes.
    */
   readonly preferences?: PreferenceStore;
+  /**
+   * Where passwords are kept between launches.
+   *
+   * Desktop passes one backed by the OS keychain. **Web passes nothing**, and a
+   * password typed there lives in memory for the session — the only honest
+   * option, since a browser has nowhere to put a secret that a page cannot also
+   * read.
+   */
+  readonly secrets?: SecretStore;
 }
 
 /** The whole client. */
@@ -183,6 +195,7 @@ export function Marmotter({
   chooseLogFolder,
   chooseExportFile,
   preferences,
+  secrets,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -225,6 +238,19 @@ export function Marmotter({
   const [identity, setIdentity] = useState<DefaultIdentity | undefined>(undefined);
   /** Whether the setup screen is open, either at first run or from Settings. */
   const [settingUp, setSettingUp] = useState(false);
+  /**
+   * The identity and the session builder, reachable from effects that run once.
+   *
+   * Both change as the component renders; the restore effect and the save path
+   * must see the current one without being rebuilt, since rebuilding either
+   * would re-register profiles over live sessions.
+   */
+  const identityRef = useRef<DefaultIdentity | undefined>(undefined);
+  /** Whether this machine has a keychain, so the password field can say so. */
+  const [remembersPasswords, setRemembersPasswords] = useState(false);
+  const startSessionRef = useRef<
+    (profile: NetworkProfile, options?: { readonly connect?: boolean }) => void
+  >(() => {});
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -406,18 +432,33 @@ export function Marmotter({
   /** Whether that question is currently outstanding, so it is only asked once. */
   const asking = useRef(false);
 
-  // Loading the saved identity, and asking for one when there is none.
+  // Loading what was saved: the name, and the networks that were set up.
   //
-  // On a platform with no store this resolves immediately to nothing, and the
-  // setup screen opens once per session — which still saves typing across
-  // several networks added in one sitting.
+  // Restored networks are registered but **not connected**. A client that dials
+  // out the moment it opens cannot be started to change a setting, and somebody
+  // who left three networks configured has not thereby asked to be signed in to
+  // all three the next time they open the app. Each comes back as a row in the
+  // sidebar with Connect on its right-click menu.
+  //
+  // Runs once. Re-running it would re-register profiles over live sessions and
+  // tear down their sockets.
+  const restored = useRef(false);
+
   useEffect(() => {
+    if (restored.current) {
+      return;
+    }
+    restored.current = true;
+
     let live = true;
-    const finish = (loaded: DefaultIdentity): void => {
+    const finish = (loaded: DefaultIdentity, networks: readonly NetworkProfile[]): void => {
       if (!live) {
         return;
       }
       setIdentity(loaded);
+      for (const profile of networks) {
+        startSessionRef.current(profile, { connect: false });
+      }
       // Asked only when there is no name yet. Somebody who skipped it is not
       // asked again this session; they get the form on the next launch, or can
       // fill it in from Settings, which is less rude than a screen that will
@@ -428,7 +469,7 @@ export function Marmotter({
     };
 
     if (preferences === undefined) {
-      finish(EMPTY_IDENTITY);
+      finish(EMPTY_IDENTITY, []);
       return () => {
         live = false;
       };
@@ -436,23 +477,63 @@ export function Marmotter({
 
     void preferences
       .load()
-      .then((stored) => finish(stored?.identity ?? EMPTY_IDENTITY))
+      .then((stored) => finish(stored?.identity ?? EMPTY_IDENTITY, stored?.networks ?? []))
       // A settings file that cannot be read starts blank rather than stopping
       // the client. Nothing in it is needed to connect.
-      .catch(() => finish(EMPTY_IDENTITY));
+      .catch(() => finish(EMPTY_IDENTITY, []));
 
     return () => {
       live = false;
     };
   }, [preferences]);
 
+  /**
+   * Writes the settings file.
+   *
+   * The whole file each time rather than a patch: it is small, and one writer
+   * means the identity and the network list cannot drift apart. Reads the
+   * registry at call time so a save triggered by one change carries every other.
+   */
+  const persist = useCallback(
+    (changes: { identity?: DefaultIdentity; networks?: readonly NetworkProfile[] } = {}): void => {
+      if (preferences === undefined) {
+        return;
+      }
+      const next: StoredPreferences = {
+        identity: changes.identity ?? identityRef.current ?? EMPTY_IDENTITY,
+        networks: changes.networks ?? [...registry.profiles.values()],
+      };
+      void preferences.save(next).catch((error: unknown) => {
+        toast(`Could not save your settings. ${String(error)}`, 'error');
+      });
+    },
+    [preferences, registry.profiles, toast],
+  );
+
+  identityRef.current = identity;
+
+  // Asked once. Probing writes to the keychain, so it is not a thing to do on
+  // every render of a form.
+  useEffect(() => {
+    let live = true;
+    void secrets
+      ?.available()
+      .then((yes) => {
+        if (live) {
+          setRemembersPasswords(yes);
+        }
+      })
+      .catch(() => setRemembersPasswords(false));
+    return () => {
+      live = false;
+    };
+  }, [secrets]);
+
   /** Saves the identity, and carries on if the platform cannot keep it. */
   const saveIdentity = (next: DefaultIdentity): void => {
     setIdentity(next);
     setSettingUp(false);
-    void preferences?.save({ identity: next }).catch((error: unknown) => {
-      toast(`Could not save your details. ${String(error)}`, 'error');
-    });
+    persist({ identity: next });
   };
 
   // ---------------------------------------------------------------- logging
@@ -766,8 +847,43 @@ export function Marmotter({
     [createTransport, resolveSecret, registry, toast],
   );
 
+  // Reachable from the restore effect, which runs once and must not be rebuilt
+  // when this is: rebuilding it would re-register every profile over its own
+  // live session.
+  startSessionRef.current = startSession;
+
+  /**
+   * Moves the passwords a form just took into the platform's keychain.
+   *
+   * They arrive in the in-memory store as a `SecretRef`; this copies the value
+   * the reference stands for into the keychain under the same key, so the
+   * profile written to disk resolves on the next launch. A machine with no
+   * keychain simply keeps them in memory, and the network asks again next time
+   * — which the "Add a network" form says up front.
+   */
+  const keepSecrets = useCallback(
+    (profile: NetworkProfile): void => {
+      if (secrets === undefined) {
+        return;
+      }
+      for (const ref of secretRefsOf(profile)) {
+        const value = readSecret(ref);
+        if (value === undefined) {
+          continue;
+        }
+        void secrets.save(ref, value).catch(() => {
+          // Not worth interrupting for: the session in front of them works, and
+          // the form already said passwords may not be remembered here.
+        });
+      }
+    },
+    [secrets],
+  );
+
   const addNetwork = (profile: NetworkProfile): void => {
     startSession(profile);
+    keepSecrets(profile);
+    persist({ networks: [...registry.profiles.values(), profile] });
     view.select({ networkId: profile.id, target: undefined });
   };
 
@@ -788,6 +904,12 @@ export function Marmotter({
     // Registering the session writes the profile back with it, so there is
     // nothing to save separately.
     startSession(profile, { connect: live });
+    keepSecrets(profile);
+    persist({
+      networks: [...registry.profiles.values()].map((entry) =>
+        entry.id === profile.id ? profile : entry,
+      ),
+    });
     setEditingId(undefined);
     toast(
       live
@@ -797,8 +919,20 @@ export function Marmotter({
   };
 
   const removeNetwork = (networkId: string): void => {
+    const profile = registry.profiles.get(networkId);
     registry.removeProfile(networkId);
     view.forgetNetwork(networkId);
+    persist({
+      networks: [...registry.profiles.values()].filter((entry) => entry.id !== networkId),
+    });
+    // A password for a network nobody has any more is left in the keychain
+    // otherwise, which is somebody's credential outliving their decision to
+    // delete it.
+    if (profile !== undefined && secrets !== undefined) {
+      for (const ref of secretRefsOf(profile)) {
+        void secrets.forget(ref).catch(() => {});
+      }
+    }
   };
 
   const disconnect = (networkId: string): void => {
@@ -1770,6 +1904,7 @@ export function Marmotter({
         onClose={() => setAdding(false)}
         onAdd={addNetwork}
         {...(identity === undefined ? {} : { defaultIdentity: identity })}
+        remembersPasswords={remembersPasswords}
       />
 
       {editingProfile === undefined ? null : (
@@ -1778,6 +1913,7 @@ export function Marmotter({
           editing={editingProfile}
           onClose={() => setEditingId(undefined)}
           onAdd={saveNetwork}
+          remembersPasswords={remembersPasswords}
         />
       )}
 
