@@ -36,10 +36,16 @@ function parse(raw: string): StoredPreferences | undefined {
   }
   const identity = (parsed as { identity?: unknown }).identity;
   const fields = typeof identity === 'object' && identity !== null ? identity : {};
+  const settings = (parsed as { settings?: unknown }).settings;
   return {
     // Validated field by field in `@marmotter/shared`, which drops a profile it
     // cannot use rather than restoring a row that can only fail at connect time.
     networks: readStoredNetworks((parsed as { networks?: unknown }).networks),
+    // Carried through as it was written. The shell owns this shape and
+    // validates it — see `packages/ui/src/app/stored-settings.ts`.
+    ...(typeof settings === 'object' && settings !== null && !Array.isArray(settings)
+      ? { settings: settings as Record<string, unknown> }
+      : {}),
     identity: {
       ...EMPTY_IDENTITY,
       nick: text((fields as Record<string, unknown>)['nick']),
@@ -65,6 +71,7 @@ export function createDesktopPreferences(): PreferenceStore {
         {
           identity: preferences.identity,
           networks: preferences.networks.map(writeStoredNetwork),
+          ...(preferences.settings === undefined ? {} : { settings: preferences.settings }),
         },
         null,
         2,

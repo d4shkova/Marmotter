@@ -513,6 +513,7 @@ describe('every component passes axe', () => {
         onEdit={noop}
         onRemove={noop}
         onAddNetwork={noop}
+        onResetSettings={noop}
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],

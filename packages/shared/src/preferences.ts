@@ -65,6 +65,15 @@ export interface StoredPreferences {
    * for lives in the OS keychain.
    */
   readonly networks: readonly NetworkProfile[];
+  /**
+   * The settings screen's own state — layout, notifications, CTCP, logging.
+   *
+   * Opaque here on purpose. Some of it is typed in `@marmotter/protocol`, which
+   * this package deliberately does not depend on, and the shape belongs to the
+   * shell that draws the screen rather than to the profile schema. The shell
+   * validates it on the way in; this just carries it.
+   */
+  readonly settings?: Readonly<Record<string, unknown>>;
 }
 
 /**

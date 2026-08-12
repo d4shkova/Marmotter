@@ -57,6 +57,7 @@ import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
 import { LogSearch } from './LogSearch.js';
+import { readStoredSettings, writeStoredSettings } from './stored-settings.js';
 import { FirstRun } from './FirstRun.js';
 import { useMessageLogging, usePurge } from './logging.js';
 import {
@@ -498,10 +499,19 @@ export function Marmotter({
     restored.current = true;
 
     let live = true;
-    const finish = (loaded: DefaultIdentity, networks: readonly NetworkProfile[]): void => {
+    const finish = (
+      loaded: DefaultIdentity,
+      networks: readonly NetworkProfile[],
+      settings: Readonly<Record<string, unknown>> | undefined,
+    ): void => {
       if (!live) {
         return;
       }
+      // Applied before anything renders against them, so the window does not
+      // flash the defaults on the way to the chosen layout. A file with no
+      // settings in it — an install from before they were kept — reads as the
+      // defaults rather than as nothing.
+      useView.getState().applySettings(readStoredSettings(settings ?? {}));
       setIdentity(loaded);
       for (const profile of networks) {
         startSessionRef.current(profile, { connect: false });
@@ -515,7 +525,7 @@ export function Marmotter({
     };
 
     if (preferences === undefined) {
-      finish(EMPTY_IDENTITY, []);
+      finish(EMPTY_IDENTITY, [], undefined);
       return () => {
         live = false;
       };
@@ -523,10 +533,12 @@ export function Marmotter({
 
     void preferences
       .load()
-      .then((stored) => finish(stored?.identity ?? EMPTY_IDENTITY, stored?.networks ?? []))
+      .then((stored) =>
+        finish(stored?.identity ?? EMPTY_IDENTITY, stored?.networks ?? [], stored?.settings),
+      )
       // A settings file that cannot be read starts blank rather than stopping
       // the client. Nothing in it is needed to connect.
-      .catch(() => finish(EMPTY_IDENTITY, []));
+      .catch(() => finish(EMPTY_IDENTITY, [], undefined));
 
     return () => {
       live = false;
@@ -545,9 +557,16 @@ export function Marmotter({
       if (preferences === undefined) {
         return;
       }
+      const view = useView.getState();
       const next: StoredPreferences = {
         identity: changes.identity ?? identityRef.current ?? EMPTY_IDENTITY,
         networks: changes.networks ?? [...registry.profiles.values()],
+        settings: writeStoredSettings({
+          appearance: view.appearance,
+          ctcp: view.ctcp,
+          userOptions: view.userOptions,
+          logging: view.logging,
+        }),
       };
       void preferences.save(next).catch((error: unknown) => {
         toast(`Could not save your settings. ${String(error)}`, 'error');
@@ -574,6 +593,37 @@ export function Marmotter({
       live = false;
     };
   }, [secrets]);
+
+  /**
+   * Writing the settings back as they are changed.
+   *
+   * Debounced, because a stepper held down fires a change per tick and each one
+   * would otherwise be a disk write. Held off until the initial load has
+   * finished, so the defaults are never written over what is on disk in the
+   * moment between the component mounting and the file being read.
+   */
+  const settingsToSave = `${JSON.stringify(view.appearance)}${JSON.stringify(view.ctcp)}${JSON.stringify(view.userOptions)}${JSON.stringify(view.logging)}`;
+  const savedSettings = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (identity === undefined) {
+      // Still loading; the file has not been read yet.
+      return;
+    }
+    if (savedSettings.current === undefined) {
+      // First pass after the load: record what is on disk without rewriting it.
+      savedSettings.current = settingsToSave;
+      return;
+    }
+    if (savedSettings.current === settingsToSave) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      savedSettings.current = settingsToSave;
+      persist();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [settingsToSave, identity, persist]);
 
   /** Saves the identity, and carries on if the platform cannot keep it. */
   const saveIdentity = (next: DefaultIdentity): void => {
@@ -1797,6 +1847,10 @@ export function Marmotter({
           onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
+          onResetSettings={() => {
+            view.resetSettings();
+            toast('Settings are back to their defaults. Your networks are untouched.');
+          }}
         />
       ) : view.pane === 'dcc' ? (
         <DccBrowser

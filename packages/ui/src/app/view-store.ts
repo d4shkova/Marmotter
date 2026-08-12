@@ -311,6 +311,21 @@ export interface ViewState {
   updateCtcp(changes: Partial<CtcpPolicy>): void;
   updateUserOptions(changes: Partial<UserOptions>): void;
   updateLogging(changes: Partial<LoggingPolicy>): void;
+  /**
+   * Puts every setting back the way it shipped.
+   *
+   * Settings only. Networks, the saved name, and anything already written to
+   * disk are somebody's data rather than a preference, and a button labelled
+   * "reset settings" must not quietly take them.
+   */
+  resetSettings(): void;
+  /** Applies settings read from disk, wholesale, at startup. */
+  applySettings(settings: {
+    appearance: Appearance;
+    ctcp: CtcpPolicy;
+    userOptions: UserOptions;
+    logging: LoggingPolicy;
+  }): void;
   /** Starts or pauses collection of DCC offers. */
   setDccActive(active: boolean): void;
   /**
@@ -481,6 +496,22 @@ export const useView = create<ViewState>((set, get) => ({
     set((current) => ({ userOptions: { ...current.userOptions, ...changes } })),
 
   updateLogging: (changes) => set((current) => ({ logging: { ...current.logging, ...changes } })),
+
+  resetSettings: () =>
+    set({
+      appearance: DEFAULT_APPEARANCE,
+      ctcp: DEFAULT_CTCP_POLICY,
+      userOptions: DEFAULT_USER_OPTIONS,
+      logging: DEFAULT_LOGGING,
+    }),
+
+  applySettings: (settings) =>
+    set({
+      appearance: settings.appearance,
+      ctcp: settings.ctcp,
+      userOptions: settings.userOptions,
+      logging: settings.logging,
+    }),
 
   setDccActive: (dccActive) => set({ dccActive }),
 

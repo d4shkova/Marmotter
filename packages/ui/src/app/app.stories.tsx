@@ -939,6 +939,7 @@ export const SettingsScreen: StoryObj = {
           onEdit={() => {}}
           onRemove={() => {}}
           onAddNetwork={() => {}}
+          onResetSettings={() => {}}
         />
       </div>
     );
