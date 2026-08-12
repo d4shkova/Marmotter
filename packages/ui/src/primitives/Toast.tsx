@@ -39,6 +39,15 @@ export interface ToastMessage {
   readonly tone?: ToastTone;
   /** An action that addresses it, e.g. "Try again". */
   readonly action?: { readonly label: string; readonly onSelect: () => void };
+  /**
+   * Stays until it is dismissed, rather than counting down.
+   *
+   * For the few notices that ask a question instead of reporting something —
+   * an unverified certificate, where fading away would leave a network simply
+   * not connecting with nothing on screen to say why. It is still dismissible
+   * every way the others are; it just does not go on its own.
+   */
+  readonly persistent?: boolean;
 }
 
 export interface ToastProps extends ToastMessage {
@@ -53,6 +62,7 @@ export function Toast({
   text,
   tone = 'info',
   action,
+  persistent = false,
   onDismiss,
   dismissMs = DEFAULT_TOAST_DISMISS_MS,
   className,
@@ -66,6 +76,21 @@ export function Toast({
   const fadeTimer = useRef<number | undefined>(undefined);
 
   /**
+   * The current `onDismiss`, held apart from the countdown.
+   *
+   * The countdown must not depend on this function's identity. Callers write it
+   * inline — `onDismiss={(id) => setToasts(...)}` — so it is a new function on
+   * every render of whatever holds the toast list, and the shell re-renders on
+   * every line the network sends. Depended on directly, that tore down the
+   * countdown and started a fresh one several times a second, and no toast ever
+   * reached the end of it: they stayed on screen until they were clicked.
+   */
+  const report = useRef(onDismiss);
+  useEffect(() => {
+    report.current = onDismiss;
+  }, [onDismiss]);
+
+  /**
    * Starts the fade, then reports the dismissal once it has finished.
    *
    * Guarded against running twice: clicking a toast that is already fading —
@@ -77,18 +102,18 @@ export function Toast({
       return;
     }
     setLeaving(true);
-    fadeTimer.current = window.setTimeout(() => onDismiss(id), FADE_MS);
-  }, [id, onDismiss]);
+    fadeTimer.current = window.setTimeout(() => report.current(id), FADE_MS);
+  }, [id]);
 
   useEffect(() => () => window.clearTimeout(fadeTimer.current), []);
 
   useEffect(() => {
-    if (paused || leaving) {
+    if (paused || leaving || persistent) {
       return;
     }
     const timer = window.setTimeout(dismiss, dismissMs);
     return () => window.clearTimeout(timer);
-  }, [paused, leaving, dismissMs, dismiss]);
+  }, [paused, leaving, persistent, dismissMs, dismiss]);
 
   return (
     <div
