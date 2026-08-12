@@ -35,6 +35,14 @@ export interface ChannelPanelProps {
   readonly onInvite?: (nick: string) => void;
   /** Names to offer as quick picks — the friends list, typically. */
   readonly inviteSuggestions?: readonly string[];
+  /**
+   * The tab to open on, when the panel is opened at something in particular.
+   *
+   * The member menu opens it on the ban table, which is the answer to "lift a
+   * ban the client has not fetched yet". Absent means the settings tab, which
+   * is what double-clicking the channel name gives.
+   */
+  readonly initialTab?: TabValue;
 }
 
 /** The list modes, in the order the tabs show them. */
@@ -75,7 +83,7 @@ const LIST_TABS: readonly {
   },
 ];
 
-type TabValue = 'settings' | 'access' | ListKind;
+export type TabValue = 'settings' | 'access' | ListKind;
 
 /**
  * Everything about a channel that is not its messages.
@@ -99,11 +107,21 @@ export function ChannelPanel({
   canModerate = true,
   onInvite,
   inviteSuggestions = [],
+  initialTab = 'settings',
 }: ChannelPanelProps): ReactNode {
   const support = network.support;
   const controls = useMemo(() => channelControls(channel.modes, support), [channel.modes, support]);
 
-  const [tab, setTab] = useState<TabValue>('settings');
+  const [tab, setTab] = useState<TabValue>(initialTab);
+  // Reopening the panel at a different tab moves to it. Kept as an effect on
+  // `open` so a tab the user picked while it is open is not pulled back.
+  const [openedAt, setOpenedAt] = useState(open);
+  if (openedAt !== open) {
+    setOpenedAt(open);
+    if (open) {
+      setTab(initialTab);
+    }
+  }
   const [settings, setSettings] = useState<ChannelSettings>(() => settingsFrom(controls));
   const [topic, setTopic] = useState(channel.topic?.text ?? '');
   const [newMask, setNewMask] = useState('');

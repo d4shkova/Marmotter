@@ -170,3 +170,171 @@ describe('the ban builder', () => {
     expect(onBanBuilder).toHaveBeenCalled();
   });
 });
+
+describe('lifting what is already set', () => {
+  /** Builds a menu with the channel's ban and mute tables already fetched. */
+  const withLists = (
+    target: Member,
+    us: Member,
+    lists: Partial<ChannelState['lists']>,
+    options: { operator?: boolean } = {},
+  ) => {
+    const cbs = { ...callbacks(), onOpenList: vi.fn(), onKillBuilder: vi.fn() };
+    const base = channelWith(us, target);
+    const items = memberActions(target, {
+      network: network(),
+      channel: { ...base, lists: { ...base.lists, ...lists } },
+      ourNick: us.nick,
+      ...options,
+      callbacks: cbs,
+    });
+    return { items, cbs };
+  };
+
+  const entry = (mask: string) => ({ mask, setBy: 'someone', at: undefined });
+
+  it('offers to lift a ban that catches them', () => {
+    const target = member('tamsin');
+    const { items, cbs } = withLists(target, member('me', '@'), {
+      ban: [entry('tamsin!*@*')],
+    });
+
+    expect(labels(items)).toContain('Lift their ban');
+    run(items, 'unb');
+    expect(cbs.onSend).toHaveBeenCalledWith('MODE #test -b tamsin!*@*');
+  });
+
+  it('leaves a ban that catches somebody else alone', () => {
+    const { items } = withLists(member('tamsin'), member('me', '@'), {
+      ban: [entry('jonquil!*@*')],
+    });
+
+    expect(labels(items)).not.toContain('Lift their ban');
+  });
+
+  it('lifts every ban that catches them, one line each', () => {
+    // How many parameters a MODE may carry differs by network, so several masks
+    // on one line is a line some server will truncate — lifting some of them
+    // and silently leaving the rest.
+    const { items, cbs } = withLists(member('tamsin'), member('me', '@'), {
+      ban: [entry('tamsin!*@*'), entry('*!*@host'), entry('jonquil!*@*')],
+    });
+
+    expect(labels(items)).toContain('Lift their ban (2)');
+    run(items, 'unb');
+    expect(cbs.onSend).toHaveBeenCalledTimes(2);
+    expect(cbs.onSend).toHaveBeenCalledWith('MODE #test -b tamsin!*@*');
+    expect(cbs.onSend).toHaveBeenCalledWith('MODE #test -b *!*@host');
+  });
+
+  it('offers the tables even when it has not fetched them', () => {
+    // The lists load when their table is opened, so an empty list means "we
+    // have not looked", not "they are not banned". The route in has to exist or
+    // the menu would quietly imply the second.
+    const { items, cbs } = withLists(member('tamsin'), member('me', '@'), { ban: [] });
+
+    expect(labels(items)).toContain('Manage bans and mutes');
+    run(items, 'lists');
+    expect(cbs.onOpenList).toHaveBeenCalledWith('ban');
+  });
+
+  it('offers none of it to somebody who cannot moderate', () => {
+    const { items } = withLists(member('tamsin'), member('me'), {
+      ban: [entry('tamsin!*@*')],
+    });
+
+    expect(labels(items)).not.toContain('Lift their ban');
+    expect(labels(items)).not.toContain('Manage bans and mutes');
+  });
+});
+
+describe('server operator actions', () => {
+  const build = (options: { operator?: boolean }) => {
+    const cbs = { ...callbacks(), onKillBuilder: vi.fn() };
+    const target = member('tamsin');
+    const us = member('me', '@');
+    const items = memberActions(target, {
+      network: network(),
+      channel: channelWith(us, target),
+      ourNick: us.nick,
+      ...options,
+      callbacks: cbs,
+    });
+    return { items, cbs, target };
+  };
+
+  it('offers to disconnect somebody on a network the user operates', () => {
+    const { items, cbs, target } = build({ operator: true });
+
+    expect(labels(items)).toContain('Disconnect from the network');
+    run(items, 'kill');
+    // It opens a builder rather than firing: a disconnection carries a reason
+    // the person on the other end is shown.
+    expect(cbs.onKillBuilder).toHaveBeenCalledWith(target);
+    expect(cbs.onSend).not.toHaveBeenCalled();
+  });
+
+  it('says nothing about it on a network the user does not operate', () => {
+    expect(labels(build({}).items)).not.toContain('Disconnect from the network');
+  });
+
+  it('never offers it against yourself', () => {
+    const us = member('me', '@');
+    const items = memberActions(us, {
+      network: network(),
+      channel: channelWith(us),
+      ourNick: us.nick,
+      operator: true,
+      callbacks: { ...callbacks(), onKillBuilder: vi.fn() },
+    });
+
+    expect(labels(items)).not.toContain('Disconnect from the network');
+  });
+});
+
+describe('mutes, where the network has them', () => {
+  const entry = (mask: string) => ({ mask, setBy: 'someone', at: undefined });
+
+  /** A network whose `+q` is a mute list rather than channel ownership. */
+  const quietSupport = applyISupport(DEFAULT_ISUPPORT, [
+    'PREFIX=(ohv)@%+',
+    'CHANMODES=beIq,k,l,imnpst',
+    'CHANTYPES=#',
+    'CASEMAPPING=rfc1459',
+  ]);
+
+  it('offers to lift a mute on a network that keeps a mute list', () => {
+    const target = member('tamsin');
+    const us = member('me', '@');
+    const base = channelWith(us, target);
+    const cbs = callbacks();
+
+    const items = memberActions(target, {
+      network: { ...initialNetworkState('n', 'Net', 'me'), support: quietSupport },
+      channel: { ...base, lists: { ...base.lists, quiet: [entry('tamsin!*@*')] } },
+      ourNick: us.nick,
+      callbacks: cbs,
+    });
+
+    expect(items.map((item) => item.label)).toContain('Lift their mute');
+  });
+
+  it('says nothing about mutes where +q is channel ownership instead', () => {
+    // `+q` is a mute list on some ircds and ownership on others. Reading
+    // CHANMODES rather than assuming is the whole point: on the PREFIX-based
+    // network at the top of this file, `-q` would take somebody's ownership
+    // away while claiming to unmute them.
+    const target = member('tamsin');
+    const us = member('me', '@');
+    const base = channelWith(us, target);
+
+    const items = memberActions(target, {
+      network: network(),
+      channel: { ...base, lists: { ...base.lists, quiet: [entry('tamsin!*@*')] } },
+      ourNick: us.nick,
+      callbacks: callbacks(),
+    });
+
+    expect(items.map((item) => item.label)).not.toContain('Lift their mute');
+  });
+});

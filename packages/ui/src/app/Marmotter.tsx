@@ -24,7 +24,7 @@ import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
-import { ChannelPanel } from './ChannelPanel.js';
+import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { DccBrowser } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
@@ -148,6 +148,10 @@ export function Marmotter({
   const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
   /** Whether the channel settings and moderation sheet is open. */
   const [channelPanelOpen, setChannelPanelOpen] = useState(false);
+  /** Which tab the channel panel opens on, when something opened it at one. */
+  const [channelPanelTab, setChannelPanelTab] = useState<ChannelPanelTab>('settings');
+  /** Somebody a server operator has chosen to disconnect, pending a reason. */
+  const [killing, setKilling] = useState<Member | undefined>(undefined);
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -270,7 +274,7 @@ export function Marmotter({
   // Picking a command drops its shape into the composer for this conversation
   // rather than sending it, because most of them take an argument only the user
   // has and a services command sent by mistake is not always reversible.
-  const openServiceMenu = (service: ServiceName, anchor: HTMLElement): void => {
+  const openServiceMenu = (service: ServiceName, at: { x: number; y: number }): void => {
     if (selection === undefined) {
       return;
     }
@@ -282,13 +286,18 @@ export function Marmotter({
       startsGroup: command.operator === true && commands[index - 1]?.operator !== true,
       onSelect: () => view.setDraft(selection, serviceCommandBody(command)),
     }));
-    const rect = anchor.getBoundingClientRect();
     setServiceMenu({
       label: `${serviceDisplayName(service)} commands`,
       items,
-      x: rect.left,
-      y: rect.bottom + 4,
+      x: at.x,
+      y: at.y,
     });
+  };
+
+  /** The same menu, hung under the button in the header that opens it. */
+  const openServiceMenuUnder = (service: ServiceName, anchor: HTMLElement): void => {
+    const rect = anchor.getBoundingClientRect();
+    openServiceMenu(service, { x: rect.left, y: rect.bottom + 4 });
   };
 
   // Opening a link the user has confirmed. The platform's own browser where the
@@ -875,6 +884,7 @@ export function Marmotter({
       network,
       channel: conversation,
       ourNick: network.nick,
+      operator: isOperator,
       callbacks: {
         onMessage: messageMember,
         onWhois: openProfile,
@@ -888,6 +898,14 @@ export function Marmotter({
         // so both open a builder rather than firing a default.
         onBanBuilder: (target) => setActing({ member: target, kind: 'ban' }),
         onKickBuilder: (target) => setActing({ member: target, kind: 'kick' }),
+        // The tables, which fetch what they show. This is the route to lifting
+        // a ban the client has not seen yet, and the reason the menu's own
+        // lift entries can be honest about only knowing what they know.
+        onOpenList: (kind) => {
+          setChannelPanelTab(kind);
+          setChannelPanelOpen(true);
+        },
+        onKillBuilder: (target) => setKilling(target),
       },
     });
   };
@@ -973,6 +991,7 @@ export function Marmotter({
               label: 'Channel settings…',
               onSelect: () => {
                 view.select(ref);
+                setChannelPanelTab('settings');
                 setChannelPanelOpen(true);
               },
             },
@@ -1129,7 +1148,10 @@ export function Marmotter({
         network !== undefined &&
         isChannel(selection.target, network.support)
           ? {
-              onTitleActivate: () => setChannelPanelOpen(true),
+              onTitleActivate: () => {
+                setChannelPanelTab('settings');
+                setChannelPanelOpen(true);
+              },
               titleHint: 'Double-click to open channel settings',
             }
           : {})}
@@ -1192,7 +1214,9 @@ export function Marmotter({
                     label={`${serviceDisplayName(conversationService)} commands`}
                     icon={<span aria-hidden="true">⌘</span>}
                     pressed={serviceMenu !== undefined}
-                    onClick={(event) => openServiceMenu(conversationService, event.currentTarget)}
+                    onClick={(event) =>
+                      openServiceMenuUnder(conversationService, event.currentTarget)
+                    }
                   />
                 ) : null}
                 {isChannel(selection.target, network.support) ? (
@@ -1358,6 +1382,12 @@ export function Marmotter({
             channels={[...network.channels.values()].map((entry) => entry.name)}
             fold={(text) => fold(text, network.support.caseMapping)}
             operatorCommands={registry.profiles.get(network.id)?.operatorCommands === true}
+            {...(conversationService !== undefined && isOperator
+              ? {
+                  onServiceMenu: (at: { x: number; y: number }) =>
+                    openServiceMenu(conversationService, at),
+                }
+              : {})}
             disabled={network.phase !== 'registered'}
             disabledReason="Not connected yet"
           />
@@ -1463,6 +1493,30 @@ export function Marmotter({
         onCancel={() => setJoiningNetwork(undefined)}
       />
 
+      {/* Disconnecting somebody is a server operator's action and asks for a
+          reason, because the person on the other end is shown it and because a
+          reason is the difference between a record and a mystery. It does not
+          keep them off the network — they can reconnect — and the copy says so
+          rather than letting somebody expect otherwise. */}
+      <TextPrompt
+        open={killing !== undefined}
+        title={killing === undefined ? 'Disconnect' : `Disconnect ${killing.nick}`}
+        label="Reason"
+        placeholder="Why they are being disconnected"
+        hint="They are shown this, and can reconnect straight away. To keep somebody out of a channel, ban them instead."
+        confirmLabel="Disconnect"
+        onConfirm={(reason) => {
+          const target = killing;
+          setKilling(undefined);
+          if (target === undefined || session === undefined) {
+            return;
+          }
+          session.send(`KILL ${target.nick} :${reason.trim()}`);
+          toast(`Asked the network to disconnect ${target.nick}.`);
+        }}
+        onCancel={() => setKilling(undefined)}
+      />
+
       {network === undefined ||
       conversation === undefined ||
       session === undefined ||
@@ -1471,6 +1525,7 @@ export function Marmotter({
         <>
           <ChannelPanel
             open={channelPanelOpen}
+            initialTab={channelPanelTab}
             onClose={() => setChannelPanelOpen(false)}
             network={network}
             channel={conversation}
