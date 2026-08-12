@@ -12,7 +12,8 @@ import {
   segment,
   stripFormatting,
 } from './format.js';
-import { lostConnectionText } from './Marmotter.js';
+import { EMPTY_IDENTITY } from '@marmotter/shared';
+import { lostConnectionText, shouldAskForIdentity } from './Marmotter.js';
 import { buildRows, summarise } from './rows.js';
 import {
   TOAST_SECONDS_RANGE,
@@ -497,5 +498,27 @@ describe('what to say when a connection is lost for good', () => {
       expect(text.toLowerCase()).not.toContain('sorry');
       expect(text).toMatch(/\.$/);
     }
+  });
+});
+
+describe('whether to ask for a name on launch', () => {
+  const blank = EMPTY_IDENTITY;
+  const named = { ...EMPTY_IDENTITY, nick: 'tamsin' };
+
+  it('asks on a first launch where the answer can be kept', () => {
+    expect(shouldAskForIdentity(blank, true)).toBe(true);
+  });
+
+  it('does not ask again once there is a name', () => {
+    expect(shouldAskForIdentity(named, true)).toBe(false);
+  });
+
+  it('never asks where the answer cannot be kept', () => {
+    // The browser build. Without this the same modal covers the app on every
+    // page load, forever, and could never remember what was typed — which is
+    // exactly what it did, and what the end-to-end suite caught by being
+    // unable to click anything behind it.
+    expect(shouldAskForIdentity(blank, false)).toBe(false);
+    expect(shouldAskForIdentity(named, false)).toBe(false);
   });
 });

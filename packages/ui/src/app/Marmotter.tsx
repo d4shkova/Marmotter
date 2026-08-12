@@ -128,6 +128,24 @@ export function lostConnectionText(name: string, reason: CloseReason): string {
   }
 }
 
+/**
+ * Whether to put the setup screen in front of somebody on launch.
+ *
+ * Two conditions, and the second is the one that is easy to lose. There has to
+ * be no name yet — and there has to be somewhere to keep the answer. A platform
+ * with no preference store, which is the browser build, would otherwise show
+ * the same modal on every page load forever and never remember what was typed.
+ * Asking a question you will ask again in thirty seconds is worse than not
+ * asking; the name is entered on the "Add a network" form there instead, which
+ * is the path Skip already relies on.
+ *
+ * Pure and exported because losing this is invisible in every unit test and
+ * shows up only as a modal nobody can dismiss for good.
+ */
+export function shouldAskForIdentity(identity: DefaultIdentity, canRemember: boolean): boolean {
+  return identity.nick === '' && canRemember;
+}
+
 export interface MarmotterProps {
   /**
    * Builds a transport for a profile.
@@ -488,11 +506,10 @@ export function Marmotter({
       for (const profile of networks) {
         startSessionRef.current(profile, { connect: false });
       }
-      // Asked only when there is no name yet. Somebody who skipped it is not
-      // asked again this session; they get the form on the next launch, or can
-      // fill it in from Settings, which is less rude than a screen that will
-      // not take no for an answer.
-      if (loaded.nick === '') {
+      // Somebody who skips is not asked again this session either: they get it
+      // on the next launch, which is less rude than a screen that will not take
+      // no for an answer. Settings opens it on request either way.
+      if (shouldAskForIdentity(loaded, preferences !== undefined)) {
         setSettingUp(true);
       }
     };
