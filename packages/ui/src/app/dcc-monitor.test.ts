@@ -1,6 +1,12 @@
 import type { DccSend, XdccPack } from '@marmotter/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_USER_OPTIONS, classifyDccReoffer, useView } from './view-store.js';
+import { shallow } from 'zustand/shallow';
+import {
+  DEFAULT_USER_OPTIONS,
+  classifyDccReoffer,
+  selectViewWithoutOffers,
+  useView,
+} from './view-store.js';
 
 const send: DccSend = {
   filename: 'holiday.jpg',
@@ -304,5 +310,42 @@ describe('getting rid of a row', () => {
     useView.getState().clearDccOffers();
 
     expect(useView.getState().dccOffers).toHaveLength(1);
+  });
+});
+
+describe('what the shell subscribes to', () => {
+  beforeEach(() => {
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: true,
+      dccOffers: [],
+    });
+  });
+
+  it('leaves the offer list out', () => {
+    // The shell renders the whole client. Reading the offer list there made
+    // every catalogue line and every megabyte of every download a render of the
+    // sidebar, the message list and the member list — which is what made moving
+    // between screens crawl while anything was downloading.
+    expect('dccOffers' in selectViewWithoutOffers(useView.getState())).toBe(false);
+  });
+
+  it('does not change when only the offers do', () => {
+    const before = selectViewWithoutOffers(useView.getState());
+    useView.getState().recordDccOffer(offer());
+    useView.getState().setDccOfferProgress(useView.getState().dccOffers[0]!.id, 1024);
+    const after = selectViewWithoutOffers(useView.getState());
+
+    expect(useView.getState().dccOffers).toHaveLength(1);
+    // Field for field the same, which is what keeps `useShallow` from
+    // re-rendering the shell.
+    expect(shallow(before, after)).toBe(true);
+  });
+
+  it('still changes when something the shell shows does', () => {
+    const before = selectViewWithoutOffers(useView.getState());
+    useView.getState().setPane('dcc');
+
+    expect(shallow(before, selectViewWithoutOffers(useView.getState()))).toBe(false);
   });
 });

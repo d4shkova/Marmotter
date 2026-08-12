@@ -41,7 +41,7 @@ import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
-import { DccBrowser } from './DccBrowser.js';
+import { DccBrowser, type DccBrowserProps } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
 import type { DccCapability } from './dcc.js';
 import { InviteBanner } from './Invites.js';
@@ -91,9 +91,11 @@ import {
   isHighlight,
   orderNetworks,
   sameRef,
+  selectViewWithoutOffers,
   unreadFor,
   useView,
 } from './view-store.js';
+import { useShallow } from 'zustand/react/shallow';
 
 /**
  * The ceiling on one export.
@@ -246,7 +248,12 @@ export function Marmotter({
   secrets,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
-  const view = useView();
+  // Deliberately not `useView()`: that subscribes to every field, and the list
+  // of offered files changes on every catalogue line a serving bot posts and
+  // every megabyte of every download. Reading it here made each of those a
+  // render of the whole client. The two places that show offers subscribe to
+  // them on their own, below.
+  const view = useView(useShallow(selectViewWithoutOffers));
   const breakpoint = useBreakpoint();
 
   const [adding, setAdding] = useState(false);
@@ -1761,9 +1768,8 @@ export function Marmotter({
 
   // The file monitor's home in the left column, under the networks.
   const dccMonitorNode = showDccPanel ? (
-    <DccMonitorPanel
+    <DccMonitorStrip
       active={view.dccActive}
-      seen={view.dccOffers.length}
       onStart={() => view.setDccActive(true)}
       onStop={() => view.setDccActive(false)}
       onOpen={() => view.setPane('dcc')}
@@ -1909,9 +1915,8 @@ export function Marmotter({
           }}
         />
       ) : view.pane === 'dcc' ? (
-        <DccBrowser
+        <DccBrowserPane
           className="flex-1 overflow-y-auto"
-          offers={view.dccOffers}
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
@@ -2295,6 +2300,48 @@ export function Marmotter({
       )}
     </>
   );
+}
+
+/**
+ * The file monitor strip, subscribed to the offer count on its own.
+ *
+ * The count is the one thing here that moves, and on a packlist channel it moves
+ * thousands of times a minute. Reading it in this small component keeps those
+ * updates to this strip rather than re-rendering the client around it.
+ */
+function DccMonitorStrip({
+  active,
+  onStart,
+  onStop,
+  onOpen,
+}: {
+  active: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onOpen: () => void;
+}): ReactNode {
+  const seen = useView((state) => state.dccOffers.length);
+  return (
+    <DccMonitorPanel
+      active={active}
+      seen={seen}
+      onStart={onStart}
+      onStop={onStop}
+      onOpen={onOpen}
+    />
+  );
+}
+
+/**
+ * The file browser, subscribed to the offer list on its own.
+ *
+ * Same reason as the strip above, and it matters most here: a download reports
+ * progress every megabyte, and each of those has to redraw the row it belongs
+ * to. It must not also redraw the message list behind this pane.
+ */
+function DccBrowserPane(props: Omit<DccBrowserProps, 'offers'>): ReactNode {
+  const offers = useView((state) => state.dccOffers);
+  return <DccBrowser {...props} offers={offers} />;
 }
 
 /** The server tab: the network's own notices and MOTD. */

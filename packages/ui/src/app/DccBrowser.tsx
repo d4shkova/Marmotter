@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
@@ -21,6 +21,59 @@ const TRAY_ORDER: Readonly<Record<DccOfferRecord['status'], number>> = {
   downloaded: 3,
   available: 4,
 };
+
+/**
+ * How much of the catalogue is laid out before a "Show more" is offered.
+ *
+ * A packlist bot advertises thousands of files, and every one of them is a row
+ * of seven cells. Rendering the lot is what made opening this pane — and every
+ * screen switch while a download was reporting progress — take seconds.
+ */
+const CATALOGUE_PAGE = 200;
+
+/** How often the "Seen" column re-reads the clock, in milliseconds. */
+const AGE_TICK = 30_000;
+
+/**
+ * The wall clock, sampled slowly.
+ *
+ * The relative ages in the list are minutes and hours, so a reading a render
+ * old is fine and a fresh `Date.now()` per render is not: it changes every time,
+ * which would rebuild the column definitions and re-render every row on each
+ * progress tick. Sampling on a timer both bounds that and makes "5m ago"
+ * actually advance while the pane sits open.
+ */
+function useCoarseNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), AGE_TICK);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+/**
+ * Keeps the previous array while its contents are unchanged.
+ *
+ * The offer list is rebuilt on every progress report, but a progress report
+ * only ever touches a row in the downloads tray — the catalogue underneath it
+ * holds the same records. Handing the table the same array it had lets the
+ * sort and the row rendering be skipped entirely.
+ */
+function useStableList<T>(list: readonly T[]): readonly T[] {
+  const held = useRef(list);
+  if (held.current !== list && !sameItems(held.current, list)) {
+    held.current = list;
+  }
+  return held.current;
+}
+
+/** Hoisted so the table is handed the same function on every render. */
+const rowKey = (offer: DccOfferRecord): string => offer.id;
+
+function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
 
 export interface DccBrowserProps {
   readonly offers: readonly DccOfferRecord[];
@@ -45,7 +98,7 @@ export interface DccBrowserProps {
    * never answered pinned to the top with nothing on it at all.
    */
   readonly onDismiss: (offer: DccOfferRecord) => void;
-  /** Injectable for tests; defaults to now. */
+  /** Injectable for tests. Left out, the clock is sampled on a slow timer. */
   readonly now?: number;
   readonly className?: string;
 }
@@ -68,9 +121,11 @@ export function DccBrowser({
   onReveal,
   onClear,
   onDismiss,
-  now = Date.now(),
+  now,
   className,
 }: DccBrowserProps): ReactNode {
+  const ticking = useCoarseNow();
+  const at = now ?? ticking;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<{ columnId: string; direction: 'asc' | 'desc' }>({
     columnId: 'received',
@@ -93,7 +148,7 @@ export function DccBrowser({
     [offers],
   );
 
-  const filtered = useMemo(() => {
+  const matching = useMemo(() => {
     const catalogue = offers.filter((offer) => !isTrackedTransfer(offer.status));
     const needle = query.trim().toLowerCase();
     if (needle === '') {
@@ -104,69 +159,75 @@ export function DccBrowser({
         offer.filename.toLowerCase().includes(needle) || offer.from.toLowerCase().includes(needle),
     );
   }, [offers, query]);
+  // A progress report rebuilds the offer list without touching any catalogue
+  // row, so the table below is usually handed exactly what it already had.
+  const filtered = useStableList(matching);
 
-  const columns: readonly Column<DccOfferRecord>[] = [
-    {
-      id: 'name',
-      header: 'Name',
-      mono: true,
-      compare: (a, b) => a.filename.localeCompare(b.filename),
-      render: (offer) => <span className="break-all">{offer.filename}</span>,
-    },
-    {
-      id: 'size',
-      header: 'Size',
-      align: 'end',
-      compare: (a, b) => (a.size ?? -1) - (b.size ?? -1),
-      render: (offer) => formatBytes(offer.size),
-    },
-    {
-      id: 'from',
-      header: 'From',
-      compare: (a, b) => a.from.localeCompare(b.from),
-      render: (offer) => offer.from,
-    },
-    {
-      id: 'pack',
-      header: 'Pack',
-      mono: true,
-      compare: (a, b) => (a.pack ?? -1) - (b.pack ?? -1),
-      render: (offer) =>
-        offer.pack === undefined ? (
-          <span className="text-[var(--label-quaternary)]">—</span>
-        ) : (
-          <span title={offer.gets === undefined ? undefined : `${offer.gets} downloads`}>
-            #{offer.pack}
-          </span>
+  const columns: readonly Column<DccOfferRecord>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        mono: true,
+        compare: (a, b) => a.filename.localeCompare(b.filename),
+        render: (offer) => <span className="break-all">{offer.filename}</span>,
+      },
+      {
+        id: 'size',
+        header: 'Size',
+        align: 'end',
+        compare: (a, b) => (a.size ?? -1) - (b.size ?? -1),
+        render: (offer) => formatBytes(offer.size),
+      },
+      {
+        id: 'from',
+        header: 'From',
+        compare: (a, b) => a.from.localeCompare(b.from),
+        render: (offer) => offer.from,
+      },
+      {
+        id: 'pack',
+        header: 'Pack',
+        mono: true,
+        compare: (a, b) => (a.pack ?? -1) - (b.pack ?? -1),
+        render: (offer) =>
+          offer.pack === undefined ? (
+            <span className="text-[var(--label-quaternary)]">—</span>
+          ) : (
+            <span title={offer.gets === undefined ? undefined : `${offer.gets} downloads`}>
+              #{offer.pack}
+            </span>
+          ),
+      },
+      {
+        id: 'network',
+        header: 'Network',
+        compare: (a, b) => a.networkName.localeCompare(b.networkName),
+        render: (offer) => offer.networkName,
+      },
+      {
+        id: 'received',
+        header: 'Seen',
+        compare: (a, b) => a.receivedAt - b.receivedAt,
+        render: (offer) => formatAge(offer.receivedAt, at),
+      },
+      {
+        id: 'action',
+        header: '',
+        align: 'end',
+        render: (offer) => (
+          <DownloadCell
+            offer={offer}
+            disabled={downloadFolder === undefined}
+            onDownload={onDownload}
+            onCancel={onCancel}
+            {...(onReveal === undefined ? {} : { onReveal })}
+          />
         ),
-    },
-    {
-      id: 'network',
-      header: 'Network',
-      compare: (a, b) => a.networkName.localeCompare(b.networkName),
-      render: (offer) => offer.networkName,
-    },
-    {
-      id: 'received',
-      header: 'Seen',
-      compare: (a, b) => a.receivedAt - b.receivedAt,
-      render: (offer) => formatAge(offer.receivedAt, now),
-    },
-    {
-      id: 'action',
-      header: '',
-      align: 'end',
-      render: (offer) => (
-        <DownloadCell
-          offer={offer}
-          disabled={downloadFolder === undefined}
-          onDownload={onDownload}
-          onCancel={onCancel}
-          {...(onReveal === undefined ? {} : { onReveal })}
-        />
-      ),
-    },
-  ];
+      },
+    ],
+    [at, downloadFolder, onCancel, onDownload, onReveal],
+  );
 
   return (
     <div className={className}>
@@ -258,7 +319,8 @@ export function DccBrowser({
           caption="Files offered over DCC"
           columns={columns}
           rows={filtered}
-          rowKey={(offer) => offer.id}
+          rowKey={rowKey}
+          pageSize={CATALOGUE_PAGE}
           sort={sort}
           onSortChange={(columnId) =>
             setSort((current) =>

@@ -275,3 +275,94 @@ describe('getting a row off the list', () => {
     expect(screen.queryByRole('button', { name: /from the list/ })).toBeNull();
   });
 });
+
+describe('DccBrowser with a bot-sized catalogue', () => {
+  const catalogue = (count: number): DccOfferRecord[] =>
+    Array.from({ length: count }, (_, index) =>
+      offer({
+        id: `pack-${index}`,
+        filename: `Pack.${index}.mkv`,
+        pack: index,
+        status: 'available',
+      }),
+    );
+
+  const show = (offers: readonly DccOfferRecord[]): void => {
+    render(
+      <DccBrowser
+        offers={offers}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+  };
+
+  it('lays out a screenful rather than the whole catalogue', () => {
+    // A packlist bot advertises thousands of files. Rendering every one of them
+    // is what made opening this pane take seconds.
+    show(catalogue(500));
+
+    expect(screen.getByText('Pack.0.mkv')).toBeDefined();
+    expect(screen.queryByText('Pack.400.mkv')).toBeNull();
+    expect(screen.getByText('Showing 200 of 500')).toBeDefined();
+  });
+
+  it('shows the rest when asked', () => {
+    show(catalogue(260));
+
+    expect(screen.queryByText('Pack.259.mkv')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Pack.259.mkv')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('leaves a small catalogue whole, with nothing to press', () => {
+    show(catalogue(12));
+
+    expect(screen.getByText('Pack.11.mkv')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('keeps everything on show once asked, as a download reports progress', () => {
+    // The offer list is rebuilt on every progress report. Folding the catalogue
+    // back up under somebody mid-scroll each time would be unusable.
+    const offers = catalogue(300);
+    const { rerender } = render(
+      <DccBrowser
+        offers={offers}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Pack.299.mkv')).toBeDefined();
+
+    rerender(
+      <DccBrowser
+        offers={[...offers, offer({ id: 'live', status: 'downloading', received: 5 })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    expect(screen.getByText('Pack.299.mkv')).toBeDefined();
+    expect(screen.getByRole('progressbar')).toBeDefined();
+  });
+});
