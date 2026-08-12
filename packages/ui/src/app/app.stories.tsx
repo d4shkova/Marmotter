@@ -12,11 +12,13 @@ import {
   applyISupport,
   makeSource,
 } from '@marmotter/protocol';
-import { defaultLoggingPolicy } from '@marmotter/shared';
+import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { AccountMenu } from './AccountMenu.js';
+import { LogSearch } from './LogSearch.js';
+import { LoggingSettings } from './LoggingSettings.js';
 import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
 import { AppShell } from './AppShell.js';
@@ -1012,4 +1014,88 @@ export const Profile: StoryObj = {
       </>
     );
   },
+};
+
+/**
+ * The logging settings.
+ *
+ * Shown switched on, which is the state with something to look at; the shipped
+ * default is off, and the group collapses to the one toggle there.
+ */
+export const LoggingScreen: StoryObj = {
+  render: function LoggingScreen() {
+    const [policy, setPolicy] = useState<LoggingPolicy>({
+      ...defaultLoggingPolicy,
+      enabled: true,
+      retentionDays: 30,
+    });
+
+    return (
+      <div className="w-[40rem] rounded-card border border-[var(--separator)] p-4">
+        <LoggingSettings
+          policy={policy}
+          onChange={(changes) => setPolicy((current) => ({ ...current, ...changes }))}
+          location={{ path: '/home/tamsin/.local/share/marmotter/logs', bytes: 4_821_000 }}
+          onChooseFolder={() => {}}
+          onOpenFolder={() => {}}
+          onExport={() => {}}
+          onClear={() => {}}
+          onPurgeNow={() => {}}
+          onSearch={() => {}}
+        />
+      </div>
+    );
+  },
+};
+
+/** Searching what has been written to disk, across every network. */
+export const SearchingTheLogs: StoryObj = {
+  render: () => (
+    <div className="h-[30rem] w-[40rem] overflow-hidden rounded-card border border-[var(--separator)]">
+      <LogSearch
+        className="h-full"
+        initialQuery="marmot"
+        store={{
+          async append() {},
+          async search() {
+            return [
+              {
+                id: '1',
+                networkId: 'n1',
+                networkName: 'Libera.Chat',
+                target: '#marmotter',
+                at: new Date(Date.now() - 3 * 60 * 60 * 1000),
+                kind: 'privmsg',
+                nick: 'tamsin',
+                text: 'the marmot photo is still my favourite',
+              },
+              {
+                id: '2',
+                networkId: 'n2',
+                networkName: 'OFTC',
+                target: 'jonquil',
+                at: new Date(Date.now() - 40 * 60 * 60 * 1000),
+                kind: 'privmsg',
+                nick: 'jonquil',
+                text: 'did you ever find that marmot photo',
+              },
+            ];
+          },
+          async purge() {
+            return 0;
+          },
+          async export(_query, path) {
+            return path;
+          },
+          async location() {
+            return { path: '/logs', bytes: 0 };
+          },
+          async reveal() {},
+          async clear() {
+            return 0;
+          },
+        }}
+      />
+    </div>
+  ),
 };

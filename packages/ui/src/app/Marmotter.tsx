@@ -10,7 +10,14 @@ import {
   useNetworks,
 } from '@marmotter/client';
 import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
-import type { NetworkProfile, Transport } from '@marmotter/shared';
+import { effectivePolicy, retentionCutoff } from '@marmotter/client';
+import type {
+  LogLocation,
+  LogStore,
+  LoggingPolicy,
+  NetworkProfile,
+  Transport,
+} from '@marmotter/shared';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
@@ -41,6 +48,8 @@ import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSe
 import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
+import { LogSearch } from './LogSearch.js';
+import { useMessageLogging, usePurge } from './logging.js';
 import {
   type ServiceName,
   serviceCommandBody,
@@ -63,6 +72,7 @@ import {
 } from './notify.js';
 import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import {
+  DEFAULT_LOGGING,
   type DccOfferRecord,
   type TargetRef,
   classifyDccReoffer,
@@ -73,6 +83,15 @@ import {
   unreadFor,
   useView,
 } from './view-store.js';
+
+/**
+ * The ceiling on one export.
+ *
+ * An export reads every matching line into memory to write it out, so it has to
+ * have one. High enough that an ordinary person exports everything they have;
+ * the number is stated in the file when it bites.
+ */
+const EXPORT_LIMIT = 1_000_000;
 
 export interface MarmotterProps {
   /**
@@ -116,6 +135,27 @@ export interface MarmotterProps {
    * with a link anyway.
    */
   readonly openExternal?: (url: string) => void;
+  /**
+   * Builds the store conversations are written to.
+   *
+   * Desktop passes a factory; **web passes nothing, and must keep passing
+   * nothing**. There being no implementation is what guarantees the browser
+   * build cannot persist message content — see CLAUDE.md and
+   * `packages/shared/src/logging.ts`.
+   *
+   * A factory rather than a store, because the format and the folder are the
+   * user's to change and each answer is a different store. Rebuilt when either
+   * moves; the lines already written stay where they were written.
+   */
+  readonly createLogStore?: (options: {
+    readonly policy: LoggingPolicy;
+    /** Maps a network's display name back to its ID, for plaintext logs. */
+    readonly networkIdFor: (networkName: string) => string;
+  }) => Promise<LogStore>;
+  /** Opens the platform folder picker for where logs are written. */
+  readonly chooseLogFolder?: () => Promise<string | undefined>;
+  /** Opens the platform save dialog for an export, returning the chosen path. */
+  readonly chooseExportFile?: () => Promise<string | undefined>;
 }
 
 /** The whole client. */
@@ -126,6 +166,9 @@ export function Marmotter({
   notifier,
   dcc,
   openExternal,
+  createLogStore,
+  chooseLogFolder,
+  chooseExportFile,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   const view = useView();
@@ -152,6 +195,10 @@ export function Marmotter({
   const [channelPanelTab, setChannelPanelTab] = useState<ChannelPanelTab>('settings');
   /** Somebody a server operator has chosen to disconnect, pending a reason. */
   const [killing, setKilling] = useState<Member | undefined>(undefined);
+  /** Where the logs are and what they cost, once the store has been asked. */
+  const [logLocation, setLogLocation] = useState<LogLocation | undefined>(undefined);
+  /** The store itself, rebuilt when the format or the folder changes. */
+  const [logs, setLogs] = useState<LogStore | undefined>(undefined);
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -332,6 +379,186 @@ export function Marmotter({
   const permission = useRef<boolean | undefined>(undefined);
   /** Whether that question is currently outstanding, so it is only asked once. */
   const asking = useRef(false);
+
+  // ---------------------------------------------------------------- logging
+  //
+  // Building the store. Keyed on the format and the folder alone: those are the
+  // two answers that make it a different store, and rebuilding it whenever the
+  // scope or the retention changed would drop lines waiting to be written for
+  // no reason.
+  const logFormat = view.logging.format;
+  const logPath = view.logging.path;
+  const profileNames = registry.profiles;
+
+  useEffect(() => {
+    if (createLogStore === undefined) {
+      return;
+    }
+    let live = true;
+    void createLogStore({
+      policy: {
+        ...DEFAULT_LOGGING,
+        format: logFormat,
+        ...(logPath === undefined ? {} : { path: logPath }),
+      },
+      // Plaintext logs are filed under a network's name, since a folder has to
+      // make sense to somebody reading it without the app. This maps a folder
+      // back to the network it belongs to; a folder whose network has since
+      // been removed resolves to nothing rather than to a guess.
+      networkIdFor: (name) => {
+        for (const [id, profile] of profileNames) {
+          if (profile.name === name) {
+            return id;
+          }
+        }
+        return '';
+      },
+    })
+      .then((store) => {
+        if (live) {
+          setLogs(store);
+        }
+      })
+      .catch((error: unknown) => {
+        // No store rather than a broken one. The logging settings are absent
+        // without it, which is honest: there is nowhere to write, and a switch
+        // that wrote nothing would be worse than no switch.
+        setLogs(undefined);
+        toast(`Could not open your logs. ${String(error)}`, 'error');
+      });
+    return () => {
+      live = false;
+    };
+    // `profileNames` is read inside the resolver, which is called later rather
+    // than now; rebuilding the store whenever a profile changes would discard
+    // pending writes for a name lookup that is already current by then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createLogStore, logFormat, logPath, toast]);
+
+  // The policy a network follows: its own where it carries one, the global one
+  // otherwise. Merged rather than either-or, so switching logging off globally
+  // switches it off everywhere — an override that kept writing past that would
+  // be a setting that lies.
+  const policyFor = useCallback(
+    (networkId: string) => effectivePolicy(view.logging, registry.profiles.get(networkId)?.logging),
+    [view.logging, registry.profiles],
+  );
+
+  const logError = useCallback(
+    (message: string) => toast(`Could not write to your logs. ${message}`, 'error'),
+    [toast],
+  );
+
+  useMessageLogging({
+    networks,
+    store: logs,
+    policyFor,
+    isChannelTarget: (networkId, target) => {
+      const support = registry.networks.get(networkId)?.support;
+      return support !== undefined && isChannel(target, support);
+    },
+    onError: logError,
+  });
+
+  usePurge({
+    store: logs,
+    networkIds: networks.map((state) => state.id),
+    cutoffFor: (networkId) => retentionCutoff(policyFor(networkId), new Date()),
+    onError: logError,
+  });
+
+  /** Asks the store where it is and what it costs, for the settings screen. */
+  const refreshLogLocation = useCallback(() => {
+    if (logs === undefined) {
+      return;
+    }
+    void logs
+      .location()
+      .then(setLogLocation)
+      .catch(() => setLogLocation(undefined));
+  }, [logs]);
+
+  // Refreshed when the settings screen opens rather than continuously: it is a
+  // disk measurement, and nobody watches a number tick up while they read.
+  useEffect(() => {
+    if (view.pane === 'settings') {
+      refreshLogLocation();
+    }
+  }, [view.pane, refreshLogLocation]);
+
+  /**
+   * The things the logging settings do.
+   *
+   * All of them report what happened rather than acting silently: these touch
+   * files on somebody's own disk, and "did that work" should not need checking
+   * in a file manager.
+   */
+  const changeLogFolder = (): void => {
+    if (chooseLogFolder === undefined) {
+      return;
+    }
+    void chooseLogFolder().then((folder) => {
+      if (folder === undefined) {
+        return;
+      }
+      // Only where new logs go. Moving what is already written is the user's to
+      // do — a client that quietly relocated somebody's files would be making a
+      // decision about their disk that is not its to make.
+      view.updateLogging({ path: folder });
+      refreshLogLocation();
+      toast(`New logs will be written to ${folder}. What is already written stays where it is.`);
+    });
+  };
+
+  const openLogFolder = (): void => {
+    void logs?.reveal().catch((error: unknown) => logError(String(error)));
+  };
+
+  const exportLogs = (): void => {
+    if (logs === undefined || chooseExportFile === undefined) {
+      return;
+    }
+    void chooseExportFile().then((path) => {
+      if (path === undefined) {
+        return;
+      }
+      void logs
+        .export({ text: '', limit: EXPORT_LIMIT }, path)
+        .then((written) => toast(`Logs written to ${written}.`))
+        .catch((error: unknown) => toast(`Could not write the export. ${String(error)}`, 'error'));
+    });
+  };
+
+  const clearLogs = (): void => {
+    void logs
+      ?.clear()
+      .then((removed) => {
+        refreshLogLocation();
+        toast(removed === 1 ? 'Deleted one logged line.' : `Deleted ${removed} logged lines.`);
+      })
+      .catch((error: unknown) => logError(String(error)));
+  };
+
+  const purgeLogsNow = (): void => {
+    if (logs === undefined) {
+      return;
+    }
+    void (async () => {
+      let removed = 0;
+      for (const state of networks) {
+        const cutoff = retentionCutoff(policyFor(state.id), new Date());
+        if (cutoff !== undefined) {
+          removed += await logs.purge(cutoff, state.id);
+        }
+      }
+      refreshLogLocation();
+      toast(
+        removed === 0
+          ? 'Nothing was old enough to delete.'
+          : `Deleted ${removed} logged ${removed === 1 ? 'line' : 'lines'}.`,
+      );
+    })().catch((error: unknown) => logError(String(error)));
+  };
 
   // A change to what strangers may ask takes effect now, not at the next
   // reconnect — somebody who switches off answering VERSION means this one.
@@ -1243,6 +1470,21 @@ export function Marmotter({
           onCtcpChange={view.updateCtcp}
           userOptions={view.userOptions}
           onUserOptionsChange={view.updateUserOptions}
+          {...(logs === undefined
+            ? {}
+            : {
+                logging: {
+                  policy: view.logging,
+                  onChange: view.updateLogging,
+                  location: logLocation,
+                  onChooseFolder: changeLogFolder,
+                  onOpenFolder: openLogFolder,
+                  onExport: exportLogs,
+                  onClear: clearLogs,
+                  onPurgeNow: purgeLogsNow,
+                  onSearch: () => view.setPane('log-search'),
+                },
+              })}
           dccAvailable={dcc !== undefined}
           onChooseDownloadFolder={chooseDownloadFolder}
           onReconnect={reconnect}
@@ -1262,6 +1504,8 @@ export function Marmotter({
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={view.clearDccOffers}
         />
+      ) : view.pane === 'log-search' && logs !== undefined ? (
+        <LogSearch className="min-h-0 flex-1" store={logs} />
       ) : view.pane === 'raw-log' && network !== undefined ? (
         <RawLog network={network} onCopy={(text) => void navigator.clipboard?.writeText(text)} />
       ) : view.pane === 'account' && network !== undefined && session !== undefined ? (

@@ -8,6 +8,7 @@ import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
+import { LoggingSettings, type LoggingSettingsProps } from './LoggingSettings.js';
 import {
   TOAST_SECONDS_RANGE,
   clampToastSeconds,
@@ -23,6 +24,14 @@ export interface SettingsProps {
   readonly onCtcpChange: (changes: Partial<CtcpPolicy>) => void;
   readonly userOptions: UserOptions;
   readonly onUserOptionsChange: (changes: Partial<UserOptions>) => void;
+  /**
+   * The logging controls, or absent where the platform keeps nothing.
+   *
+   * Absent on web rather than disabled: there is no store there to configure,
+   * and a greyed-out group would imply logging is a thing that could be
+   * switched on in a browser tab. It cannot.
+   */
+  readonly logging?: LoggingSettingsProps;
   /**
    * Whether this platform can run the DCC file monitor at all.
    *
@@ -108,6 +117,7 @@ export function Settings({
   onCtcpChange,
   userOptions,
   onUserOptionsChange,
+  logging,
   dccAvailable,
   onChooseDownloadFolder,
   onReconnect,
@@ -304,6 +314,8 @@ export function Settings({
             />
           </div>
         </ListGroup>
+
+        {logging === undefined ? null : <LoggingSettings {...logging} />}
 
         <ListGroup
           header="User options"

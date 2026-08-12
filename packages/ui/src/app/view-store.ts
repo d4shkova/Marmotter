@@ -17,6 +17,7 @@ import {
   type DccSend,
   type XdccPack,
 } from '@marmotter/protocol';
+import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import { create } from 'zustand';
 
 /** A conversation the interface can be showing. */
@@ -27,7 +28,15 @@ export interface TargetRef {
 }
 
 export type Pane =
-  'chat' | 'raw-log' | 'settings' | 'channel-browser' | 'people' | 'account' | 'dcc';
+  | 'chat'
+  | 'raw-log'
+  | 'settings'
+  | 'channel-browser'
+  | 'people'
+  | 'account'
+  | 'dcc'
+  /** Searching what has been written to disk, rather than what is in memory. */
+  | 'log-search';
 
 /** How far a file offered over DCC has got. */
 export type DccStatus =
@@ -188,6 +197,15 @@ export const DEFAULT_USER_OPTIONS: UserOptions = {
   toastSeconds: TOAST_SECONDS_RANGE.default,
 };
 
+/**
+ * The logging policy every network follows unless it says otherwise.
+ *
+ * Interface state rather than network state, and the same shape as a network's
+ * own override so the two merge without translation. Off, like the per-network
+ * default — CLAUDE.md makes switching it on an explicit, informed choice.
+ */
+export const DEFAULT_LOGGING = defaultLoggingPolicy;
+
 export interface Unread {
   /** Messages since the conversation was last read. */
   readonly count: number;
@@ -265,6 +283,8 @@ export interface ViewState {
   readonly ctcp: CtcpPolicy;
   /** Per-person options, including the DCC file monitor. */
   readonly userOptions: UserOptions;
+  /** The logging policy networks follow unless they carry their own. */
+  readonly logging: LoggingPolicy;
   /**
    * Whether the monitor is actively collecting offers right now.
    *
@@ -290,6 +310,7 @@ export interface ViewState {
   updateAppearance(changes: Partial<Appearance>): void;
   updateCtcp(changes: Partial<CtcpPolicy>): void;
   updateUserOptions(changes: Partial<UserOptions>): void;
+  updateLogging(changes: Partial<LoggingPolicy>): void;
   /** Starts or pauses collection of DCC offers. */
   setDccActive(active: boolean): void;
   /**
@@ -376,6 +397,7 @@ export const useView = create<ViewState>((set, get) => ({
   appearance: DEFAULT_APPEARANCE,
   ctcp: DEFAULT_CTCP_POLICY,
   userOptions: DEFAULT_USER_OPTIONS,
+  logging: DEFAULT_LOGGING,
   dccActive: true,
   dccOffers: [],
 
@@ -457,6 +479,8 @@ export const useView = create<ViewState>((set, get) => ({
 
   updateUserOptions: (changes) =>
     set((current) => ({ userOptions: { ...current.userOptions, ...changes } })),
+
+  updateLogging: (changes) => set((current) => ({ logging: { ...current.logging, ...changes } })),
 
   setDccActive: (dccActive) => set({ dccActive }),
 
