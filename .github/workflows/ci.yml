@@ -11,6 +11,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Named once so the two jobs that install ergo cannot drift apart.
+  ERGO_VERSION: 2.15.0
 
 jobs:
   lint-and-test:
@@ -89,10 +91,7 @@ jobs:
         # The acceptance criteria for phases 5 and 6 are about behaviour against
         # a real ircd, which is the one thing a unit test cannot stand in for.
         run: |
-          curl -sSL -o ergo.tar.gz \
-            https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
-          tar xzf ergo.tar.gz
-          sudo install ergo-2.15.0-linux-x86_64/ergo /usr/local/bin/ergo
+          .github/scripts/install-ergo.sh
           ergo initdb --conf e2e/ergo.yaml
 
       - name: Install Playwright's browser
@@ -137,10 +136,7 @@ jobs:
         # The transport integration tests connect to a real IRC server rather
         # than a mock, so one has to exist.
         run: |
-          curl -sSL -o ergo.tar.gz \
-            https://github.com/ergochat/ergo/releases/download/v2.15.0/ergo-2.15.0-linux-x86_64.tar.gz
-          tar xzf ergo.tar.gz
-          sudo install -m 755 ergo-2.15.0-linux-x86_64/ergo /usr/local/bin/ergo
+          .github/scripts/install-ergo.sh
           ergo --version
 
       - name: Check formatting
