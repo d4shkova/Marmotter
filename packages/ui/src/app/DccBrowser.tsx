@@ -29,7 +29,7 @@ const TRAY_ORDER: Readonly<Record<DccOfferRecord['status'], number>> = {
  * of seven cells. Rendering the lot is what made opening this pane — and every
  * screen switch while a download was reporting progress — take seconds.
  */
-const CATALOGUE_PAGE = 200;
+export const CATALOGUE_PAGE = 200;
 
 /** How often the "Seen" column re-reads the clock, in milliseconds. */
 const AGE_TICK = 30_000;
@@ -100,6 +100,14 @@ export interface DccBrowserProps {
   readonly onDismiss: (offer: DccOfferRecord) => void;
   /** Injectable for tests. Left out, the clock is sampled on a slow timer. */
   readonly now?: number;
+  /**
+   * How much of the catalogue is laid out before "Show more" is offered.
+   *
+   * Defaults to {@link CATALOGUE_PAGE}. Injectable so the paging can be
+   * exercised over a handful of rows rather than by building a bot-sized
+   * catalogue to push past the real one.
+   */
+  readonly pageSize?: number;
   readonly className?: string;
 }
 
@@ -122,6 +130,7 @@ export function DccBrowser({
   onClear,
   onDismiss,
   now,
+  pageSize = CATALOGUE_PAGE,
   className,
 }: DccBrowserProps): ReactNode {
   const ticking = useCoarseNow();
@@ -320,7 +329,7 @@ export function DccBrowser({
           columns={columns}
           rows={filtered}
           rowKey={rowKey}
-          pageSize={CATALOGUE_PAGE}
+          pageSize={pageSize}
           sort={sort}
           onSortChange={(columnId) =>
             setSort((current) =>
