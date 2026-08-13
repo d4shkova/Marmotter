@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DccBrowser } from './DccBrowser.js';
+import { CATALOGUE_PAGE, DccBrowser } from './DccBrowser.js';
 import type { DccOfferRecord } from './view-store.js';
 
 afterEach(cleanup);
@@ -273,5 +273,97 @@ describe('getting a row off the list', () => {
     // and a bin on every one of thousands of catalogue rows would be noise.
     render_([offer({ status: 'available', filename: 'holiday.zip' })], vi.fn());
     expect(screen.queryByRole('button', { name: /from the list/ })).toBeNull();
+  });
+});
+
+describe('DccBrowser with a bot-sized catalogue', () => {
+  const catalogue = (count: number): DccOfferRecord[] =>
+    Array.from({ length: count }, (_, index) =>
+      offer({
+        id: `pack-${index}`,
+        filename: `Pack.${index}.mkv`,
+        pack: index,
+        status: 'available',
+      }),
+    );
+
+  // The paging is exercised over a handful of rows with the page size injected.
+  // Building a real bot-sized catalogue to push past the default would test
+  // jsdom's layout speed rather than the behaviour, and take seconds to do it.
+  const show = (offers: readonly DccOfferRecord[], pageSize?: number): ReturnType<typeof render> =>
+    render(
+      <DccBrowser
+        offers={offers}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+        {...(pageSize === undefined ? {} : { pageSize })}
+      />,
+    );
+
+  it('lays out a screenful rather than the whole catalogue', () => {
+    show(catalogue(10), 4);
+
+    expect(screen.getByText('Pack.0.mkv')).toBeDefined();
+    expect(screen.queryByText('Pack.9.mkv')).toBeNull();
+    expect(screen.getByText('Showing 4 of 10')).toBeDefined();
+  });
+
+  it('stops at two hundred rows unless told otherwise', () => {
+    // The default is what the pane actually opens with, so it is worth holding
+    // even though the paging itself is covered above.
+    show(catalogue(CATALOGUE_PAGE + 1));
+
+    expect(screen.getByText(`Showing ${CATALOGUE_PAGE} of ${CATALOGUE_PAGE + 1}`)).toBeDefined();
+  });
+
+  it('shows the rest when asked', () => {
+    show(catalogue(10), 4);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Pack.7.mkv')).toBeDefined();
+    expect(screen.queryByText('Pack.9.mkv')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Pack.9.mkv')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('leaves a small catalogue whole, with nothing to press', () => {
+    show(catalogue(3), 4);
+
+    expect(screen.getByText('Pack.2.mkv')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('keeps everything on show once asked, as a download reports progress', () => {
+    // The offer list is rebuilt on every progress report. Folding the catalogue
+    // back up under somebody mid-scroll each time would be unusable.
+    const offers = catalogue(6);
+    const { rerender } = show(offers, 4);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Pack.5.mkv')).toBeDefined();
+
+    rerender(
+      <DccBrowser
+        offers={[...offers, offer({ id: 'live', status: 'downloading', received: 5 })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+        pageSize={4}
+      />,
+    );
+
+    expect(screen.getByText('Pack.5.mkv')).toBeDefined();
+    expect(screen.getByRole('progressbar')).toBeDefined();
   });
 });

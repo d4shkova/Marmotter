@@ -3,6 +3,13 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     projects: ['packages/*', 'apps/web', 'apps/desktop'],
+    // Vitest's own default is five seconds, which a shared CI runner does not
+    // reliably clear: it runs about three times slower than a developer's
+    // machine, and the parser fuzzing already lands at four seconds there. That
+    // makes a red build mean "the runner was busy" often enough to stop meaning
+    // anything. Fifteen is still far short of any test that has actually hung,
+    // and no assertion is weakened by waiting longer for it.
+    testTimeout: 15_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

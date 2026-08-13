@@ -34,6 +34,7 @@ import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
 import { Modal } from '../primitives/Modal.js';
 import { ToastRegion, type ToastMessage } from '../primitives/Toast.js';
+import { foldNotice, shouldAnnounceDownload, type Notice, type ShellNotice } from './notices.js';
 import { AccountMenu } from './AccountMenu.js';
 import { AccountPanel } from './AccountPanel.js';
 import { AddNetwork } from './AddNetwork.js';
@@ -41,7 +42,7 @@ import { AppShell, useBreakpoint } from './AppShell.js';
 import { ChannelBrowser } from './ChannelBrowser.js';
 import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
-import { DccBrowser } from './DccBrowser.js';
+import { DccBrowser, type DccBrowserProps } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
 import type { DccCapability } from './dcc.js';
 import { InviteBanner } from './Invites.js';
@@ -91,9 +92,11 @@ import {
   isHighlight,
   orderNetworks,
   sameRef,
+  selectViewWithoutOffers,
   unreadFor,
   useView,
 } from './view-store.js';
+import { useShallow } from 'zustand/react/shallow';
 
 /**
  * The ceiling on one export.
@@ -246,7 +249,12 @@ export function Marmotter({
   secrets,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
-  const view = useView();
+  // Deliberately not `useView()`: that subscribes to every field, and the list
+  // of offered files changes on every catalogue line a serving bot posts and
+  // every megabyte of every download. Reading it here made each of those a
+  // render of the whole client. The two places that show offers subscribe to
+  // them on their own, below.
+  const view = useView(useShallow(selectViewWithoutOffers));
   const breakpoint = useBreakpoint();
 
   const [adding, setAdding] = useState(false);
@@ -259,7 +267,7 @@ export function Marmotter({
     undefined,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
+  const [toasts, setToasts] = useState<readonly ShellNotice[]>([]);
   /** A network waiting for a channel name from the "Join a channel" prompt. */
   const [joiningNetwork, setJoiningNetwork] = useState<string | undefined>(undefined);
   /** Whose profile card is open, if any. */
@@ -321,16 +329,29 @@ export function Marmotter({
     undefined,
   );
 
+  /**
+   * Raises a notice, folding it into one already saying the same thing.
+   *
+   * The rules — what counts as the same notice, what a repeat does to the one
+   * on screen, how many may be up at once — are in `notices.ts`, where they can
+   * be read and tested without a client around them.
+   */
+  const notify = useCallback((notice: Notice) => {
+    setToasts((current) => foldNotice(current, notice, `${Date.now()}-${Math.random()}`));
+  }, []);
+
   const toast = useCallback(
     (text: string, tone: ToastMessage['tone'] = 'info', action?: ToastMessage['action']) => {
-      const id = `${Date.now()}-${Math.random()}`;
-      setToasts((current) => [
-        ...current,
-        { id, text, tone, ...(action === undefined ? {} : { action }) },
-      ]);
+      notify({ text, tone, ...(action === undefined ? {} : { action }) });
     },
-    [],
+    [notify],
   );
+
+  // Stable, so the toasts are not handed a new one on every render. They no
+  // longer time their countdown off it, but there is no reason to churn it.
+  const dismissToast = useCallback((id: string) => {
+    setToasts((current) => current.filter((entry) => entry.id !== id));
+  }, []);
 
   const networks = useMemo(
     () =>
@@ -1076,6 +1097,28 @@ export function Marmotter({
     });
   }, [dcc]);
 
+  /**
+   * Says how a download got on, unless the file list is already saying it.
+   *
+   * Requesting a pack, a file arriving, a transfer stopped: the row in the file
+   * list shows every one of those, in the words the button used. Repeating it
+   * over the top of the very list it describes is noise, and a queue of files
+   * turned that into a wall of it. Somewhere else in the client there is nothing
+   * else showing it, so it is said there.
+   *
+   * Failures do not come through here. Those want a decision, and the row's
+   * truncated error line is not the place to make it.
+   */
+  const announceDownload = useCallback(
+    (notice: Notice) => {
+      if (!shouldAnnounceDownload(useView.getState().pane)) {
+        return;
+      }
+      notify(notice);
+    },
+    [notify],
+  );
+
   // Downloads in flight, keyed by the row that started them, each with the
   // handle used to cancel it. A row can only have one transfer at a time, so the
   // id is a fine key; the entry is cleared when the transfer settles.
@@ -1122,7 +1165,10 @@ export function Marmotter({
         .then((savedPath) => {
           transfers.current.delete(offerId);
           useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
-          toast(`Saved ${source.filename}.`);
+          announceDownload({
+            key: 'dcc-saved',
+            text: (saved) => (saved === 1 ? `Saved ${source.filename}.` : `Saved ${saved} files.`),
+          });
         })
         .catch((error: unknown) => {
           transfers.current.delete(offerId);
@@ -1134,10 +1180,22 @@ export function Marmotter({
           useView
             .getState()
             .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
-          toast(`Couldn't download ${source.filename}. ${describe(error)}`, 'error');
+          // Keyed to the row, not the wording: a serving bot re-offers a pack
+          // every few seconds and each re-offer is another attempt, so one file
+          // that will not come is one notice that keeps count, not a tower of
+          // them. Failures are said whether or not the file list is open —
+          // unlike a file arriving, they need a decision.
+          notify({
+            key: `dcc-failed-${offerId}`,
+            tone: 'error',
+            text: (attempts) =>
+              attempts === 1
+                ? `Couldn't download ${source.filename}. ${describe(error)}`
+                : `Couldn't download ${source.filename} after ${attempts} attempts. ${describe(error)}`,
+          });
         });
     },
-    [dcc, toast],
+    [announceDownload, dcc, notify, toast],
   );
 
   // Stopping a download that is under way. The row goes straight back to
@@ -1152,9 +1210,15 @@ export function Marmotter({
       cancelledOffers.current.add(offer.id);
       transfer.cancel();
       useView.getState().setDccOfferStatus(offer.id, { status: 'available' });
-      toast(`Stopped downloading ${offer.filename}.`);
+      announceDownload({
+        key: 'dcc-stopped',
+        text: (stopped) =>
+          stopped === 1
+            ? `Stopped downloading ${offer.filename}.`
+            : `Stopped ${stopped} downloads.`,
+      });
     },
-    [toast],
+    [announceDownload],
   );
 
   /**
@@ -1288,11 +1352,14 @@ export function Marmotter({
       );
       return;
     }
-    toast(
-      `Couldn't verify ${profile.name}'s certificate — it isn't signed by an authority your device recognises. Connect without checking it?`,
-      'error',
-      { label: 'Connect anyway', onSelect: () => acceptUnverifiedCert(profile) },
-    );
+    // Asked rather than reported, so it waits to be answered. Timed out, the
+    // network would simply not connect with nothing left on screen saying why.
+    notify({
+      text: `Couldn't verify ${profile.name}'s certificate — it isn't signed by an authority your device recognises. Connect without checking it?`,
+      tone: 'error',
+      persistent: true,
+      action: { label: 'Connect anyway', onSelect: () => acceptUnverifiedCert(profile) },
+    });
   };
 
   // XDCC downloads requested but not yet answered, keyed by network + folded bot
@@ -1408,7 +1475,13 @@ export function Marmotter({
         ]);
         session.send(`PRIVMSG ${offer.from} :XDCC SEND #${offer.pack}`);
         useView.getState().setDccOfferStatus(offer.id, { status: 'requested' });
-        toast(`Requested pack #${offer.pack} from ${offer.from}.`);
+        announceDownload({
+          key: 'dcc-requested',
+          text: (requested) =>
+            requested === 1
+              ? `Requested pack #${offer.pack} from ${offer.from}.`
+              : `Requested ${requested} packs.`,
+        });
         return;
       }
       if (offer.host === undefined || offer.port === undefined) {
@@ -1422,7 +1495,7 @@ export function Marmotter({
         ...(offer.size === undefined ? {} : { size: offer.size }),
       });
     },
-    [registry, toast, fetchIntoFolder, pendingKey],
+    [announceDownload, registry, toast, fetchIntoFolder, pendingKey],
   );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
@@ -1761,9 +1834,8 @@ export function Marmotter({
 
   // The file monitor's home in the left column, under the networks.
   const dccMonitorNode = showDccPanel ? (
-    <DccMonitorPanel
+    <DccMonitorStrip
       active={view.dccActive}
-      seen={view.dccOffers.length}
       onStart={() => view.setDccActive(true)}
       onStop={() => view.setDccActive(false)}
       onOpen={() => view.setPane('dcc')}
@@ -1909,9 +1981,8 @@ export function Marmotter({
           }}
         />
       ) : view.pane === 'dcc' ? (
-        <DccBrowser
+        <DccBrowserPane
           className="flex-1 overflow-y-auto"
-          offers={view.dccOffers}
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
@@ -2285,7 +2356,7 @@ export function Marmotter({
       <ToastRegion
         toasts={toasts}
         dismissMs={view.userOptions.toastSeconds * 1000}
-        onDismiss={(id) => setToasts((current) => current.filter((entry) => entry.id !== id))}
+        onDismiss={dismissToast}
       />
 
       {persists ? null : (
@@ -2295,6 +2366,48 @@ export function Marmotter({
       )}
     </>
   );
+}
+
+/**
+ * The file monitor strip, subscribed to the offer count on its own.
+ *
+ * The count is the one thing here that moves, and on a packlist channel it moves
+ * thousands of times a minute. Reading it in this small component keeps those
+ * updates to this strip rather than re-rendering the client around it.
+ */
+function DccMonitorStrip({
+  active,
+  onStart,
+  onStop,
+  onOpen,
+}: {
+  active: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onOpen: () => void;
+}): ReactNode {
+  const seen = useView((state) => state.dccOffers.length);
+  return (
+    <DccMonitorPanel
+      active={active}
+      seen={seen}
+      onStart={onStart}
+      onStop={onStop}
+      onOpen={onOpen}
+    />
+  );
+}
+
+/**
+ * The file browser, subscribed to the offer list on its own.
+ *
+ * Same reason as the strip above, and it matters most here: a download reports
+ * progress every megabyte, and each of those has to redraw the row it belongs
+ * to. It must not also redraw the message list behind this pane.
+ */
+function DccBrowserPane(props: Omit<DccBrowserProps, 'offers'>): ReactNode {
+  const offers = useView((state) => state.dccOffers);
+  return <DccBrowser {...props} offers={offers} />;
 }
 
 /** The server tab: the network's own notices and MOTD. */

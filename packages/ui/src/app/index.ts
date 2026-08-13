@@ -32,6 +32,7 @@ export * from './MemberList.js';
 export * from './member-actions.js';
 export * from './MessageList.js';
 export * from './MessageRow.js';
+export * from './notices.js';
 export * from './notify.js';
 export * from './PeoplePanel.js';
 export * from './RawLog.js';

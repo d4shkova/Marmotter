@@ -109,6 +109,57 @@ describe('Toast', () => {
     expect(onDismiss).toHaveBeenCalledWith('t6');
   });
 
+  it('keeps counting down while the client around it re-renders', () => {
+    // The shell re-renders on every line the network sends, and writes its
+    // dismiss handler inline, so the toast is handed a new function several
+    // times a second. Timing the countdown off that identity restarted it every
+    // time, and nothing ever cleared on its own.
+    const onDismiss = vi.fn();
+    const render_ = (): void => {
+      rerender(<Toast id="t8" text="Saved marmot-photos.zip." onDismiss={(id) => onDismiss(id)} />);
+    };
+    const { rerender } = render(
+      <Toast id="t8" text="Saved marmot-photos.zip." onDismiss={(id) => onDismiss(id)} />,
+    );
+
+    for (let second = 0; second < DEFAULT_TOAST_DISMISS_MS / 1_000; second += 1) {
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      render_();
+    }
+    act(() => {
+      vi.advanceTimersByTime(FADE_MS);
+    });
+
+    expect(onDismiss).toHaveBeenCalledWith('t8');
+  });
+
+  it('waits to be answered when it is asking rather than reporting', () => {
+    // An unverified certificate. Fading this one away leaves the network simply
+    // not connecting, with nothing on screen saying why.
+    const onDismiss = vi.fn();
+    render(
+      <Toast
+        id="t9"
+        tone="error"
+        persistent
+        text="Couldn't verify Libera.Chat's certificate. Connect without checking it?"
+        onDismiss={onDismiss}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_TOAST_DISMISS_MS * 10);
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    // Still dismissible every way the others are.
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    finishFade();
+    expect(onDismiss).toHaveBeenCalledWith('t9');
+  });
+
   it('reports one dismissal however many times it is clicked', () => {
     const onDismiss = vi.fn();
     render(<Toast id="t7" text="Saved marmot-photos.zip." onDismiss={onDismiss} />);

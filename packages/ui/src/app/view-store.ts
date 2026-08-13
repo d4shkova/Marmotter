@@ -663,13 +663,40 @@ export const useView = create<ViewState>((set, get) => ({
   },
 }));
 
-/** Unread state for a conversation. */
-export function unreadFor(state: ViewState, ref: TargetRef): Unread {
+/**
+ * Everything in the view state except the list of offered files.
+ *
+ * The shell subscribes through this rather than to the whole store, and the two
+ * places that show offers subscribe to `dccOffers` themselves. The list is by
+ * far the busiest thing in here: a serving bot re-lists a catalogue of thousands
+ * of packs on a timer, and a download reports progress every megabyte. Read
+ * whole, each of those was a render of the entire client — sidebar, message
+ * list, member list and all — which is what made switching screens crawl while
+ * anything was downloading.
+ *
+ * Paired with zustand's `useShallow`, so the comparison is over the fields
+ * rather than the object this rebuilds on each read.
+ */
+export type ViewWithoutOffers = Omit<ViewState, 'dccOffers'>;
+
+/** Selects {@link ViewWithoutOffers}. Hoisted so it is one stable function. */
+export function selectViewWithoutOffers(state: ViewState): ViewWithoutOffers {
+  const { dccOffers: _offers, ...rest } = state;
+  return rest;
+}
+
+/**
+ * Unread state for a conversation.
+ *
+ * Takes only the field it reads, so a component holding a narrowed slice of the
+ * store — as the shell does, to stay out of the offer list's way — can call it.
+ */
+export function unreadFor(state: Pick<ViewState, 'unread'>, ref: TargetRef): Unread {
   return state.unread.get(keyOf(ref)) ?? { count: 0, highlight: false };
 }
 
-/** The draft for a conversation. */
-export function draftFor(state: ViewState, ref: TargetRef): string {
+/** The draft for a conversation. Narrowed for the same reason as `unreadFor`. */
+export function draftFor(state: Pick<ViewState, 'drafts'>, ref: TargetRef): string {
   return state.drafts.get(keyOf(ref)) ?? '';
 }
 
