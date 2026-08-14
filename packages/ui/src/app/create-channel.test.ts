@@ -21,10 +21,15 @@ describe('making a channel', () => {
     ]);
   });
 
-  it('folds the settings into one mode change', () => {
+  // Deliberately not folded into one mode change. A network that does not have
+  // secret channels refuses that letter, and a refused letter takes the whole
+  // line with it — so folding them meant one unsupported setting quietly lost
+  // the others.
+  it('asks for each setting on its own line', () => {
     expect(createChannelLines({ ...plain, inviteOnly: true, secret: true })).toEqual([
       'JOIN #marmotter',
-      'MODE #marmotter +is',
+      'MODE #marmotter +i',
+      'MODE #marmotter +s',
     ]);
   });
 
@@ -37,10 +42,11 @@ describe('making a channel', () => {
     ]);
   });
 
-  it('puts the parameter after the flags that take none', () => {
+  it('keeps the password on a line of its own, so nothing else can lose it', () => {
     expect(createChannelLines({ ...plain, inviteOnly: true, password: 'hunter2' })).toEqual([
       'JOIN #marmotter',
-      'MODE #marmotter +ik hunter2',
+      'MODE #marmotter +i',
+      'MODE #marmotter +k hunter2',
     ]);
   });
 
@@ -53,6 +59,12 @@ describe('making a channel', () => {
         password: 'hunter2',
         secret: true,
       }),
-    ).toEqual(['JOIN #quiet', 'MODE #quiet +isk hunter2', 'TOPIC #quiet :Invitations only']);
+    ).toEqual([
+      'JOIN #quiet',
+      'MODE #quiet +i',
+      'MODE #quiet +s',
+      'MODE #quiet +k hunter2',
+      'TOPIC #quiet :Invitations only',
+    ]);
   });
 });
