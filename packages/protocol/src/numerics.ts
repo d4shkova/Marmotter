@@ -314,6 +314,8 @@ export type SuggestedAction =
   | 'retry-later'
   | 'ask-an-operator'
   | 'check-the-name'
+  /** Sign in to the network's account service, or register with it. */
+  | 'sign-in'
   | 'none';
 
 export interface ErrorReport {
@@ -331,6 +333,14 @@ export interface ErrorReport {
  */
 /** Ensures a fragment of server text reads as a finished sentence. */
 const endWithStop = (text: string): string => (/[.!?]$/.test(text.trim()) ? text : `${text}.`);
+
+/**
+ * Whether a name is a modeless channel.
+ *
+ * `+` channels are the ones RFC 2812 says carry no modes at all. Every other
+ * prefix does, which is what tells the two meanings of 477 apart.
+ */
+const isModeless = (channel: string): boolean => channel.startsWith('+');
 
 export function describeError(numeric: string, params: readonly string[]): ErrorReport {
   // params[0] is our own nick on every error numeric; the subject follows.
@@ -409,7 +419,22 @@ export function describeError(numeric: string, params: readonly string[]): Error
     case ERR_BADCHANMASK:
       return { message: `${subject} isn't a valid channel name.`, action: 'check-the-name' };
     case ERR_NOCHANMODES:
-      return { message: `${subject} doesn't support channel settings.`, action: 'none' };
+      // 477 is two different errors sharing a number, and getting it wrong is
+      // how somebody trying to join a channel is told about "channel settings"
+      // they never asked for.
+      //
+      // The RFC's ERR_NOCHANMODES is about modeless channels, which are the
+      // `+` ones and nothing else. Every modern ircd — solanum, InspIRCd,
+      // UnrealIRCd, ergo — sends 477 on a join to mean the opposite thing:
+      // this channel only admits people signed in to a network account. On a
+      // `#` channel that second meaning is the only one that can apply, so the
+      // prefix decides it rather than a guess at the server's wording.
+      return isModeless(subject)
+        ? { message: `${subject} doesn't support channel settings.`, action: 'none' }
+        : {
+            message: `${subject} only lets in people signed in to an account on this network. Sign in, or register an account, and try again.`,
+            action: 'sign-in',
+          };
     case ERR_BANLISTFULL:
       return {
         message: `The ban list for ${subject} is full. Remove an entry before adding another.`,
