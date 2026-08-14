@@ -7,7 +7,7 @@ import {
 } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport } from '@marmotter/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { memberActions } from './member-actions.js';
+import { memberActions, nickActions } from './member-actions.js';
 
 const support = applyISupport(DEFAULT_ISUPPORT, [
   'PREFIX=(qaohv)~&@%+',
@@ -336,5 +336,68 @@ describe('mutes, where the network has them', () => {
     });
 
     expect(items.map((item) => item.label)).not.toContain('Lift their mute');
+  });
+});
+
+describe('a name in the message list', () => {
+  // The same menu as the member list's, opened from the other place a name
+  // appears. Two menus that disagree about what can be done to somebody is the
+  // failure this shares its implementation to avoid.
+  it('offers the full menu for somebody who is in the channel', () => {
+    const them = member('tamsin');
+    const us = member('me', '@');
+    const items = nickActions('tamsin', {
+      network: network(),
+      channel: channelWith(us, them),
+      ourNick: 'me',
+      callbacks: callbacks(),
+    });
+    expect(labels(items)).toContain('Remove from channel');
+    expect(labels(items)).toContain('Ban');
+  });
+
+  it('matches the name however it was capitalised', () => {
+    const them = member('tamsin');
+    const items = nickActions('TAMSIN', {
+      network: network(),
+      channel: channelWith(member('me', '@'), them),
+      ourNick: 'me',
+      callbacks: callbacks(),
+    });
+    expect(labels(items)).toContain('Ban');
+  });
+
+  // Scrollback outlives membership. Offering to ban somebody into a channel
+  // they left is an action that goes nowhere and reads as a broken menu.
+  it('offers only what makes sense for somebody who has left', () => {
+    const items = nickActions('gone', {
+      network: network(),
+      channel: channelWith(member('me', '@')),
+      ourNick: 'me',
+      callbacks: callbacks(),
+    });
+    expect(labels(items)).toEqual(['Send a message', 'View details', 'Ignore']);
+  });
+
+  it('works in a private conversation, which has no member list at all', () => {
+    const cbs = callbacks();
+    const items = nickActions('tamsin', {
+      network: network(),
+      channel: undefined,
+      ourNick: 'me',
+      callbacks: cbs,
+    });
+    run(items, 'message');
+    expect(cbs.onMessage).toHaveBeenCalledWith('tamsin');
+  });
+
+  it('never offers to ignore yourself', () => {
+    const items = nickActions('me', {
+      network: network(),
+      channel: undefined,
+      ourNick: 'me',
+      callbacks: callbacks(),
+    });
+    expect(labels(items)).not.toContain('Ignore');
   });
 });

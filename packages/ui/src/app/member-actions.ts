@@ -256,3 +256,49 @@ export function memberActions(member: Member, options: MemberActionOptions): rea
 
   return items;
 }
+
+/**
+ * The actions for a name in the message list.
+ *
+ * The same menu as the member list's, reached from the other place a person's
+ * name appears — which is where somebody who has just read a message is
+ * looking, and where every other IRC client puts it.
+ *
+ * A name in a conversation is not always somebody who is still there: the
+ * scrollback outlives the membership, and a private conversation has no member
+ * list at all. Where the person is present the full menu applies; where they
+ * are not, only the things that make sense without them — messaging them and
+ * asking the network who they are — are offered, rather than a Ban that would
+ * be sent into a channel they left.
+ */
+export function nickActions(
+  nick: string,
+  options: Omit<MemberActionOptions, 'channel'> & {
+    /** The conversation the name was read in, which may have no member list. */
+    readonly channel: ChannelState | undefined;
+  },
+): readonly MenuItem[] {
+  const { network, channel, ourNick, callbacks } = options;
+  const mapping = network.support.caseMapping;
+  const member = channel?.members.get(fold(nick, mapping));
+
+  if (member !== undefined && channel !== undefined) {
+    return memberActions(member, { ...options, channel });
+  }
+
+  const items: MenuItem[] = [
+    { id: 'message', label: 'Send a message', onSelect: () => callbacks.onMessage(nick) },
+    { id: 'whois', label: 'View details', onSelect: () => callbacks.onWhois(nick) },
+  ];
+
+  if (fold(nick, mapping) !== fold(ourNick, mapping) && callbacks.onIgnore !== undefined) {
+    items.push({
+      id: 'ignore',
+      label: 'Ignore',
+      startsGroup: true,
+      onSelect: () => callbacks.onIgnore?.(nick),
+    });
+  }
+
+  return items;
+}
