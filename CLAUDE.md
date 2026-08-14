@@ -300,6 +300,29 @@ constraint: `packages/ui/src/tokens.test.ts` checks every one clears 4.5:1
 against `--bg-base` and that no two are perceptually closer than a set
 threshold. Widening the palette means widening that ramp, not adding hues.
 
+### Themes
+
+The description above is the default theme, **Midnight**. Five more ship beside
+it — Monochrome, Ember, Blossom, Paper, Nebula — and each is exactly what this
+section promises a theme is: a block of primitives under `[data-theme='…']` in
+`tokens.css`, with the alias layer written once for all of them. Adding one
+means adding a block and a row in `packages/ui/src/themes.ts`; it must never
+mean touching a component.
+
+Three rules hold across all of them. The alias layer is selected by `:root` and
+by `[data-theme]`, so a theme applied to a nested element re-resolves against
+its own primitives — that is what lets the picker draw each swatch in the theme
+it names. Translucent tokens are mixed from a primitive with `color-mix` rather
+than written as `rgba`, so a light theme inverts its scrim, fills and labels
+from one value each. And every theme is held to the same accessibility floor as
+the default: `tokens.test.ts` checks the eight voices, the label colours, the
+accent and the status colours for each one.
+
+Ember and Paper are built on red, which is the one place the reserved-hue rule
+bends — somebody asked for those palettes. Alarm stays distinguishable in both:
+the danger red is a different red from the accent, far enough from it to read as
+one, and the test asserts that rather than trusting it.
+
 ### Typography
 
 `-apple-system, "SF Pro Text", "Inter var", system-ui, sans-serif` for UI.
