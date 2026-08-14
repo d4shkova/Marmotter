@@ -198,7 +198,11 @@ export const NUMERIC_EXPLANATIONS: ReadonlyMap<string, Explanation> = new Map([
   ['475', { title: 'Password needed', detail: 'The channel requires a password to join.' }],
   [
     '477',
-    { title: 'Account needed', detail: 'You must be logged in to a network account to join.' },
+    {
+      title: 'Account needed',
+      detail:
+        'The channel only admits people signed in to a network account. On the rare modeless channel this number means the channel has no settings to change.',
+    },
   ],
   [
     '482',

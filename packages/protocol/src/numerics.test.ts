@@ -6,6 +6,7 @@ import {
   ERR_CHANOPRIVSNEEDED,
   ERR_INVITEONLYCHAN,
   ERR_NICKNAMEINUSE,
+  ERR_NOCHANMODES,
   ERR_NOMOTD,
   ERR_NOSUCHNICK,
   NICK_UNAVAILABLE,
@@ -436,6 +437,32 @@ describe('errors as plain English', () => {
     expect(describeError(ERR_BADCHANNELKEY, ['me', '#secret']).action).toBe(
       'enter-channel-password',
     );
+  });
+
+  // 477 arrives on a join far more often than on anything else, and every
+  // modern ircd means "you need an account" by it. Reading it as the RFC's
+  // ERR_NOCHANMODES told somebody who could not get into a channel that the
+  // channel "doesn't support channel settings", which is neither what happened
+  // nor anything they can act on.
+  it('reads 477 on an ordinary channel as needing an account', () => {
+    const report = describeError(ERR_NOCHANMODES, [
+      'me',
+      '#channel',
+      'Cannot join channel - you need to be identified with services',
+    ]);
+    expect(report.action).toBe('sign-in');
+    expect(report.message).toContain('#channel');
+    expect(report.message).toContain('signed in');
+    expect(report.message).not.toContain('channel settings');
+  });
+
+  it('keeps the modeless-channel meaning of 477 for the channels it applies to', () => {
+    // `+` channels are the ones that genuinely carry no modes.
+    const report = describeError(ERR_NOCHANMODES, ['me', '+modeless']);
+    expect(report).toEqual({
+      message: "+modeless doesn't support channel settings.",
+      action: 'none',
+    });
   });
 
   it('offers another nick when the chosen one is taken', () => {

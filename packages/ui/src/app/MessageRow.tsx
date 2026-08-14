@@ -2,6 +2,7 @@ import type { Message } from '@marmotter/client';
 import { type ReactNode, useState } from 'react';
 import { Decoder } from '../decoder/Decoder.js';
 import { cn } from '../lib/cn.js';
+import { useLongPress } from '../lib/long-press.js';
 import { nickColorVar } from '../lib/nick-color.js';
 import { IconButton } from '../primitives/IconButton.js';
 import type { Row } from './rows.js';
@@ -20,6 +21,8 @@ export interface MessageRowProps {
   readonly onReact?: (message: Message) => void;
   readonly onCopy?: (message: Message) => void;
   readonly onNickClick?: (nick: string) => void;
+  /** Opens the actions for the name, on right-click or long-press. */
+  readonly onNickMenu?: (nick: string, at: { readonly x: number; readonly y: number }) => void;
   /** Opens a link from a message, after the interface has confirmed it. */
   readonly onOpenLink?: (href: string) => void;
   /** Highlights the row, for a message that mentions the user. */
@@ -125,6 +128,7 @@ function TextRow({
   onReact,
   onCopy,
   onNickClick,
+  onNickMenu,
   onOpenLink,
   highlighted = false,
   searchMatch = 'none',
@@ -132,6 +136,23 @@ function TextRow({
   const { message, grouped } = row;
   const nick = message.source?.nick ?? '';
   const isAction = message.kind === 'action';
+
+  // The actions for whoever wrote the line, reached the way every other IRC
+  // client offers them: right-click the name, or hold it on a touch screen.
+  const openMenu = (event: {
+    clientX: number;
+    clientY: number;
+    preventDefault: () => void;
+  }): void => {
+    if (onNickMenu === undefined || nick === '') {
+      return;
+    }
+    event.preventDefault();
+    onNickMenu(nick, { x: event.clientX, y: event.clientY });
+  };
+  const longPress = useLongPress(
+    onNickMenu === undefined || nick === '' ? undefined : (at) => onNickMenu(nick, at),
+  );
   const isNotice = message.kind === 'notice';
   const isError = message.kind === 'error';
 
@@ -180,6 +201,8 @@ function TextRow({
           <button
             type="button"
             onClick={onNickClick === undefined ? undefined : () => onNickClick(nick)}
+            onContextMenu={onNickMenu === undefined ? undefined : openMenu}
+            {...longPress}
             style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}
             className="max-w-full truncate hover:underline"
           >
@@ -199,8 +222,21 @@ function TextRow({
         )}
       >
         {message.replyTo === undefined ? null : <ReplyChip id={message.replyTo} />}
+        {/* An action carries its author inside the sentence — "marmot waves" —
+            rather than in the nick column, so that is the name to right-click
+            on one of these rows. */}
         {isAction ? (
-          <span style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}>{nick} </span>
+          <span style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}>
+            <button
+              type="button"
+              onClick={onNickClick === undefined ? undefined : () => onNickClick(nick)}
+              onContextMenu={onNickMenu === undefined ? undefined : openMenu}
+              {...longPress}
+              className="hover:underline"
+            >
+              {nick}
+            </button>{' '}
+          </span>
         ) : null}
         <Body
           text={message.text}

@@ -10,7 +10,13 @@ import {
   requestOlder,
   useNetworks,
 } from '@marmotter/client';
-import { fold, isChannel, type DccSend, type XdccPack } from '@marmotter/protocol';
+import {
+  fold,
+  isChannel,
+  type DccSend,
+  type SuggestedAction,
+  type XdccPack,
+} from '@marmotter/protocol';
 import type { CloseReason } from '@marmotter/shared';
 import { effectivePolicy, retentionCutoff } from '@marmotter/client';
 import {
@@ -46,6 +52,8 @@ import { DccBrowser, type DccBrowserProps } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
 import type { DccCapability } from './dcc.js';
 import { InviteBanner } from './Invites.js';
+import { Launch } from './Launch.js';
+import { connectionStatus, connectionStatusText } from './network-status.js';
 import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
 import { describeWait, listReadiness } from './list-guard.js';
@@ -73,7 +81,12 @@ import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { parseInput } from './commands.js';
-import { canModerateChannel, memberActions } from './member-actions.js';
+import {
+  canModerateChannel,
+  memberActions,
+  nickActions,
+  type MemberActionCallbacks,
+} from './member-actions.js';
 import {
   type Notifier,
   buildNotification,
@@ -268,10 +281,32 @@ export function Marmotter({
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<readonly ShellNotice[]>([]);
+  /**
+   * Whether the launch screen is in front of everything.
+   *
+   * Opened on a launch that restored networks, which is every launch after the
+   * first, and closed for good once somebody has either connected or waved it
+   * away. Not shown on a fresh install: there is nothing to pick from, and the
+   * screen behind it already says to add a network.
+   */
+  const [launchOpen, setLaunchOpen] = useState(false);
   /** A network waiting for a channel name from the "Join a channel" prompt. */
   const [joiningNetwork, setJoiningNetwork] = useState<string | undefined>(undefined);
+  /** A channel that turned a join down for want of a password, pending one. */
+  const [channelKeyFor, setChannelKeyFor] = useState<
+    { readonly networkId: string; readonly channel: string } | undefined
+  >(undefined);
   /** Whose profile card is open, if any. */
   const [profileNick, setProfileNick] = useState<string | undefined>(undefined);
+  /**
+   * A name right-clicked in the message list, and where.
+   *
+   * Held here rather than in the row it opened from: the list is virtualized,
+   * so scrolling unmounts that row and would take the menu with it.
+   */
+  const [nickMenu, setNickMenu] = useState<
+    { readonly nick: string; readonly x: number; readonly y: number } | undefined
+  >(undefined);
   /** Whether the channel settings and moderation sheet is open. */
   const [channelPanelOpen, setChannelPanelOpen] = useState(false);
   /** Which tab the channel panel opens on, when something opened it at one. */
@@ -538,6 +573,9 @@ export function Marmotter({
       for (const profile of networks) {
         startSessionRef.current(profile, { connect: false });
       }
+      // Restored, still disconnected, and now asked about rather than left as a
+      // sidebar of grey dots somebody has to right-click one at a time.
+      setLaunchOpen(networks.length > 0);
       // Somebody who skips is not asked again this session either: they get it
       // on the next launch, which is less rude than a screen that will not take
       // no for an answer. Settings opens it on request either way.
@@ -598,6 +636,20 @@ export function Marmotter({
   );
 
   identityRef.current = identity;
+
+  /**
+   * Putting the chosen theme on the window.
+   *
+   * One attribute on the root element, which is the whole of it: every colour
+   * in the interface is a token, and `tokens.css` redefines the primitives
+   * under `[data-theme]`. Written to the document rather than to a React
+   * context so anything rendered outside the tree — a portal, a sheet — is
+   * inside the theme too.
+   */
+  const theme = view.appearance.theme;
+  useEffect(() => {
+    document.documentElement.dataset['theme'] = theme;
+  }, [theme]);
 
   // Asked once. Probing writes to the keychain, so it is not a thing to do on
   // every render of a form.
@@ -947,6 +999,12 @@ export function Marmotter({
           // at which somebody needs telling, with the way back in the same
           // notice rather than somewhere they have to go looking.
           reportLostConnection.current(profile, sessionEvent.reason);
+        } else if (sessionEvent.kind === 'channel-error') {
+          // A refused join used to leave the sentence in the server tab, which
+          // is not where somebody who clicked Join is looking: the channel row
+          // simply never appeared. The notice carries the plain-English reason
+          // and, where there is one, the way out of it.
+          reportChannelError.current(profile.id, sessionEvent);
         } else if (sessionEvent.kind === 'dcc-offer') {
           // Routed through a ref so this long-lived listener always runs the
           // latest logic — the pending-request map and the folder both change
@@ -1031,6 +1089,26 @@ export function Marmotter({
     const profile = registry.profiles.get(networkId);
     if (profile !== undefined) {
       startSession(profile);
+    }
+  };
+
+  /**
+   * Connecting the networks chosen on the launch screen.
+   *
+   * All of them at once is the point: each connection is independent, so a
+   * network that is slow to answer holds nothing else up, and one that fails
+   * reports itself the way any other failed connection does. The first is
+   * selected afterwards so the window lands somewhere rather than on the screen
+   * that has just been answered.
+   */
+  const connectNetworks = (networkIds: readonly string[]): void => {
+    setLaunchOpen(false);
+    for (const networkId of networkIds) {
+      reconnect(networkId);
+    }
+    const first = networkIds[0];
+    if (first !== undefined) {
+      view.select({ networkId: first, target: undefined });
     }
   };
 
@@ -1362,6 +1440,46 @@ export function Marmotter({
     });
   };
 
+  /**
+   * What to say when a network refuses something about a channel.
+   *
+   * The copy comes from the protocol layer, which is where the numeric is
+   * turned into a sentence; what this adds is the way out of it, where there is
+   * one. A channel that wants a password gets a field to type it into, and a
+   * channel that wants an account gets the account screen — which beats telling
+   * somebody what is wrong and leaving them to find the fix.
+   *
+   * Held in a ref for the same reason as the others here: the session listener
+   * outlives every render.
+   */
+  const reportChannelError = useRef<
+    (
+      networkId: string,
+      failure: { channel: string; message: string; action: SuggestedAction },
+    ) => void
+  >(() => {});
+  reportChannelError.current = (networkId, failure) => {
+    switch (failure.action) {
+      case 'enter-channel-password':
+        toast(failure.message, 'error', {
+          label: 'Enter password',
+          onSelect: () => setChannelKeyFor({ networkId, channel: failure.channel }),
+        });
+        return;
+      case 'sign-in':
+        toast(failure.message, 'error', {
+          label: 'Open account',
+          onSelect: () => {
+            view.select({ networkId, target: undefined });
+            view.setPane('account');
+          },
+        });
+        return;
+      default:
+        toast(failure.message, 'error');
+    }
+  };
+
   // XDCC downloads requested but not yet answered, keyed by network + folded bot
   // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
   // to the oldest outstanding request from that bot.
@@ -1584,6 +1702,36 @@ export function Marmotter({
   // The right-click / ⋯ menu for a member, built from what the user is actually
   // allowed to do on this network. This is the abstraction layer: the person
   // picks "Make an operator" and the MODE goes out underneath.
+  /**
+   * What each item in that menu does.
+   *
+   * Shared, because the same menu is opened from two places — the member list
+   * on the right, and a name in the message list — and two copies of this is
+   * how the two menus drift into offering different things.
+   */
+  const memberCallbacks = (target: Session): MemberActionCallbacks => ({
+    onMessage: messageMember,
+    onWhois: openProfile,
+    onIgnore: (nick) => {
+      target.addIgnore(nick);
+      toast(`Ignoring ${nick}. You won't see their messages.`);
+    },
+    onSend: (line) => target.send(line),
+    // Neither of these acts immediately. A ban is a decision about how wide
+    // to cast it, and a removal is one somebody should be able to explain —
+    // so both open a builder rather than firing a default.
+    onBanBuilder: (member) => setActing({ member, kind: 'ban' }),
+    onKickBuilder: (member) => setActing({ member, kind: 'kick' }),
+    // The tables, which fetch what they show. This is the route to lifting
+    // a ban the client has not seen yet, and the reason the menu's own
+    // lift entries can be honest about only knowing what they know.
+    onOpenList: (kind) => {
+      setChannelPanelTab(kind);
+      setChannelPanelOpen(true);
+    },
+    onKillBuilder: (member) => setKilling(member),
+  });
+
   const memberMenu = (member: Member): readonly MenuItem[] => {
     if (network === undefined || conversation === undefined || session === undefined) {
       return [];
@@ -1593,28 +1741,23 @@ export function Marmotter({
       channel: conversation,
       ourNick: network.nick,
       operator: isOperator,
-      callbacks: {
-        onMessage: messageMember,
-        onWhois: openProfile,
-        onIgnore: (nick) => {
-          session.addIgnore(nick);
-          toast(`Ignoring ${nick}. You won't see their messages.`);
-        },
-        onSend: (line) => session.send(line),
-        // Neither of these acts immediately. A ban is a decision about how wide
-        // to cast it, and a removal is one somebody should be able to explain —
-        // so both open a builder rather than firing a default.
-        onBanBuilder: (target) => setActing({ member: target, kind: 'ban' }),
-        onKickBuilder: (target) => setActing({ member: target, kind: 'kick' }),
-        // The tables, which fetch what they show. This is the route to lifting
-        // a ban the client has not seen yet, and the reason the menu's own
-        // lift entries can be honest about only knowing what they know.
-        onOpenList: (kind) => {
-          setChannelPanelTab(kind);
-          setChannelPanelOpen(true);
-        },
-        onKillBuilder: (target) => setKilling(target),
-      },
+      callbacks: memberCallbacks(session),
+    });
+  };
+
+  // The same menu, opened from a name in the message list. Somebody who has
+  // just read a line looks at the name on it, not at the column on the right,
+  // and every other IRC client puts the actions there too.
+  const nickMenuItems = (nick: string): readonly MenuItem[] => {
+    if (network === undefined || session === undefined) {
+      return [];
+    }
+    return nickActions(nick, {
+      network,
+      channel: conversation,
+      ourNick: network.nick,
+      operator: isOperator,
+      callbacks: memberCallbacks(session),
     });
   };
 
@@ -2030,15 +2173,41 @@ export function Marmotter({
             )
           }
         />
+      ) : launchOpen && networks.length > 0 && selection === undefined ? (
+        <Launch
+          className="flex-1"
+          networks={networks.map((state) => ({
+            id: state.id,
+            name: state.name,
+            status: connectionStatus(state),
+            statusText: connectionStatusText(state),
+            autojoin: (registry.profiles.get(state.id)?.autojoin ?? []).map(
+              (entry) => entry.target,
+            ),
+          }))}
+          onConnect={connectNetworks}
+          onSkip={() => setLaunchOpen(false)}
+          onAddNetwork={() => setAdding(true)}
+        />
       ) : network === undefined || selection === undefined ? (
         <EmptyState
           className="flex-1"
-          title="Nothing open yet"
-          description="Add a network to start talking."
+          title={networks.length === 0 ? 'Nothing open yet' : 'Nothing open'}
+          description={
+            networks.length === 0
+              ? 'Add a network to start talking.'
+              : 'Pick a conversation on the left, or connect to a network you have set up.'
+          }
           action={
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              Add a network
-            </Button>
+            networks.length === 0 ? (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                Add a network
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => setLaunchOpen(true)}>
+                Choose networks to connect
+              </Button>
+            )
           }
         />
       ) : (
@@ -2088,6 +2257,7 @@ export function Marmotter({
                   isHighlight(message.text, network.nick, view.appearance.highlightWords)
                 }
                 onNickClick={(nick) => view.select({ networkId: network.id, target: nick })}
+                onNickMenu={(nick, at) => setNickMenu({ nick, ...at })}
                 onOpenLink={(href) => setLinkToOpen(href)}
                 {...(searchOpen ? { searchMatchIds } : {})}
                 {...(activeSearchId === undefined ? {} : { searchActiveId: activeSearchId })}
@@ -2244,6 +2414,30 @@ export function Marmotter({
         onCancel={() => setJoiningNetwork(undefined)}
       />
 
+      {/* The second half of a refused join: the network said the channel needs
+          a password, and this is where it goes. Typing it retries the join —
+          nobody should have to find the command that carries one. */}
+      <TextPrompt
+        open={channelKeyFor !== undefined}
+        title={
+          channelKeyFor === undefined ? 'Channel password' : `Password for ${channelKeyFor.channel}`
+        }
+        label="Password"
+        placeholder="The channel's password"
+        hint="Whoever runs the channel sets this and passes it on. Marmotter does not keep it."
+        confirmLabel="Join"
+        onConfirm={(key) => {
+          const pending = channelKeyFor;
+          setChannelKeyFor(undefined);
+          if (pending === undefined || key.trim() === '') {
+            return;
+          }
+          registry.sessionOf(pending.networkId)?.join(pending.channel, key.trim());
+          view.select({ networkId: pending.networkId, target: pending.channel });
+        }}
+        onCancel={() => setChannelKeyFor(undefined)}
+      />
+
       {/* Disconnecting somebody is a server operator's action and asks for a
           reason, because the person on the other end is shown it and because a
           reason is the difference between a record and a mystery. It does not
@@ -2342,6 +2536,16 @@ export function Marmotter({
           </>
         }
       />
+
+      {nickMenu === undefined ? null : (
+        <ContextMenu
+          open
+          label={`Actions for ${nickMenu.nick}`}
+          at={{ x: nickMenu.x, y: nickMenu.y }}
+          items={nickMenuItems(nickMenu.nick)}
+          onClose={() => setNickMenu(undefined)}
+        />
+      )}
 
       {serviceMenu === undefined ? null : (
         <ContextMenu

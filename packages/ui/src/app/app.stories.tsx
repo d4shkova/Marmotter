@@ -18,6 +18,8 @@ import { useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { AccountMenu } from './AccountMenu.js';
 import { FirstRun } from './FirstRun.js';
+import { Launch } from './Launch.js';
+import { ThemePicker } from './ThemePicker.js';
 import { LogSearch } from './LogSearch.js';
 import { LoggingSettings } from './LoggingSettings.js';
 import { AccountPanel } from './AccountPanel.js';
@@ -46,7 +48,8 @@ import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { buildRows } from './rows.js';
-import type { TargetRef, Unread } from './view-store.js';
+import type { ThemeId } from '../themes.js';
+import type { Appearance, TargetRef, Unread } from './view-store.js';
 
 export default { title: 'Application' } satisfies Meta;
 
@@ -901,7 +904,8 @@ export const NoNetworksYet: StoryObj = {
 
 export const SettingsScreen: StoryObj = {
   render: function SettingsScreen() {
-    const [appearance, setAppearance] = useState({
+    const [appearance, setAppearance] = useState<Appearance>({
+      theme: 'midnight',
       nickColumnWidth: 12,
       alignNicksRight: true,
       foldEvents: true,
@@ -1114,6 +1118,67 @@ export const SettingUpYourName: StoryObj = {
     return (
       <div className="h-[36rem]">
         <FirstRun open initial={identity} onDone={setIdentity} onSkip={() => {}} />
+      </div>
+    );
+  },
+};
+
+/**
+ * What every launch after the first one opens on.
+ *
+ * Networks are restored but deliberately not connected, so this is the screen
+ * that asks which of them to sign in to — one button for all of them, and the
+ * list for the mornings when that is not what somebody wants.
+ */
+export const WelcomeBack: StoryObj = {
+  render: function WelcomeBack() {
+    return (
+      <div className="h-[36rem] overflow-hidden rounded-card border border-[var(--separator)] bg-[var(--bg-base)]">
+        <Launch
+          className="h-full"
+          networks={[
+            {
+              id: 'libera',
+              name: 'Libera.Chat',
+              status: 'offline',
+              statusText: 'Not connected',
+              autojoin: ['#marmotter', '#irc'],
+            },
+            {
+              id: 'oftc',
+              name: 'OFTC',
+              status: 'failed',
+              statusText: 'The server did not respond in time',
+              autojoin: ['#debian'],
+            },
+            {
+              id: 'home',
+              name: 'dashkova.co.uk',
+              status: 'connected',
+              statusText: 'Connected as marmot',
+              autojoin: [],
+            },
+          ]}
+          onConnect={() => {}}
+          onSkip={() => {}}
+          onAddNetwork={() => {}}
+        />
+      </div>
+    );
+  },
+};
+
+/**
+ * Choosing the colours. Each row is drawn in the theme it names, because a list
+ * of theme names with no colours in it is a list of guesses.
+ */
+export const ChoosingATheme: StoryObj = {
+  render: function ChoosingATheme() {
+    const [theme, setTheme] = useState<ThemeId>('midnight');
+
+    return (
+      <div className="flex h-[28rem] items-start justify-center p-6">
+        <ThemePicker value={theme} onChange={setTheme} />
       </div>
     );
   },

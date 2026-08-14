@@ -46,6 +46,7 @@ import {
   parseStandardReply,
   parseUserModes,
   sameTarget,
+  type SuggestedAction,
 } from '@marmotter/protocol';
 import { completeHistoryBatch, historyAnchorTime } from './history.js';
 import { type IgnoreChannel, findIgnore, hostmaskOf } from './ignore.js';
@@ -88,6 +89,21 @@ export type Effect =
   | { readonly kind: 'registered' }
   /** A capability went away; features relying on it must stop. */
   | { readonly kind: 'capabilities-lost'; readonly capabilities: readonly string[] }
+  /**
+   * The network refused something that was asked of a channel — a join, or a
+   * setting.
+   *
+   * Raised as well as written to the server tab, because the server tab is not
+   * where somebody who clicked Join is looking. Carries the copy rather than
+   * the numeric: what to do about it is a question about the sentence, not
+   * about the number behind it.
+   */
+  | {
+      readonly kind: 'channel-error';
+      readonly channel: string;
+      readonly message: string;
+      readonly action: SuggestedAction;
+    }
   /**
    * Somebody advertised a file over DCC. The session raises it to the file
    * monitor, which the user has to have switched on; nothing is fetched here.
@@ -195,6 +211,28 @@ function splitReply(reply: string): [string, string] {
   const space = reply.indexOf(' ');
   return space === -1 ? [reply, ''] : [reply.slice(0, space), reply.slice(space + 1)];
 }
+
+/**
+ * Errors that are about one channel, rather than about the connection.
+ *
+ * These are the ones worth raising to the interface as they happen: each is a
+ * refusal of something the user just asked for — a join, a setting, a message
+ * to a channel — and each has an answer the person can act on. Anything else
+ * stays in the server tab, where an error nobody asked for belongs.
+ */
+const CHANNEL_ERRORS: ReadonlySet<string> = new Set([
+  '403', // No such channel
+  '404', // Cannot send to channel
+  '405', // Too many channels
+  '471', // Channel is full
+  '473', // Invite only
+  '474', // Banned
+  '475', // Wrong password
+  '476', // Bad channel name
+  '477', // Needs an account
+  '478', // Ban list full
+  '482', // Not an operator here
+]);
 
 const noEffects: readonly Effect[] = [];
 
@@ -1502,13 +1540,34 @@ function reduceNumeric(
         };
       }
 
-      return result({
-        ...state,
-        serverNotices: [
-          ...state.serverNotices,
-          buildMessage(msg, { kind: 'error', target: '', text: event.report.message }, now),
-        ],
-      });
+      // An error about a channel is raised as well as written down. The server
+      // tab is where the line belongs; it is not where somebody who has just
+      // clicked Join is looking, and a join that fails silently reads as a
+      // client that ignored them.
+      const subject = event.params[1] ?? '';
+      const channelError: readonly Effect[] =
+        CHANNEL_ERRORS.has(event.numeric) && isChannel(subject, state.support)
+          ? [
+              {
+                kind: 'channel-error',
+                channel: subject,
+                message: event.report.message,
+                action: event.report.action,
+              },
+            ]
+          : [];
+
+      return result(
+        {
+          ...state,
+          serverNotices: [
+            ...state.serverNotices,
+            buildMessage(msg, { kind: 'error', target: '', text: event.report.message }, now),
+          ],
+        },
+        [],
+        channelError,
+      );
     }
 
     default:

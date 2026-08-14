@@ -173,6 +173,14 @@ export function CreateChannel({
  * The join has to land first — nobody may set a mode on a channel they are not
  * in — and it is the join itself that makes us operator, which is what lets the
  * rest through. Pure, so the ordering is testable without a socket.
+ *
+ * One setting per line, rather than the single folded mode change this used to
+ * send. Networks differ in what they support — a network with no secret channels
+ * refuses that letter — and a server that refuses one letter of a combined
+ * change refuses the whole line, so asking for three things at once meant one
+ * unsupported setting silently cost the other two, password included. Sent
+ * separately, whatever the network does support is applied and only the refused
+ * one reports back, which is the notice the person then sees.
  */
 export function createChannelLines(channel: NewChannel): readonly string[] {
   // No key on the join. A channel nobody is in has no password yet, so sending
@@ -180,13 +188,14 @@ export function createChannelLines(channel: NewChannel): readonly string[] {
   // something we set once we are in and holding the channel.
   const lines: string[] = [`JOIN ${channel.name}`];
 
-  const flags = `${channel.inviteOnly ? 'i' : ''}${channel.secret ? 's' : ''}${channel.password === '' ? '' : 'k'}`;
-  if (flags !== '') {
-    lines.push(
-      channel.password === ''
-        ? `MODE ${channel.name} +${flags}`
-        : `MODE ${channel.name} +${flags} ${channel.password}`,
-    );
+  if (channel.inviteOnly) {
+    lines.push(`MODE ${channel.name} +i`);
+  }
+  if (channel.secret) {
+    lines.push(`MODE ${channel.name} +s`);
+  }
+  if (channel.password !== '') {
+    lines.push(`MODE ${channel.name} +k ${channel.password}`);
   }
 
   if (channel.topic !== '') {

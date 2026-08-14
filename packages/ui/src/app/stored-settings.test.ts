@@ -26,6 +26,7 @@ describe('settings through the file and back', () => {
   it('keeps every choice somebody made', () => {
     const chosen: StoredSettings = {
       appearance: {
+        theme: 'paper',
         nickColumnWidth: 18,
         alignNicksRight: false,
         foldEvents: false,

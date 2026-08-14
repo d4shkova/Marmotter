@@ -1,14 +1,16 @@
 import type { NetworkState } from '@marmotter/client';
 import { DEFAULT_VERSION_TEXT, type CtcpPolicy } from '@marmotter/protocol';
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { StatusDot, type ConnectionStatus } from '../primitives/Badge.js';
+import { StatusDot } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
 import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { ListGroup } from '../layout/ListGroup.js';
+import { connectionStatus, connectionStatusText } from './network-status.js';
 import { LoggingSettings, type LoggingSettingsProps } from './LoggingSettings.js';
+import { ThemePicker } from './ThemePicker.js';
 import {
   TOAST_SECONDS_RANGE,
   clampToastSeconds,
@@ -62,50 +64,6 @@ export interface SettingsProps {
   readonly onResetSettings: () => void;
   readonly className?: string;
 }
-
-const statusOf = (network: NetworkState): ConnectionStatus => {
-  switch (network.phase) {
-    case 'registered':
-      return 'connected';
-    case 'connecting':
-    case 'registering':
-      return 'connecting';
-    case 'disconnected':
-      return network.lastClose === undefined || network.lastClose.kind === 'user'
-        ? 'offline'
-        : 'failed';
-  }
-};
-
-const statusText = (network: NetworkState): string => {
-  switch (network.phase) {
-    case 'registered':
-      return `Connected as ${network.nick}`;
-    case 'connecting':
-      return 'Connecting…';
-    case 'registering':
-      return 'Signing in…';
-    case 'disconnected':
-      return describeClose(network);
-  }
-};
-
-const describeClose = (network: NetworkState): string => {
-  const close = network.lastClose;
-  if (close === undefined || close.kind === 'user') {
-    return 'Not connected';
-  }
-  switch (close.kind) {
-    case 'tls-error':
-      return `Could not verify the certificate: ${close.message}`;
-    case 'timeout':
-      return 'The server did not respond in time';
-    case 'server':
-      return 'The server closed the connection';
-    case 'network-error':
-      return close.message === '' ? 'Could not reach the server' : close.message;
-  }
-};
 
 /**
  * The settings screen.
@@ -175,9 +133,9 @@ export function Settings({
             networks.map((network) => (
               <ListRow
                 key={network.id}
-                leading={<StatusDot status={statusOf(network)} />}
+                leading={<StatusDot status={connectionStatus(network)} />}
                 title={network.name}
-                subtitle={statusText(network)}
+                subtitle={connectionStatusText(network)}
                 trailing={
                   <div className="flex items-center gap-1.5">
                     {network.phase === 'registered' || network.phase === 'registering' ? (
@@ -216,6 +174,22 @@ export function Settings({
             Add a network
           </Button>
         </div>
+
+        <ListGroup
+          header="Appearance"
+          footer="The whole window changes at once, and the choice is kept for next time."
+        >
+          <ListRow
+            title="Theme"
+            subtitle="What Marmotter is drawn in."
+            trailing={
+              <ThemePicker
+                value={appearance.theme}
+                onChange={(theme) => onAppearanceChange({ theme })}
+              />
+            }
+          />
+        </ListGroup>
 
         <ListGroup
           header="Message list"

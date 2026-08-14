@@ -20,6 +20,7 @@ import {
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
+  type SuggestedAction,
   DEFAULT_CTCP_POLICY,
   type CtcpPolicy,
   createMechanism,
@@ -109,6 +110,19 @@ export type SessionEvent =
   | { readonly kind: 'closed'; readonly reason: CloseReason }
   /** Authentication failed. The connection continues, unauthenticated. */
   | { readonly kind: 'auth-failed'; readonly reason: string }
+  /**
+   * The network refused something asked of a channel — a join, or a setting.
+   *
+   * Raised so the interface can say so where the person is looking. The line is
+   * in the server tab either way; this is what stops a join that was turned
+   * down from looking like a click that did nothing.
+   */
+  | {
+      readonly kind: 'channel-error';
+      readonly channel: string;
+      readonly message: string;
+      readonly action: SuggestedAction;
+    }
   /**
    * Somebody advertised a file over DCC. Raised so the file monitor can list
    * it; nothing is fetched until the user asks. `target` is the conversation it
@@ -336,6 +350,14 @@ export function createSession(options: SessionOptions): Session {
         case 'capabilities-lost':
           // Nothing to undo in state: every feature reads `caps.enabled` at the
           // point of use, so losing one takes effect on the next read.
+          break;
+        case 'channel-error':
+          events.emit({
+            kind: 'channel-error',
+            channel: effect.channel,
+            message: effect.message,
+            action: effect.action,
+          });
           break;
         case 'dcc-offer':
           events.emit({

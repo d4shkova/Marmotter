@@ -22,6 +22,14 @@ export interface MessageListProps {
   readonly onLoadOlder?: () => void;
   readonly onReply?: (message: Message) => void;
   readonly onNickClick?: (nick: string) => void;
+  /**
+   * Opens the actions for a name, at the point it was asked for.
+   *
+   * Owned by the caller rather than by a row: the list is virtualized, and a
+   * menu belonging to a row would be unmounted the moment scrolling took that
+   * row out of the window.
+   */
+  readonly onNickMenu?: (nick: string, at: { readonly x: number; readonly y: number }) => void;
   /** Opens a link from a message, after the interface has confirmed it. */
   readonly onOpenLink?: (href: string) => void;
   /** Decides whether a message mentions the user, for the highlight. */
@@ -57,6 +65,7 @@ export function MessageList({
   onLoadOlder,
   onReply,
   onNickClick,
+  onNickMenu,
   onOpenLink,
   isHighlight,
   searchMatchIds,
@@ -209,6 +218,7 @@ export function MessageList({
                 fold={foldNick}
                 {...(onReply === undefined ? {} : { onReply })}
                 {...(onNickClick === undefined ? {} : { onNickClick })}
+                {...(onNickMenu === undefined ? {} : { onNickMenu })}
                 {...(onOpenLink === undefined ? {} : { onOpenLink })}
                 highlighted={
                   row.kind === 'message' && isHighlight !== undefined
