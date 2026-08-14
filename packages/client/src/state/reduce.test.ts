@@ -464,3 +464,45 @@ describe('casemapping', () => {
     expect(() => memberOf(session, '#test', 'nick{}')).toThrow();
   });
 });
+
+describe('errors about a channel', () => {
+  // Written to the server tab and raised as an effect. The server tab is the
+  // record; the effect is what lets the interface say so where the person who
+  // clicked Join is actually looking.
+  it('raises a refused join rather than only filing it', () => {
+    const session = feed(registeredSession(), [
+      ':irc.test 477 marmot #staff :Cannot join channel - you need to be identified with services',
+    ]);
+
+    expect(session.effects.filter((effect) => effect.kind === 'channel-error')).toEqual([
+      {
+        kind: 'channel-error',
+        channel: '#staff',
+        message:
+          '#staff only lets in people signed in to an account on this network. Sign in, or register an account, and try again.',
+        action: 'sign-in',
+      },
+    ]);
+    expect(session.state.serverNotices.at(-1)?.text).toContain('#staff');
+  });
+
+  it('offers the password prompt for a channel that wants one', () => {
+    const session = feed(registeredSession(), [
+      ':irc.test 475 marmot #secret :Cannot join channel (+k)',
+    ]);
+    expect(session.effects.at(-1)).toMatchObject({
+      kind: 'channel-error',
+      channel: '#secret',
+      action: 'enter-channel-password',
+    });
+  });
+
+  it('leaves errors that are not about a channel alone', () => {
+    const session = feed(registeredSession(), [
+      ':irc.test 401 marmot jonquil :No such nick/channel',
+      ':irc.test 472 marmot z :is unknown mode char to me',
+    ]);
+    expect(session.effects.filter((effect) => effect.kind === 'channel-error')).toEqual([]);
+    expect(session.state.serverNotices).toHaveLength(2);
+  });
+});
