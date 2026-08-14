@@ -492,6 +492,7 @@ describe('every component passes axe', () => {
         key="set"
         networks={[networkFixture()]}
         appearance={{
+          theme: 'midnight',
           nickColumnWidth: 12,
           alignNicksRight: true,
           foldEvents: true,

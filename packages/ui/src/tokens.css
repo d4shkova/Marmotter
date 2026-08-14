@@ -8,17 +8,41 @@
  *   2. Semantic aliases — what the interface actually references. These point
  *      at primitives with `var()`, never at literals.
  *
- * A future theme redefines the primitives and the aliases follow. That is the
- * structure CLAUDE.md asks for: a token swap, not a refactor.
+ * A theme redefines the primitives and the aliases follow. That is the
+ * structure CLAUDE.md asks for: a token swap, not a refactor — and it is now
+ * load-bearing rather than aspirational, because there are six themes and the
+ * alias layer below is written once for all of them.
  *
- * The palette is a single blue family. Hue carries no meaning on its own, so
- * red is reserved: it appears only for errors, alerts, and destructive actions,
- * and reading red anywhere in the interface always means the same thing.
+ * Two things make that work. The alias layer is selected by `:root` **and** by
+ * any element carrying `data-theme`, so a theme applied to a nested element —
+ * the swatch in Settings — re-resolves the aliases against that element's own
+ * primitives rather than inheriting the window's. And the translucent tokens
+ * are mixed from a primitive with `color-mix` instead of being written as
+ * literal `rgba`, so a light theme gets a dark scrim and dark text from the
+ * same three lines that give a dark theme a light one.
+ *
+ * The ramp is still called `--blue-*`. It names a position in the accent
+ * family rather than a hue: the default family is blue, and a theme
+ * substitutes its own — greys, reds, pinks, violets — into the same ten steps.
+ * Renaming it would touch every alias below to say nothing new.
+ *
+ * The default theme is unchanged: one blue family plus red, with red reserved
+ * for errors, alerts, and destructive actions. Two of the themes below are
+ * built on red because somebody asked for them, and each says so where it
+ * makes that trade.
  */
 
-:root {
-  /* ======================================================= 1. primitives */
+/* ========================================================== 1. primitives */
 
+/**
+ * Midnight — the default, and what Marmotter has always looked like.
+ *
+ * `:root` is in the selector so an install that has never chosen a theme gets
+ * this one, and `[data-theme='midnight']` is there so choosing it explicitly,
+ * or showing it in a swatch, resolves to the same values.
+ */
+:root,
+[data-theme='midnight'] {
   /* The blue ramp. 050 is near-white, 900 is near-black. */
   --blue-050: #f2f8ff;
   --blue-100: #dcecff;
@@ -51,74 +75,373 @@
   --red-500: #ff453a;
   --red-900: #3a0f0c;
 
-  /* ================================================== 2. semantic aliases */
+  /* Text, fills and edges. The alias layer mixes the translucent steps from
+     these, so one value per theme produces the whole ramp. */
+  --label-strong: #ffffff;
+  --label-ink: #d6e6f5;
+  --fill-ink: #788da8;
+  --separator-ink: #465a70;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #000000;
 
+  /* Sidebar rows: a channel and a person, told apart at a glance. */
+  --row-channel: var(--blue-300);
+  --row-person: var(--periwinkle-300);
+
+  /* The eight voices, hashed from the normalised nick. */
+  --speaker-1: var(--cyan-300);
+  --speaker-2: var(--cyan-500);
+  --speaker-3: var(--blue-200);
+  --speaker-4: var(--blue-300);
+  --speaker-5: var(--blue-400);
+  --speaker-6: var(--blue-500);
+  --speaker-7: var(--periwinkle-400);
+  --speaker-8: var(--indigo-400);
+}
+
+/**
+ * Monochrome — black, white and grey.
+ *
+ * Red stays red. A theme with no colour in it still has to be able to say
+ * "this failed", and spending the one reserved hue on that is the whole point
+ * of reserving it.
+ */
+[data-theme='monochrome'] {
+  --blue-050: #fbfbfb;
+  --blue-100: #ececec;
+  --blue-200: #d9d9d9;
+  --blue-300: #c6c6c6;
+  --blue-400: #b3b3b3;
+  --blue-500: #a0a0a0;
+  --blue-600: #8d8d8d;
+  --blue-700: #7a7a7a;
+  --blue-800: #565656;
+  --blue-900: #3a3a3a;
+
+  --ink-000: #000000;
+  --ink-900: #0f0f0f;
+  --ink-800: #191919;
+  --ink-700: #262626;
+  --ink-600: #333333;
+
+  --red-400: #ff8078;
+  --red-500: #ff5247;
+  --red-900: #3a0f0c;
+
+  --label-strong: #ffffff;
+  --label-ink: #e8e8e8;
+  --fill-ink: #9a9a9a;
+  --separator-ink: #4f4f4f;
+  --knob-ink: #ffffff;
+  /* The accent is a light grey, so what sits on it is dark. */
+  --on-accent-ink: #000000;
+  --scrim-ink: #000000;
+
+  --row-channel: #d9d9d9;
+  --row-person: #f5f5f5;
+
+  /* Eight greys, spaced far enough apart to tell two people apart with nothing
+     but lightness to do it — which is the constraint the blue palette already
+     lives under, taken to its limit. */
+  --speaker-1: #ffffff;
+  --speaker-2: #ececec;
+  --speaker-3: #d9d9d9;
+  --speaker-4: #c6c6c6;
+  --speaker-5: #b3b3b3;
+  --speaker-6: #a0a0a0;
+  --speaker-7: #8d8d8d;
+  --speaker-8: #7a7a7a;
+}
+
+/**
+ * Ember — black, red and warm grey.
+ *
+ * The one theme that knowingly breaks the rule about red: here it is the
+ * accent, so red alone can no longer mean trouble. Alarm is carried by a
+ * brighter, hotter red than the accent ever reaches, and destructive actions
+ * keep the labels that name what they do.
+ */
+[data-theme='ember'] {
+  --blue-050: #fff1f0;
+  --blue-100: #ffdad7;
+  --blue-200: #ffb8b2;
+  --blue-300: #ff9086;
+  --blue-400: #f76a5d;
+  --blue-500: #e04436;
+  --blue-600: #bf3225;
+  --blue-700: #ad2c1f;
+  --blue-800: #6d1811;
+  --blue-900: #430e09;
+
+  --ink-000: #000000;
+  --ink-900: #150e0e;
+  --ink-800: #1f1616;
+  --ink-700: #2c1f1f;
+  --ink-600: #3a2929;
+
+  --red-400: #ffa39c;
+  --red-500: #ff6f61;
+  --red-900: #3a0f0c;
+
+  --label-strong: #ffffff;
+  --label-ink: #f0e2e0;
+  --fill-ink: #a8908e;
+  --separator-ink: #5c4442;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #000000;
+
+  --row-channel: #ff9086;
+  --row-person: #ded0ce;
+
+  /* Reds run out of room quickly, so half the voices are the warm greys that
+     sit beside them rather than four near-identical pinks. */
+  --speaker-1: #ffb8b2;
+  --speaker-2: #ff8071;
+  --speaker-3: #e8524a;
+  --speaker-4: #f5ebea;
+  --speaker-5: #d3c3c1;
+  --speaker-6: #b09b99;
+  --speaker-7: #ffc98a;
+  --speaker-8: #e0a08f;
+}
+
+/**
+ * Blossom — a light theme in shades of pink.
+ *
+ * The first light theme, and the reason the translucent tokens are mixed
+ * rather than written out: the scrim, the fills and three of the four label
+ * steps all invert from one primitive each.
+ */
+[data-theme='blossom'] {
+  --blue-050: #fff5f9;
+  --blue-100: #ffe0ec;
+  --blue-200: #ffc0d8;
+  --blue-300: #e07aa8;
+  --blue-400: #cf5187;
+  --blue-500: #bd3269;
+  --blue-600: #a02755;
+  --blue-700: #821e45;
+  --blue-800: #631634;
+  --blue-900: #430e22;
+
+  /* Surfaces, from the page up. Each step is a shade warmer than the last. */
+  --ink-000: #fff6fa;
+  --ink-900: #ffedf4;
+  --ink-800: #ffe2ed;
+  --ink-700: #f7d2e1;
+  --ink-600: #edc0d4;
+
+  --red-400: #d63b46;
+  --red-500: #b3121f;
+  --red-900: #ffe0e2;
+
+  --label-strong: #3a1b28;
+  --label-ink: #251a20;
+  --fill-ink: #c96f97;
+  --separator-ink: #e0a8c2;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #3a1b28;
+
+  --row-channel: #a02755;
+  --row-person: #8a3a8f;
+
+  /* Dark enough to read on a near-white page, and spread across the berry end
+     of the spectrum so eight people are eight colours. */
+  --speaker-1: #c02f57;
+  --speaker-2: #9c2f76;
+  --speaker-3: #7a3a93;
+  --speaker-4: #b4501f;
+  --speaker-5: #8d4b4b;
+  --speaker-6: #6d3f6d;
+  --speaker-7: #a03a3a;
+  --speaker-8: #5c4b8d;
+}
+
+/**
+ * Paper — a white interface with a red accent.
+ *
+ * The second theme built on red, and the same trade as Ember in reverse: the
+ * accent is the brighter red and alarm is the darker, heavier one, which on a
+ * white page reads as the more serious of the two.
+ */
+[data-theme='paper'] {
+  --blue-050: #fff2f3;
+  --blue-100: #ffdfe1;
+  --blue-200: #ffbcc0;
+  --blue-300: #f8929a;
+  --blue-400: #e35263;
+  --blue-500: #c8102e;
+  --blue-600: #a80c26;
+  --blue-700: #87091e;
+  --blue-800: #660717;
+  --blue-900: #45050f;
+
+  --ink-000: #ffffff;
+  --ink-900: #f7f7f8;
+  --ink-800: #f0f0f2;
+  --ink-700: #e4e4e8;
+  --ink-600: #d6d6dc;
+
+  --red-400: #a3111f;
+  --red-500: #7d0a16;
+  --red-900: #ffe2e4;
+
+  --label-strong: #16171a;
+  --label-ink: #1e2024;
+  --fill-ink: #8a8d96;
+  --separator-ink: #b9bcc4;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #16171a;
+
+  --row-channel: #a80c26;
+  --row-person: #3f4d80;
+
+  --speaker-1: #b01226;
+  --speaker-2: #8a3a17;
+  --speaker-3: #6b4b12;
+  --speaker-4: #2f5f4a;
+  --speaker-5: #2b5580;
+  --speaker-6: #4b3f8a;
+  --speaker-7: #7a2f6b;
+  --speaker-8: #444a52;
+}
+
+/**
+ * Nebula — purple and blue.
+ *
+ * Two neighbouring families rather than one, which is what makes it the theme
+ * with the most room in its voices: the eight run from a pale violet through
+ * to a cyan without any two of them landing on the same colour.
+ */
+[data-theme='nebula'] {
+  --blue-050: #f5f2ff;
+  --blue-100: #e6dfff;
+  --blue-200: #cdc2ff;
+  --blue-300: #b3a3ff;
+  --blue-400: #9a86ff;
+  --blue-500: #7f66f2;
+  --blue-600: #6a52d6;
+  --blue-700: #6a52c9;
+  --blue-800: #3f2f85;
+  --blue-900: #2a1f5c;
+
+  --ink-000: #0b0a16;
+  --ink-900: #141227;
+  --ink-800: #1d1a33;
+  --ink-700: #292541;
+  --ink-600: #363150;
+
+  --red-400: #ff7d74;
+  --red-500: #ff4d5e;
+  --red-900: #3a0c18;
+
+  --label-strong: #ffffff;
+  --label-ink: #dcd8f5;
+  --fill-ink: #8b84b8;
+  --separator-ink: #4a4270;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #05040c;
+
+  --row-channel: #b3a3ff;
+  --row-person: #7fd4f5;
+
+  --speaker-1: #e0d9ff;
+  --speaker-2: #b3a3ff;
+  --speaker-3: #8f7bff;
+  --speaker-4: #7fa6ff;
+  --speaker-5: #6fd0ff;
+  --speaker-6: #7fe6d2;
+  --speaker-7: #dd8cf0;
+  --speaker-8: #9fb4d9;
+}
+
+/* ===================================================== 2. semantic aliases */
+
+/**
+ * What the interface references, resolved against whichever set of primitives
+ * the element is standing in.
+ *
+ * `[data-theme]` is in the selector on purpose: without it these would be
+ * computed once on `:root` and inherited already-substituted, so a themed
+ * element deeper in the page would change its primitives and none of its
+ * aliases. That is what makes the swatch in Settings show the theme it names.
+ */
+:root,
+[data-theme] {
   /* Surfaces */
   --bg-base: var(--ink-000);
   --bg-elevated: var(--ink-900);
   --bg-elevated-2: var(--ink-800);
   --bg-elevated-3: var(--ink-700);
 
-  --fill-primary: rgba(120, 141, 168, 0.36);
-  --fill-secondary: rgba(120, 141, 168, 0.32);
-  --fill-tertiary: rgba(118, 139, 166, 0.24);
-  --fill-quaternary: rgba(116, 137, 164, 0.18);
+  --fill-primary: color-mix(in srgb, var(--fill-ink) 36%, transparent);
+  --fill-secondary: color-mix(in srgb, var(--fill-ink) 32%, transparent);
+  --fill-tertiary: color-mix(in srgb, var(--fill-ink) 24%, transparent);
+  --fill-quaternary: color-mix(in srgb, var(--fill-ink) 18%, transparent);
 
   /* Text */
-  --label-primary: #ffffff;
-  --label-secondary: rgba(214, 230, 245, 0.62);
-  --label-tertiary: rgba(214, 230, 245, 0.32);
-  --label-quaternary: rgba(214, 230, 245, 0.17);
+  --label-primary: var(--label-strong);
+  --label-secondary: color-mix(in srgb, var(--label-ink) 62%, transparent);
+  --label-tertiary: color-mix(in srgb, var(--label-ink) 32%, transparent);
+  --label-quaternary: color-mix(in srgb, var(--label-ink) 17%, transparent);
 
-  --separator: rgba(70, 90, 112, 0.65);
+  --separator: color-mix(in srgb, var(--separator-ink) 65%, transparent);
   --separator-opaque: var(--ink-700);
 
   /* Action */
   --accent: var(--blue-500);
   --accent-hover: var(--blue-400);
   --accent-pressed: var(--blue-600);
-  --accent-muted: rgba(10, 132, 255, 0.14);
-  --on-accent: #ffffff;
+  --accent-muted: color-mix(in srgb, var(--blue-500) 14%, transparent);
+  --on-accent: var(--on-accent-ink);
 
-  /* The dimming layer behind a sheet or modal. Dark rather than tinted, so a
-     sheet reads as depth rather than as a coloured state. */
-  --scrim: rgba(0, 0, 0, 0.5);
+  /* The dimming layer behind a sheet or modal. Built from the theme's own
+     darkest ink rather than from black, so a light theme dims towards its own
+     text colour instead of towards a hole in the page. */
+  --scrim: color-mix(in srgb, var(--scrim-ink) 50%, transparent);
 
   /* The knob of a switch, and anything else that sits on top of the accent
      fill. Named rather than written as `white` at the call site, so a light
      theme redefines it in one place along with everything else. */
-  --control-knob: #ffffff;
+  --control-knob: var(--knob-ink);
 
   /* Alarm. Reserved: errors, alerts, and destructive actions only. */
   --danger: var(--red-500);
   --danger-hover: var(--red-400);
-  --danger-muted: rgba(255, 69, 58, 0.14);
+  --danger-muted: color-mix(in srgb, var(--red-500) 14%, transparent);
 
-  /* Connection state. Blue is healthy, dimmer blue is in progress, red is
-     broken — never green, so red keeps its single meaning. */
+  /* Connection state. The accent family is healthy, a dimmer step is in
+     progress, red is broken — never green, so red keeps its single meaning. */
   --status-connected: var(--blue-400);
   --status-connecting: var(--blue-700);
   --status-failed: var(--red-500);
 
   /* Sidebar conversation rows. A channel, a person and a network are three
      different kinds of thing, and telling them apart at a glance is what stops
-     the sidebar reading as one flat list of names. All three stay inside the
-     blue family: this is a distinction, not decoration. */
-  --label-channel: var(--blue-300);
-  --label-person: var(--periwinkle-300);
+     the sidebar reading as one flat list of names. */
+  --label-channel: var(--row-channel);
+  --label-person: var(--row-person);
 
   /* Nick colours, hashed from the normalised nick. Every one clears 4.5:1
-     against --bg-base; packages/ui/src/tokens.test.ts asserts it. Within one
-     hue family they separate mostly by lightness, so the ramp is spread wide. */
-  --nick-1: var(--cyan-300);
-  --nick-2: var(--cyan-500);
-  --nick-3: var(--blue-200);
-  --nick-4: var(--blue-300);
-  --nick-5: var(--blue-400);
-  --nick-6: var(--blue-500);
-  --nick-7: var(--periwinkle-400);
-  --nick-8: var(--indigo-400);
+     against its theme's --bg-base; packages/ui/src/tokens.test.ts asserts it
+     for every theme, along with keeping any two far enough apart to read as
+     different people. */
+  --nick-1: var(--speaker-1);
+  --nick-2: var(--speaker-2);
+  --nick-3: var(--speaker-3);
+  --nick-4: var(--speaker-4);
+  --nick-5: var(--speaker-5);
+  --nick-6: var(--speaker-6);
+  --nick-7: var(--speaker-7);
+  --nick-8: var(--speaker-8);
+}
 
+:root {
   /* ------------------------------------------------------------ typography */
   /* Named outside Tailwind's --font-* / --radius-* namespaces so the @theme
      mapping in styles.css is not self-referential. */

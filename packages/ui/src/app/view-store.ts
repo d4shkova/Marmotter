@@ -18,6 +18,7 @@ import {
   type XdccPack,
 } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import { DEFAULT_THEME, type ThemeId } from '../themes.js';
 import { create } from 'zustand';
 
 /** A conversation the interface can be showing. */
@@ -225,6 +226,14 @@ export interface Unread {
 }
 
 export interface Appearance {
+  /**
+   * Which set of colours the window is drawn in.
+   *
+   * The whole of it is a swap of the primitives in tokens.css, so this is one
+   * attribute on the root element and nothing else — no per-component branch,
+   * and no second palette to keep in step.
+   */
+  readonly theme: ThemeId;
   /** Fixed nick column width, in characters. */
   readonly nickColumnWidth: number;
   /** Right-aligns nicks against the message text, as HexChat does. */
@@ -253,6 +262,7 @@ export interface Appearance {
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
+  theme: DEFAULT_THEME,
   nickColumnWidth: 12,
   alignNicksRight: true,
   foldEvents: true,

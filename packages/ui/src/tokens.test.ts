@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { THEME_IDS } from './themes.js';
 
 const srcDir = fileURLToPath(new URL('.', import.meta.url));
 const tokensCss = readFileSync(join(srcDir, 'tokens.css'), 'utf8');
@@ -58,6 +59,17 @@ const perceptualDistance = (a: string, b: string): number => {
   const dg = g1 - g2;
   const db = b1 - b2;
   return Math.sqrt((2 + rMean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rMean) / 256) * db * db);
+};
+
+/** A translucent colour as it actually reads, once composited over a surface. */
+const over = (color: string, alpha: number, background: string): string => {
+  const [r, g, b] = rgb(color);
+  const [br, bg, bb] = rgb(background);
+  const blend = (top: number, bottom: number): string =>
+    Math.round(top * alpha + bottom * (1 - alpha))
+      .toString(16)
+      .padStart(2, '0');
+  return `#${blend(r, br)}${blend(g, bg)}${blend(b, bb)}`;
 };
 
 const walk = (dir: string): string[] =>
@@ -277,14 +289,140 @@ describe('token discipline', () => {
   });
 
   it('keeps every literal colour in tokens.css inside the primitive layer', () => {
-    // Semantic aliases must go through var(); a literal below the primitives
-    // would break theming, since a theme only redefines primitives.
+    // Semantic aliases must go through var() or color-mix over one; a literal
+    // below the primitives would break theming, since a theme redefines
+    // primitives and nothing else.
     const semanticSection = tokensCss.slice(tokensCss.indexOf('2. semantic aliases'));
     const literals = [...semanticSection.matchAll(/^\s*--[\w-]+:\s*(#[0-9a-f]{3,8})\b/gim)].map(
       (match) => match[0].trim(),
     );
 
-    // --label-primary and --on-accent are pure white in every theme.
-    expect(literals.every((line) => line.includes('#ffffff'))).toBe(true);
+    expect(literals).toEqual([]);
+  });
+});
+
+/**
+ * Every theme, held to the same floor as the default one.
+ *
+ * A theme is a token swap, which means it is also a swap of everything the
+ * accessibility floor depends on: eight nick colours that clear 4.5:1 and read
+ * as eight different people, text that can be read on the surface behind it,
+ * and a status dot that can be seen. Checking only the theme that shipped first
+ * would leave five untested palettes free to fail all of it.
+ */
+describe('themes', () => {
+  /** Declarations per selector, so a theme can be read on its own. */
+  const blocks = [...tokensCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({
+    selectors: (match[1] ?? '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split(',')
+      .map((selector) => selector.trim()),
+    declarations: Object.fromEntries(
+      [...(match[2] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((entry) => [
+        entry[1] ?? '',
+        (entry[2] ?? '').trim(),
+      ]),
+    ),
+  }));
+
+  const baseDeclarations: Record<string, string> = {};
+  const themeDeclarations: Record<string, Record<string, string>> = {};
+  for (const block of blocks) {
+    for (const selector of block.selectors) {
+      const named = /^\[data-theme='([\w-]+)'\]$/.exec(selector);
+      if (named?.[1] !== undefined) {
+        themeDeclarations[named[1]] = { ...themeDeclarations[named[1]], ...block.declarations };
+      } else if (selector === ':root' || selector === '[data-theme]') {
+        Object.assign(baseDeclarations, block.declarations);
+      }
+    }
+  }
+
+  /** A token as one theme resolves it, falling back to the shared layers. */
+  const inTheme = (theme: string, token: string, depth = 0): string => {
+    const value = themeDeclarations[theme]?.[token] ?? baseDeclarations[token];
+    if (value === undefined || depth > 8) {
+      return value ?? '';
+    }
+    const indirect = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value);
+    return indirect?.[1] === undefined ? value : inTheme(theme, indirect[1], depth + 1);
+  };
+
+  it('defines every theme the picker offers, and no others', () => {
+    expect(Object.keys(themeDeclarations).sort()).toEqual([...THEME_IDS].sort());
+  });
+
+  it.each([...THEME_IDS])('%s resolves every alias to a colour', (theme) => {
+    for (const token of ['--bg-base', '--bg-elevated', '--accent', '--danger', '--label-primary']) {
+      expect(inTheme(theme, token), `${theme} ${token}`).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it.each([...THEME_IDS])('%s can be read: text clears 4.5:1 on its own surface', (theme) => {
+    const base = inTheme(theme, '--bg-base');
+    for (const token of ['--label-primary', '--accent', '--danger']) {
+      expect(contrast(inTheme(theme, token), base), `${theme} ${token}`).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    }
+    const elevated = inTheme(theme, '--bg-elevated');
+    for (const token of ['--label-channel', '--label-person']) {
+      expect(contrast(inTheme(theme, token), elevated), `${theme} ${token}`).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    }
+  });
+
+  // The second line of every settings row and every hint in the interface. It
+  // is translucent, so what it actually reads as depends on the surface behind
+  // it — which is exactly the thing a light theme changes.
+  it.each([...THEME_IDS])('%s keeps its secondary text readable', (theme) => {
+    const base = inTheme(theme, '--bg-base');
+    const composited = over(inTheme(theme, '--label-ink'), 0.62, base);
+    expect(contrast(composited, base), `${theme} --label-secondary`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each([...THEME_IDS])('%s keeps its eight voices legible and distinct', (theme) => {
+    const base = inTheme(theme, '--bg-base');
+    const nicks = NICK_TOKENS.map((token) => inTheme(theme, token));
+
+    for (const [index, value] of nicks.entries()) {
+      expect(value, `${theme} nick ${index + 1}`).toMatch(/^#[0-9a-f]{6}$/);
+      expect(contrast(value, base), `${theme} nick ${index + 1}`).toBeGreaterThanOrEqual(4.5);
+    }
+
+    const tooClose: string[] = [];
+    for (let i = 0; i < nicks.length; i += 1) {
+      for (let k = i + 1; k < nicks.length; k += 1) {
+        const distance = perceptualDistance(nicks[i] ?? '', nicks[k] ?? '');
+        if (distance < 40) {
+          tooClose.push(`${theme} nick ${i + 1} and ${k + 1} (${distance.toFixed(1)})`);
+        }
+      }
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  // Not text, so the floor is the 3:1 one for a non-text indicator — but a dot
+  // nobody can see is a status nobody has.
+  it.each([...THEME_IDS])('%s shows connection state visibly', (theme) => {
+    const base = inTheme(theme, '--bg-base');
+    for (const token of ['--status-connected', '--status-connecting', '--status-failed']) {
+      expect(contrast(inTheme(theme, token), base), `${theme} ${token}`).toBeGreaterThanOrEqual(3);
+    }
+    expect(
+      contrast(inTheme(theme, '--on-accent'), inTheme(theme, '--accent')),
+      `${theme} on-accent`,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  // Two of the themes are built on red, so red cannot be the only thing that
+  // says "destructive" in them. What it can still do is be a different red from
+  // the accent, and far enough from it to read as a different one.
+  it.each([...THEME_IDS])('%s keeps alarm apart from the accent', (theme) => {
+    expect(
+      perceptualDistance(inTheme(theme, '--accent'), inTheme(theme, '--danger')),
+      theme,
+    ).toBeGreaterThanOrEqual(40);
   });
 });

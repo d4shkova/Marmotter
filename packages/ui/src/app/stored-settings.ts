@@ -21,6 +21,7 @@
 
 import { DEFAULT_CTCP_POLICY, type CtcpPolicy } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import { readThemeId } from '../themes.js';
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_USER_OPTIONS,
@@ -69,6 +70,9 @@ const words = (value: unknown): readonly string[] =>
 function readAppearance(value: unknown): Appearance {
   const fields = record(value);
   return {
+    // Anything the file does not recognise as a theme is the default one,
+    // rather than a window with no colours defined in it at all.
+    theme: readThemeId(fields['theme']),
     // Bounded the same way the settings control bounds it. A width of 400 from
     // a hand-edited file would push the message text off the screen with no
     // obvious way back.
@@ -168,6 +172,7 @@ export function readStoredSettings(value: unknown): StoredSettings {
 export function writeStoredSettings(settings: StoredSettings): Record<string, unknown> {
   return {
     appearance: {
+      theme: settings.appearance.theme,
       nickColumnWidth: settings.appearance.nickColumnWidth,
       alignNicksRight: settings.appearance.alignNicksRight,
       foldEvents: settings.appearance.foldEvents,
