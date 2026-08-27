@@ -46,6 +46,7 @@ export * from './primitives/Tooltip.js';
 
 export * from './layout/ListGroup.js';
 export * from './layout/NavBar.js';
+export * from './layout/TitleBar.js';
 export * from './layout/TabBar.js';
 
 export * from './app/index.js';

@@ -19,6 +19,7 @@
         "minWidth": 640,
         "minHeight": 560,
         "resizable": true,
+        "decorations": false,
         "theme": "Dark",
         "backgroundColor": "#000000"
       }

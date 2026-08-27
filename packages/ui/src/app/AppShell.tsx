@@ -41,6 +41,15 @@ export interface AppShellProps {
   readonly sidebarCollapsed?: boolean;
   readonly asideOpen?: boolean;
   readonly onCloseAside?: () => void;
+  /**
+   * The window's own top bar, where the app draws one instead of the OS.
+   *
+   * Desktop passes a `TitleBar`; web passes nothing, because a browser tab has
+   * no window to drag and drawing buttons that cannot close it would be a lie.
+   * When it is present the frame gives it a row of its own and the columns take
+   * the rest of the height.
+   */
+  readonly titleBar?: ReactNode;
   /** Shown on mobile when the channel list is slid over. */
   readonly sidebarOpen?: boolean;
   readonly onCloseSidebar?: () => void;
@@ -63,15 +72,30 @@ export function AppShell({
   sidebarCollapsed = false,
   asideOpen = true,
   onCloseAside,
+  titleBar,
   sidebarOpen = false,
   onCloseSidebar,
   className,
 }: AppShellProps): ReactNode {
   const breakpoint = useBreakpoint();
+  // With a title bar above them the columns fill what is left rather than the
+  // whole viewport, which is the only thing its presence changes about them.
+  const frame = titleBar === undefined ? 'h-dvh' : 'min-h-0 flex-1';
+
+  /** Wraps the columns in the window frame, once the breakpoint has built them. */
+  const framed = (columns: ReactNode): ReactNode =>
+    titleBar === undefined ? (
+      columns
+    ) : (
+      <div className="flex h-dvh flex-col overflow-hidden bg-[var(--bg-base)]">
+        {titleBar}
+        {columns}
+      </div>
+    );
 
   if (breakpoint === 'mobile') {
-    return (
-      <div className={cn('flex h-dvh flex-col overflow-hidden bg-[var(--bg-base)]', className)}>
+    return framed(
+      <div className={cn('flex flex-col overflow-hidden bg-[var(--bg-base)]', frame, className)}>
         <div className="relative flex flex-1 overflow-hidden">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{main}</main>
 
@@ -111,13 +135,13 @@ export function AppShell({
         </div>
 
         {tabBar}
-      </div>
+      </div>,
     );
   }
 
   if (breakpoint === 'tablet') {
-    return (
-      <div className={cn('flex h-dvh overflow-hidden bg-[var(--bg-base)]', className)}>
+    return framed(
+      <div className={cn('flex overflow-hidden bg-[var(--bg-base)]', frame, className)}>
         <div className={cn('shrink-0', sidebarCollapsed ? 'w-14' : 'w-64')}>{sidebar}</div>
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           {main}
@@ -132,12 +156,12 @@ export function AppShell({
             </>
           ) : null}
         </main>
-      </div>
+      </div>,
     );
   }
 
-  return (
-    <div className={cn('flex h-dvh overflow-hidden bg-[var(--bg-base)]', className)}>
+  return framed(
+    <div className={cn('flex overflow-hidden bg-[var(--bg-base)]', frame, className)}>
       <div className={cn('shrink-0 transition-all', sidebarCollapsed ? 'w-14' : 'w-64')}>
         {sidebar}
       </div>
@@ -145,6 +169,6 @@ export function AppShell({
       {asideOpen && aside !== undefined ? (
         <div className="w-56 shrink-0 xl:w-64">{aside}</div>
       ) : null}
-    </div>
+    </div>,
   );
 }

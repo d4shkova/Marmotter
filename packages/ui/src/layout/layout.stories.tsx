@@ -6,6 +6,7 @@ import { ListRow } from '../primitives/ListRow.js';
 import { ListGroup } from './ListGroup.js';
 import { NavBar } from './NavBar.js';
 import { TabBar } from './TabBar.js';
+import { TitleBar } from './TitleBar.js';
 
 export default {
   title: 'Layout',
@@ -14,6 +15,28 @@ export default {
 const Glyph = ({ children }: { children: string }) => (
   <span className="text-callout font-semibold">{children}</span>
 );
+
+export const TitleBarWindowControls: StoryObj = {
+  render: () => (
+    <div className="w-96 overflow-hidden rounded-card border border-[var(--separator)]">
+      <TitleBar title="Marmotter" controls="custom" maximized={false} />
+      <div className="p-4 text-subhead text-[var(--label-secondary)]">
+        Windows and Linux, where the app draws the window buttons itself.
+      </div>
+    </div>
+  ),
+};
+
+export const TitleBarTrafficLightInset: StoryObj = {
+  render: () => (
+    <div className="w-96 overflow-hidden rounded-card border border-[var(--separator)]">
+      <TitleBar title="Marmotter" controls="native-inset" />
+      <div className="p-4 text-subhead text-[var(--label-secondary)]">
+        macOS keeps its own buttons, so the bar leaves room for them.
+      </div>
+    </div>
+  ),
+};
 
 export const NavBarCompact: StoryObj = {
   render: () => (

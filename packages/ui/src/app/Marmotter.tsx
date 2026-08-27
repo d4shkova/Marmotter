@@ -245,6 +245,12 @@ export interface MarmotterProps {
    * read.
    */
   readonly secrets?: SecretStore;
+  /**
+   * The window's own top bar, for a build that draws one instead of the OS.
+   *
+   * Desktop passes a `TitleBar` wired to its window; web passes nothing.
+   */
+  readonly titleBar?: ReactNode;
 }
 
 /** The whole client. */
@@ -260,6 +266,7 @@ export function Marmotter({
   chooseExportFile,
   preferences,
   secrets,
+  titleBar,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -2300,6 +2307,7 @@ export function Marmotter({
   return (
     <>
       <AppShell
+        {...(titleBar === undefined ? {} : { titleBar })}
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
