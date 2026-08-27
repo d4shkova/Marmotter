@@ -71,6 +71,35 @@ describe('AddNetwork autojoin', () => {
   });
 });
 
+describe('AddNetwork over a web address', () => {
+  // The path the end-to-end suite drives, and the only one the browser build
+  // can use at all: a websocket network still needs every field a plain one
+  // does, and losing the nick field here is a form that cannot be submitted
+  // and does not say why.
+  it('asks for a name, an address and a nick, and saves all three', async () => {
+    const onAdd = vi.fn();
+    const user = userEvent.setup();
+    render(<AddNetwork open onClose={() => {}} onAdd={onAdd} newId={() => 'id-1'} />);
+
+    await user.selectOptions(screen.getByLabelText('Which network?'), 'custom');
+    await user.click(screen.getByRole('radio', { name: 'A web address' }));
+
+    await user.type(screen.getByLabelText('Name'), 'Test network');
+    await user.type(screen.getByLabelText('Web address'), 'ws://127.0.0.1:18097/');
+    await user.type(screen.getByLabelText('Your name on this network'), 'marmot');
+    await user.click(screen.getByRole('button', { name: 'Add network' }));
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    const profile = onAdd.mock.calls[0]?.[0] as NetworkProfile;
+    expect(profile.name).toBe('Test network');
+    expect(profile.identity.nick).toBe('marmot');
+    expect(profile.servers[0]?.tls).toEqual({
+      mode: 'websocket',
+      url: 'ws://127.0.0.1:18097/',
+    });
+  });
+});
+
 describe('AddNetwork errors', () => {
   it('prints a complaint under the field it is about', async () => {
     const user = userEvent.setup();
@@ -84,6 +113,20 @@ describe('AddNetwork errors', () => {
     const address = screen.getByLabelText('Server address');
     expect(address.getAttribute('aria-invalid')).toBe('true');
     expect(screen.getByRole('alert').textContent).toContain('address of the server');
+  });
+
+  it('never swallows a complaint about a field it is not showing', async () => {
+    const user = userEvent.setup();
+    render(<AddNetwork open onClose={() => {}} onAdd={() => {}} />);
+
+    // Signing in is off, so the account and password fields are not rendered.
+    // Whatever goes wrong, the person has to be told something.
+    await user.selectOptions(screen.getByLabelText('Which network?'), 'custom');
+    await user.clear(screen.getByLabelText('Your name on this network'));
+    await user.type(screen.getByLabelText('Server address'), 'irc.example.net');
+    await user.click(screen.getByRole('button', { name: 'Add network' }));
+
+    expect(screen.getAllByRole('alert').length).toBeGreaterThan(0);
   });
 });
 

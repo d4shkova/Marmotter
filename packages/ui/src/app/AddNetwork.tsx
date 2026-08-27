@@ -511,6 +511,21 @@ export function AddNetwork({
     onClose();
   };
 
+  /**
+   * Which fields are rendered right now, so a complaint about one of them is
+   * left to it and every other complaint still reaches the foot of the form.
+   *
+   * Derived rather than listed: a fixed list goes stale the moment a branch
+   * changes which controls it draws, and the failure mode is a form that
+   * refuses to submit while saying nothing about why.
+   */
+  const onScreen = new Set<FormError['field']>([
+    'nick',
+    ...(custom && usesSocket ? (['socket'] as const) : []),
+    ...(custom && !usesSocket ? (['host', 'port'] as const) : []),
+    ...(login === 'none' ? [] : (['account', 'password'] as const)),
+  ]);
+
   return (
     <Sheet
       open={open}
@@ -551,13 +566,23 @@ export function AddNetwork({
             and its port are one decision, and stacking them is what makes this
             form scroll. */}
         {custom && usesSocket ? (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <TextField
-              label="Name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              hint="What this network is called in the sidebar."
-            />
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                hint="What this network is called in the sidebar."
+              />
+              <TextField
+                label="Your name on this network"
+                value={nick}
+                placeholder="marmot"
+                onChange={(event) => setNick(event.target.value)}
+                error={errorFor(error, 'nick')}
+                hint="Other people see this."
+              />
+            </div>
             <TextField
               label="Web address"
               value={socketUrl}
@@ -566,7 +591,7 @@ export function AddNetwork({
               error={errorFor(error, 'socket')}
               hint="The only kind of address a browser can open."
             />
-          </div>
+          </>
         ) : custom ? (
           <>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -713,7 +738,7 @@ export function AddNetwork({
 
         {/* The complaints that belong to a control are printed under it. This
             catches anything left over, so nothing can fail silently. */}
-        {error === undefined || FIELDS_ON_SCREEN.has(error.field) ? null : (
+        {error === undefined || onScreen.has(error.field) ? null : (
           <p role="alert" className="text-footnote text-[var(--danger)]">
             {error.message}
           </p>
@@ -747,21 +772,6 @@ const LOGIN_HINT: Record<LoginMethod, string> = {
   nickserv:
     'For older networks. Sends your password to the account service once you are on, so there is a moment where you are online and not yet signed in.',
 };
-
-/**
- * The fields that print their own error.
- *
- * A complaint about one of these is shown under it and must not also appear at
- * the foot of the form; anything else has nowhere else to go.
- */
-const FIELDS_ON_SCREEN: ReadonlySet<FormError['field']> = new Set<FormError['field']>([
-  'host',
-  'port',
-  'nick',
-  'socket',
-  'account',
-  'password',
-]);
 
 /** The secret reference a login method carries, where it carries one. */
 function secretOf(auth: AuthConfig | undefined): SecretRef | undefined {
