@@ -634,6 +634,11 @@ export function createSession(options: SessionOptions): Session {
     mechanism = undefined;
     mechanismStarted = false;
     watch.current?.stop();
+    // The notify poll is a timer that writes to the socket. Left running across
+    // a close it throws on every tick — a minute apart, forever — and asks a
+    // server we are no longer talking to about our friends. It starts again
+    // when registration completes on the next connection.
+    stopPolling();
     // Batches do not survive a connection, and a half-open one would silently
     // absorb the first messages of the next.
     publish({
@@ -874,8 +879,18 @@ export function createSession(options: SessionOptions): Session {
     },
 
     disconnect(reason) {
+      // A courtesy, not a requirement: `QUIT` only reaches a socket that is
+      // open, and the phase is not proof that one is — a connection still
+      // handshaking, or dropped without a close event yet, is not
+      // `disconnected` and cannot be written to. Letting that throw would skip
+      // the line below and leave the socket open, which is the one thing
+      // disconnecting must not do.
       if (state.phase !== 'disconnected') {
-        write([reason === undefined ? 'QUIT' : `QUIT :${reason}`]);
+        try {
+          write([reason === undefined ? 'QUIT' : `QUIT :${reason}`]);
+        } catch {
+          // Nothing to say goodbye through. Closing is what matters.
+        }
       }
       transport.disconnect();
     },

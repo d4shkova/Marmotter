@@ -329,6 +329,40 @@ const addToChannelsWith = (
   return changed ? { ...state, channels } : state;
 };
 
+/**
+ * Applies a change to one person in every channel they are in.
+ *
+ * `away-notify`, `account-notify`, `chghost` and `setname` all report the same
+ * shape of news: something about a person changed, and every room they are
+ * standing in has to hear it. None of them writes a line to a buffer — the
+ * member list simply becomes right. Written once here rather than four times,
+ * so the next such capability is a case with one call in it.
+ *
+ * Channels the person is not in are left as they were, identity included, so a
+ * change that touches nothing does not invalidate the whole map.
+ */
+const updateMemberEverywhere = (
+  state: NetworkState,
+  nick: string,
+  update: Partial<Member>,
+): NetworkState => {
+  const mapping = state.support.caseMapping;
+  let channels: Map<string, ChannelState> | undefined;
+
+  for (const [key, channel] of state.channels) {
+    if (getMember(channel.members, nick, mapping) === undefined) {
+      continue;
+    }
+    channels ??= new Map(state.channels);
+    channels.set(key, {
+      ...channel,
+      members: upsertMember(channel.members, nick, mapping, update),
+    });
+  }
+
+  return channels === undefined ? state : { ...state, channels };
+};
+
 interface MessageInit {
   readonly kind: MessageKind;
   readonly target: string;
@@ -666,12 +700,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         return result(state);
       }
 
+      const reason = msg.params[1] ?? '';
       const message = buildMessage(
         msg,
         {
           kind: 'part',
           target: channelName,
-          text: msg.params[1] ?? `${nick} left`,
+          // The name goes in the line, not only in the nick column beside it.
+          // A folded run of events is expanded as a list of these texts on
+          // their own, so a line that is only the parting reason reads as
+          // "going to bed" with nothing saying whose bed.
+          text: reason === '' ? `${nick} left` : `${nick} left: ${reason}`,
         },
         now,
       );
@@ -700,6 +739,10 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
     case 'QUIT': {
       const nick = msg.source?.nick ?? '';
       const reason = msg.params[0] ?? '';
+      // Named for the same reason as a part: the expanded view of a folded run
+      // shows these texts alone, and "Ping timeout: 240 seconds" without a name
+      // is a row nobody can attribute.
+      const text = reason === '' ? `${nick} disconnected` : `${nick} disconnected: ${reason}`;
 
       // A netsplit shows up as a mass QUIT whose reason is two server names.
       // The batch tag, where the server sends one, groups them; the interface
@@ -707,7 +750,7 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
       const next = addToChannelsWith(
         state,
         nick,
-        (channel) => buildMessage(msg, { kind: 'quit', target: channel.name, text: reason }, now),
+        (channel) => buildMessage(msg, { kind: 'quit', target: channel.name, text }, now),
         (channel) => ({ ...channel, members: removeMember(channel.members, nick, mapping) }),
       );
       return result(next);
@@ -1043,19 +1086,8 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
     case 'AWAY': {
       const nick = msg.source?.nick ?? '';
       const away = (msg.params[0] ?? '') !== '';
-      const channels = new Map(state.channels);
-      for (const [key, channel] of state.channels) {
-        if (getMember(channel.members, nick, mapping) === undefined) {
-          continue;
-        }
-        channels.set(key, {
-          ...channel,
-          members: upsertMember(channel.members, nick, mapping, { away }),
-        });
-      }
       return result({
-        ...state,
-        channels,
+        ...updateMemberEverywhere(state, nick, { away }),
         away: isSelf(state, nick) ? away : state.away,
       });
     }
@@ -1065,56 +1097,25 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
       const account = msg.params[0] ?? '*';
       const resolved = account === '*' ? undefined : account;
 
-      const channels = new Map(state.channels);
-      for (const [key, channel] of state.channels) {
-        if (getMember(channel.members, nick, mapping) === undefined) {
-          continue;
-        }
-        channels.set(key, {
-          ...channel,
-          members: upsertMember(channel.members, nick, mapping, { account: resolved }),
-        });
-      }
       return result({
-        ...state,
-        channels,
+        ...updateMemberEverywhere(state, nick, { account: resolved }),
         account: isSelf(state, nick) ? resolved : state.account,
       });
     }
 
     case 'CHGHOST': {
       const nick = msg.source?.nick ?? '';
-      const user = msg.params[0] ?? '';
-      const host = msg.params[1] ?? '';
-
-      const channels = new Map(state.channels);
-      for (const [key, channel] of state.channels) {
-        if (getMember(channel.members, nick, mapping) === undefined) {
-          continue;
-        }
-        channels.set(key, {
-          ...channel,
-          members: upsertMember(channel.members, nick, mapping, { user, host }),
-        });
-      }
-      return result({ ...state, channels });
+      return result(
+        updateMemberEverywhere(state, nick, {
+          user: msg.params[0] ?? '',
+          host: msg.params[1] ?? '',
+        }),
+      );
     }
 
     case 'SETNAME': {
       const nick = msg.source?.nick ?? '';
-      const realname = msg.params[0] ?? '';
-
-      const channels = new Map(state.channels);
-      for (const [key, channel] of state.channels) {
-        if (getMember(channel.members, nick, mapping) === undefined) {
-          continue;
-        }
-        channels.set(key, {
-          ...channel,
-          members: upsertMember(channel.members, nick, mapping, { realname }),
-        });
-      }
-      return result({ ...state, channels });
+      return result(updateMemberEverywhere(state, nick, { realname: msg.params[0] ?? '' }));
     }
 
     case 'FAIL':

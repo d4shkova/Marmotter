@@ -53,10 +53,30 @@ export function timestampOf(
 }
 
 /**
+ * The fields of a message that carry a value.
+ *
+ * A message built from a line without an `account` tag or a `+draft/reply` has
+ * those keys present and undefined, and spreading it over an existing entry
+ * therefore erases what the other copy knew. A history copy of a line has no
+ * reason to carry every tag the live one did, so merging the two must not be
+ * able to lose detail — only add it.
+ */
+function definedOnly(message: Message): Partial<Message> {
+  const kept: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(message)) {
+    if (value !== undefined) {
+      kept[field] = value;
+    }
+  }
+  return kept as Partial<Message>;
+}
+
+/**
  * Inserts a message, keeping the buffer ordered by time.
  *
- * Returns the same array when the message is a duplicate, so a caller can skip
- * a re-render cheaply.
+ * A message already in the buffer is merged in place rather than appended, so
+ * the same line arriving twice — live and again through history — stays one
+ * entry, keeping its position and gaining whatever the second copy knew.
  */
 export function insertMessage(
   messages: readonly Message[],
@@ -75,7 +95,7 @@ export function insertMessage(
     if (!existing.pending && message.pending) {
       return messages;
     }
-    const merged: Message = { ...existing, ...message, pending: false };
+    const merged: Message = { ...existing, ...definedOnly(message), pending: false };
     const next = [...messages];
     next[existingIndex] = merged;
     return next;
