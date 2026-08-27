@@ -44,6 +44,7 @@ import { DEFAULT_USER_OPTIONS } from './app/view-store.js';
 import { Decoder } from './decoder/Decoder.js';
 import { ListGroup, SectionHeader } from './layout/ListGroup.js';
 import { NavBar } from './layout/NavBar.js';
+import { TitleBar } from './layout/TitleBar.js';
 import { TabBar } from './layout/TabBar.js';
 import { Avatar } from './primitives/Avatar.js';
 import { Badge, StatusDot } from './primitives/Badge.js';
@@ -340,6 +341,7 @@ describe('every component passes axe', () => {
         <span>Copy</span>
       </Tooltip>,
     ],
+    ['TitleBar', <TitleBar key="title" title="Marmotter" controls="custom" maximized={false} />],
     [
       'NavBar',
       <NavBar key="nb" title="#marmotter" subtitle="42 people" trailing={<Badge>42</Badge>} />,

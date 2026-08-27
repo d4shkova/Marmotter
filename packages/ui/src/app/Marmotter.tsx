@@ -35,6 +35,7 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
+import { TitleBar, type TitleBarProps } from '../layout/TitleBar.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
@@ -245,6 +246,15 @@ export interface MarmotterProps {
    * read.
    */
   readonly secrets?: SecretStore;
+  /**
+   * The window this is running in, for a build that draws its own chrome.
+   *
+   * Desktop passes what the shell knows about the window and the shell draws
+   * the bar, rather than passing a finished bar: the app's own controls live
+   * in it — settings, today — and those belong here, not to the platform
+   * layer. Web passes nothing and there is no bar.
+   */
+  readonly windowChrome?: Omit<TitleBarProps, 'leading' | 'trailing'>;
 }
 
 /** The whole client. */
@@ -260,6 +270,7 @@ export function Marmotter({
   chooseExportFile,
   preferences,
   secrets,
+  windowChrome,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -1921,6 +1932,10 @@ export function Marmotter({
     }
   };
 
+  // Empty where the window's bar carries the name, so the column below is
+  // headed by whatever it is actually showing.
+  const appName = windowChrome === undefined ? 'Marmotter' : '';
+
   const title =
     view.pane === 'channel-browser'
       ? `Channels on ${network?.name ?? 'this network'}`
@@ -1933,8 +1948,12 @@ export function Marmotter({
             : view.pane === 'dcc'
               ? 'Files'
               : selection === undefined
-                ? 'Marmotter'
-                : (selection.target ?? network?.name ?? 'Marmotter');
+                ? // Nothing open, so nothing to name. Where the window has a
+                  // bar of its own it already says which app this is, and
+                  // repeating it here would be saying it twice; a browser tab
+                  // has no such bar, so there it stays.
+                  appName
+                : (selection.target ?? network?.name ?? appName);
 
   // The right-hand column carries the member list, for a channel. The DCC file
   // monitor used to sit under it here; it now lives at the foot of the sidebar
@@ -1974,6 +1993,27 @@ export function Marmotter({
       />
     </div>
   );
+
+  const toggleSettings = (): void => view.setPane(view.pane === 'settings' ? 'chat' : 'settings');
+
+  // Settings live in the window's bar where there is one, next to the buttons
+  // that drive the window, and in the sidebar header otherwise. One gear
+  // either way: two would be two places to look.
+  const titleBarNode =
+    windowChrome === undefined ? undefined : (
+      <TitleBar
+        {...windowChrome}
+        trailing={
+          <IconButton
+            label="Settings"
+            size="small"
+            pressed={view.pane === 'settings'}
+            icon={<span aria-hidden="true">⚙</span>}
+            onClick={toggleSettings}
+          />
+        }
+      />
+    );
 
   // The file monitor's home in the left column, under the networks.
   const dccMonitorNode = showDccPanel ? (
@@ -2300,6 +2340,7 @@ export function Marmotter({
   return (
     <>
       <AppShell
+        {...(titleBarNode === undefined ? {} : { titleBar: titleBarNode })}
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
@@ -2318,8 +2359,9 @@ export function Marmotter({
             onToggleCollapsed={view.toggleCollapsed}
             onReorder={view.reorderNetworks}
             onAddNetwork={() => setAdding(true)}
-            onOpenSettings={() => view.setPane(view.pane === 'settings' ? 'chat' : 'settings')}
+            onOpenSettings={toggleSettings}
             settingsOpen={view.pane === 'settings'}
+            showSettingsButton={windowChrome === undefined}
             onJoinChannel={(networkId) => setJoiningNetwork(networkId)}
             onBrowseChannels={browseChannels}
             showBrowseChannelsShortcut={view.appearance.showBrowseChannelsShortcut}

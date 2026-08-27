@@ -24,6 +24,14 @@ export interface SidebarProps {
   readonly onOpenSettings: () => void;
   /** Whether the settings pane is the one showing, so the gear reads as pressed. */
   readonly settingsOpen?: boolean;
+  /**
+   * Whether the header carries the settings button.
+   *
+   * False on a build whose window bar carries it instead. Right-clicking the
+   * sidebar still offers settings either way, so nothing is lost when the
+   * button moves.
+   */
+  readonly showSettingsButton?: boolean;
   /** Opens the "join a channel" prompt for a network. */
   readonly onJoinChannel?: (networkId: string) => void;
   readonly onBrowseChannels?: (networkId: string) => void;
@@ -102,6 +110,7 @@ export function Sidebar({
   onAddNetwork,
   onOpenSettings,
   settingsOpen = false,
+  showSettingsButton = true,
   onJoinChannel,
   onBrowseChannels,
   showBrowseChannelsShortcut = true,
@@ -153,13 +162,15 @@ export function Sidebar({
             icon={<span aria-hidden="true">＋</span>}
             onClick={onAddNetwork}
           />
-          <IconButton
-            label="Settings"
-            size="small"
-            pressed={settingsOpen}
-            icon={<span aria-hidden="true">⚙</span>}
-            onClick={onOpenSettings}
-          />
+          {showSettingsButton ? (
+            <IconButton
+              label="Settings"
+              size="small"
+              pressed={settingsOpen}
+              icon={<span aria-hidden="true">⚙</span>}
+              onClick={onOpenSettings}
+            />
+          ) : null}
         </div>
       </div>
 
