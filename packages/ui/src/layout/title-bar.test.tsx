@@ -31,6 +31,26 @@ describe('TitleBar', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("puts the app's own controls before the window buttons", () => {
+    const { container } = render(
+      <TitleBar
+        title="Marmotter"
+        controls="custom"
+        trailing={<button type="button">Settings</button>}
+      />,
+    );
+
+    const labels = [...container.querySelectorAll('button')].map(
+      (button) => button.getAttribute('aria-label') ?? button.textContent,
+    );
+    expect(labels).toEqual([
+      'Settings',
+      'Minimize this window',
+      'Maximize this window',
+      'Close this window',
+    ]);
+  });
+
   it('names what the middle button will do, rather than what it did', () => {
     render(<TitleBar title="Marmotter" controls="custom" maximized />);
 
@@ -53,7 +73,7 @@ describe('TitleBar', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('spreads the shell drag attributes onto the bar and the title', () => {
+  it('spreads the shell drag attributes onto the bar itself', () => {
     // Passed in rather than hardcoded, so this package stays free of any one
     // desktop shell's conventions.
     const { container } = render(
@@ -64,7 +84,7 @@ describe('TitleBar', () => {
       />,
     );
 
-    expect(container.querySelectorAll('[data-tauri-drag-region]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-tauri-drag-region]')).toHaveLength(1);
     // Tauri starts a drag when the pressed element itself carries the
     // attribute, so the window buttons must not carry it.
     for (const button of screen.getAllByRole('button')) {

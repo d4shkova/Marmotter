@@ -2,6 +2,13 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 
 export interface NavBarProps {
+  /**
+   * What this column is showing.
+   *
+   * Empty where there is nothing to name — no conversation open — in which
+   * case the bar keeps its controls and draws no heading at all, leaving the
+   * naming to whatever fills the column below.
+   */
   readonly title: string;
   /** A second line under the title, e.g. a channel's topic or member count. */
   readonly subtitle?: ReactNode;
@@ -75,17 +82,19 @@ export function NavBar({
         {leading === undefined ? null : <div className="flex shrink-0 items-center">{leading}</div>}
 
         <div className="flex min-w-0 flex-1 flex-col items-center">
-          <h1
-            className={cn(
-              'max-w-full truncate text-headline font-semibold text-[var(--label-primary)]',
-              onTitleActivate !== undefined && 'cursor-pointer select-none',
-            )}
-            style={largeTitle ? { opacity: collapsed } : undefined}
-            title={titleHint}
-            onDoubleClick={onTitleActivate}
-          >
-            {title}
-          </h1>
+          {title === '' ? null : (
+            <h1
+              className={cn(
+                'max-w-full truncate text-headline font-semibold text-[var(--label-primary)]',
+                onTitleActivate !== undefined && 'cursor-pointer select-none',
+              )}
+              style={largeTitle ? { opacity: collapsed } : undefined}
+              title={titleHint}
+              onDoubleClick={onTitleActivate}
+            >
+              {title}
+            </h1>
+          )}
           {subtitle === undefined ? null : (
             <p className="w-full truncate text-center text-caption-1 text-[var(--label-tertiary)]">
               {subtitle}

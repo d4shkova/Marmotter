@@ -61,25 +61,33 @@ export function TitleBar({
     <div
       {...dragProps}
       className={cn(
-        'relative z-40 flex h-9 shrink-0 select-none items-center',
+        'relative z-40 flex h-9 shrink-0 select-none items-center justify-end',
         'bg-[var(--bg-elevated)]/80 [backdrop-filter:var(--blur-vibrancy)]',
         'border-b border-[var(--separator)]',
         controls === 'native-inset' ? TRAFFIC_LIGHT_INSET : 'pl-2',
         className,
       )}
     >
-      {leading === undefined ? null : <div className="flex shrink-0 items-center">{leading}</div>}
+      {leading === undefined ? null : (
+        <div className="mr-auto flex shrink-0 items-center">{leading}</div>
+      )}
 
-      {/* The title area is part of the drag handle, so it carries the same
-          attributes and nothing inside it is interactive. */}
-      <div {...dragProps} className="flex min-w-0 flex-1 items-center justify-center px-2">
+      {/* Centred on the window rather than on the space left over, so adding a
+          control to either end does not shift the name. It takes no pointer
+          events, which leaves the bar underneath to handle the drag, and it
+          keeps clear of the widest the controls get — three window buttons and
+          the app's own — so a narrow window truncates the name rather than
+          running it under them. */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-44">
         <span className="truncate text-caption-1 font-semibold tracking-wide text-[var(--label-secondary)]">
           {title}
         </span>
       </div>
 
       <div className="flex shrink-0 items-center">
-        {trailing}
+        {trailing === undefined ? null : (
+          <div className="flex items-center gap-0.5 px-1">{trailing}</div>
+        )}
         {controls === 'custom' ? (
           <div className="flex h-9 items-center">
             <WindowButton label="Minimize this window" onClick={onMinimize}>

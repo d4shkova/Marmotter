@@ -1,4 +1,4 @@
-import { Marmotter, TitleBar } from '@marmotter/ui';
+import { Marmotter } from '@marmotter/ui';
 import { open as openDialog, save } from '@tauri-apps/plugin-dialog';
 import { type JSX, useMemo } from 'react';
 import { createDesktopDcc } from './dcc';
@@ -27,20 +27,18 @@ export function App(): JSX.Element {
 
   return (
     <Marmotter
-      // The window's chrome is ours here, not the OS's: `decorations` is off in
-      // tauri.conf.json, so this bar is what drags, maximises and closes the
-      // window. Web passes nothing and keeps the browser's own chrome.
-      titleBar={
-        <TitleBar
-          title="Marmotter"
-          controls={controls}
-          dragProps={DRAG_PROPS}
-          maximized={chrome.maximized}
-          onMinimize={chrome.minimize}
-          onToggleMaximize={chrome.toggleMaximize}
-          onClose={chrome.close}
-        />
-      }
+      // The window's chrome is ours here, not the OS's: `decorations` is off
+      // in tauri.conf.json, so the shell's own bar is what drags, maximises
+      // and closes the window. Web passes nothing and keeps the browser's.
+      windowChrome={{
+        title: 'Marmotter',
+        controls,
+        dragProps: DRAG_PROPS,
+        maximized: chrome.maximized,
+        onMinimize: chrome.minimize,
+        onToggleMaximize: chrome.toggleMaximize,
+        onClose: chrome.close,
+      }}
       createTransport={() => createDesktopTransport()}
       notifier={notifier}
       dcc={dcc}

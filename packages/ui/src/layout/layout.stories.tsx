@@ -18,8 +18,15 @@ const Glyph = ({ children }: { children: string }) => (
 
 export const TitleBarWindowControls: StoryObj = {
   render: () => (
-    <div className="w-96 overflow-hidden rounded-card border border-[var(--separator)]">
-      <TitleBar title="Marmotter" controls="custom" maximized={false} />
+    // Window-width rather than card-width: the bar centres its title on the
+    // window, and a card narrower than the app's 640px minimum misrepresents it.
+    <div className="w-full max-w-2xl overflow-hidden rounded-card border border-[var(--separator)]">
+      <TitleBar
+        title="Marmotter"
+        controls="custom"
+        maximized={false}
+        trailing={<IconButton label="Settings" size="small" icon={<Glyph>⚙</Glyph>} />}
+      />
       <div className="p-4 text-subhead text-[var(--label-secondary)]">
         Windows and Linux, where the app draws the window buttons itself.
       </div>
@@ -29,7 +36,7 @@ export const TitleBarWindowControls: StoryObj = {
 
 export const TitleBarTrafficLightInset: StoryObj = {
   render: () => (
-    <div className="w-96 overflow-hidden rounded-card border border-[var(--separator)]">
+    <div className="w-full max-w-2xl overflow-hidden rounded-card border border-[var(--separator)]">
       <TitleBar title="Marmotter" controls="native-inset" />
       <div className="p-4 text-subhead text-[var(--label-secondary)]">
         macOS keeps its own buttons, so the bar leaves room for them.
