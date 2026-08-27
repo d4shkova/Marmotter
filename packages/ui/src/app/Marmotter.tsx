@@ -82,6 +82,7 @@ import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { parseInput } from './commands.js';
+import { isAutojoined, toggleAutojoin } from './autojoin.js';
 import {
   canModerateChannel,
   memberActions,
@@ -1825,6 +1826,41 @@ export function Marmotter({
   };
 
   /** The right-click menu for a channel or a private conversation. */
+  /** Whether a channel is on its network's automatic-join list. */
+  const autojoinedOn = (networkId: string, target: string): boolean =>
+    isAutojoined(
+      registry.profiles.get(networkId)?.autojoin ?? [],
+      target,
+      registry.networks.get(networkId)?.support.caseMapping,
+    );
+
+  /**
+   * Puts a channel on the automatic-join list, or takes it off.
+   *
+   * The profile is written back and saved, but the session is deliberately not
+   * restarted: this changes what happens on the *next* connection, and
+   * reconnecting somebody's network because they ticked a box would be a
+   * startling amount of consequence for a menu item.
+   */
+  const toggleNetworkAutojoin = (state: NetworkState, target: string): void => {
+    const profile = registry.profiles.get(state.id);
+    if (profile === undefined) {
+      return;
+    }
+    const autojoin = toggleAutojoin(profile.autojoin, target, state.support.caseMapping);
+    registry.updateProfile(state.id, { autojoin });
+    persist({
+      networks: [...registry.profiles.values()].map((entry) =>
+        entry.id === state.id ? { ...entry, autojoin } : entry,
+      ),
+    });
+    toast(
+      isAutojoined(autojoin, target, state.support.caseMapping)
+        ? `${target} will be joined whenever ${state.name} connects.`
+        : `${target} will no longer be joined automatically.`,
+    );
+  };
+
   const conversationSidebarMenu = (
     state: NetworkState,
     target: string,
@@ -1844,6 +1880,22 @@ export function Marmotter({
         label: kind === 'channel' ? 'Copy channel name' : 'Copy name',
         onSelect: () => void navigator.clipboard?.writeText(target),
       },
+      // Whether this channel comes back on its own next time. The list has
+      // always been in the profile and sent after registration; this is the
+      // place somebody actually decides it, from the channel they are standing
+      // in rather than by retyping its name into a form.
+      ...(kind === 'channel'
+        ? [
+            {
+              id: 'autojoin',
+              label: autojoinedOn(state.id, target)
+                ? 'Stop joining automatically'
+                : 'Join automatically',
+              startsGroup: true,
+              onSelect: () => toggleNetworkAutojoin(state, target),
+            },
+          ]
+        : []),
       // The keyboard and right-click path to what double-clicking the channel
       // name opens, so channel settings are not pointer-only.
       ...(kind === 'channel'
