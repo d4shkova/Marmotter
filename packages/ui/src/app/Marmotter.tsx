@@ -2106,8 +2106,14 @@ export function Marmotter({
     <>
       <NavBar
         title={title}
-        {...(conversation?.topic?.text === undefined || conversation.topic.text === ''
-          ? {}
+        {...(view.pane !== 'chat' ||
+        conversation?.topic?.text === undefined ||
+        conversation.topic.text === ''
+          ? // The topic belongs to the conversation, not to the window: a pane
+            // that has taken the column over — Files, Settings, the channel
+            // browser — is named by its own title, and leaving the last
+            // channel's topic under it described something nobody is looking at.
+            {}
           : { subtitle: conversation.topic.text })}
         {...(view.pane === 'chat' &&
         conversation !== undefined &&
