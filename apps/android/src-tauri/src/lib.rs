@@ -6,9 +6,10 @@
 //! files, and knows nothing about channels.
 //!
 //! What differs from desktop is the short list this crate implements itself:
-//! opening a link is an intent rather than a `ShellExecuteW`, and there is no
-//! keychain. There is no DCC file monitor and no folder picker, both by design;
-//! see `src/App.tsx`.
+//! opening a link is an intent rather than a `ShellExecuteW`, and the keychain
+//! is the Android Keystore reached through a Kotlin plugin rather than the
+//! `keyring` crate, which has no Android backend at all. There is no DCC file
+//! monitor and no folder picker, both by design; see `src/App.tsx`.
 
 pub mod opener;
 pub mod secrets;
@@ -38,6 +39,9 @@ pub fn run() {
         // Hands a link to the system as an ACTION_VIEW intent. The allowlist
         // that decides which links reach it is in `opener.rs`.
         .plugin(tauri_plugin_opener::init())
+        // Passwords, in the Android Keystore. Registers the Kotlin side that
+        // actually holds the key; see `secrets.rs`.
+        .plugin(secrets::init())
         .manage(transport::Transports::default())
         .invoke_handler(tauri::generate_handler![
             transport::transport_connect,

@@ -2329,6 +2329,7 @@ name = "marmotter-android"
 version = "1.0.5"
 dependencies = [
  "marmotter-shell",
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
