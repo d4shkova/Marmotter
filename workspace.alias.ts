@@ -19,7 +19,7 @@ const dir = (pkg: string): string =>
 
 const entry = (pkg: string): string => `${dir(pkg)}index.ts`;
 
-const PACKAGES = ['protocol', 'shared', 'client', 'ui'] as const;
+const PACKAGES = ['protocol', 'shared', 'client', 'ui', 'platform-tauri'] as const;
 
 /**
  * Anchored patterns rather than a bare record of prefixes.

@@ -6,7 +6,8 @@
  * and the transport follow.
  *
  * Every call can legitimately fail — a Linux session with no Secret Service has
- * no keychain at all — and none of those failures are fatal. A password that
+ * no keychain at all, and an Android device with no screen lock has no hardware
+ * keystore to unlock — and none of those failures are fatal. A password that
  * cannot be saved means a client that asks for it next time, which is worse
  * than remembering it and far better than refusing to run.
  */
@@ -14,7 +15,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SecretRef, SecretStore } from '@marmotter/shared';
 
-export function createDesktopSecrets(): SecretStore {
+export function createSecrets(): SecretStore {
   /** Asked once and remembered: probing writes to the keychain to find out. */
   let probed: Promise<boolean> | undefined;
 

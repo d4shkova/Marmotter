@@ -1,9 +1,9 @@
 /**
- * The desktop app's Tauri bridge.
+ * The Tauri shell's socket bridge.
  *
  * `packages/client` takes its platform as an argument rather than importing it,
- * so this is the one file that knows `@tauri-apps/api` exists. The web build
- * never reaches it.
+ * so this is the one file in a Tauri build that knows `@tauri-apps/api` exists.
+ * The web build never reaches it.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -21,6 +21,6 @@ const bridge: TauriBridge = {
 };
 
 /** A transport backed by the Rust socket. */
-export function createDesktopTransport(): Transport {
+export function createTransport(): Transport {
   return createTauriTransport(bridge);
 }

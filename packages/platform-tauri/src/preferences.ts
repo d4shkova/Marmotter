@@ -1,5 +1,5 @@
 /**
- * Settings that outlive a launch, on desktop.
+ * Settings that outlive a launch.
  *
  * One JSON file, read whole and written whole. Rust owns the file; the shape is
  * decided here, which is the same split the log store and the transport follow.
@@ -57,7 +57,7 @@ function parse(raw: string): StoredPreferences | undefined {
   };
 }
 
-export function createDesktopPreferences(): PreferenceStore {
+export function createPreferences(): PreferenceStore {
   return {
     async load() {
       const raw = await invoke<string | null>('prefs_read');

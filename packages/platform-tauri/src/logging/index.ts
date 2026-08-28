@@ -1,5 +1,5 @@
 /**
- * The desktop log store.
+ * The log store the desktop and Android shells share.
  *
  * Picks the format the policy asks for and hands back a `LogStore`. The web
  * build has no counterpart to this file, deliberately: there is no browser
@@ -63,7 +63,7 @@ const files = {
   },
 };
 
-export interface DesktopLogStoreOptions {
+export interface LogStoreOptions {
   readonly policy: LoggingPolicy;
   /** Maps a network's display name back to its ID, for plaintext search hits. */
   readonly networkIdFor: (networkName: string) => string;
@@ -81,7 +81,7 @@ export async function defaultLogFolder(): Promise<string> {
 }
 
 /** Builds the store the policy asks for. */
-export async function createDesktopLogStore(options: DesktopLogStoreOptions): Promise<LogStore> {
+export async function createLogStore(options: LogStoreOptions): Promise<LogStore> {
   const root = options.policy.path ?? (await defaultLogFolder());
 
   if (options.policy.format === 'plaintext') {
