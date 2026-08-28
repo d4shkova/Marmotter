@@ -3,12 +3,17 @@ import { makeSource } from '@marmotter/protocol';
 import { describe, expect, it } from 'vitest';
 import { findMatches } from './MessageSearch.js';
 
-const say = (id: string, text: string, kind: Message['kind'] = 'privmsg'): Message => ({
+const say = (
+  id: string,
+  text: string,
+  kind: Message['kind'] = 'privmsg',
+  nick = 'tamsin',
+): Message => ({
   id,
   kind,
   at: new Date(0),
   fromServerTime: true,
-  source: makeSource('tamsin', '~t', 'host.example'),
+  source: makeSource(nick, '~t', 'host.example'),
   target: '#marmotter',
   text,
   account: undefined,
@@ -43,5 +48,30 @@ describe('findMatches', () => {
   it('keeps buffer order', () => {
     const messages = [say('a', 'find me'), say('b', 'skip'), say('c', 'find me too')];
     expect(findMatches(messages, 'find').map((match) => match.id)).toEqual(['a', 'c']);
+  });
+});
+
+describe('findMatches by person', () => {
+  const buffer = [
+    say('1', 'morning all', 'privmsg', 'tamsin'),
+    say('2', 'morning', 'privmsg', 'jonquil'),
+    say('3', 'about tamsin, actually', 'privmsg', 'rowan'),
+    say('4', 'still here', 'privmsg', 'Tamsin_'),
+  ];
+
+  it('pulls up everything one person wrote, whatever they wrote about', () => {
+    expect(findMatches(buffer, 'tamsin', 'nick').map((match) => match.id)).toEqual(['1', '4']);
+  });
+
+  it('matches the name however it was capitalised', () => {
+    expect(findMatches(buffer, 'TAMSIN', 'nick').map((match) => match.id)).toEqual(['1', '4']);
+  });
+
+  it('does not match a name mentioned in the middle of someone else', () => {
+    expect(findMatches(buffer, 'quil', 'nick')).toEqual([]);
+  });
+
+  it('still searches the words when the scope is left alone', () => {
+    expect(findMatches(buffer, 'tamsin').map((match) => match.id)).toEqual(['3']);
   });
 });

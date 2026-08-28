@@ -62,7 +62,12 @@ import { readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
-import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSearch.js';
+import {
+  MessageSearchBar,
+  MessageSearchResults,
+  findMatches,
+  type SearchScope,
+} from './MessageSearch.js';
 import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
@@ -360,6 +365,7 @@ export function Marmotter({
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<SearchScope>('text');
   const [searchIndex, setSearchIndex] = useState(0);
   /** A link from a message waiting for the user to confirm before it opens. */
   const [linkToOpen, setLinkToOpen] = useState<string | undefined>(undefined);
@@ -436,13 +442,17 @@ export function Marmotter({
     setSearchQuery('');
     setSearchIndex(0);
   }, [selection?.networkId, selection?.target]);
+  // The scope is deliberately not reset with the query: somebody looking
+  // through one person's messages is usually about to do it in the next
+  // channel too, and having to switch back every time would be the kind of
+  // small friction that stops a feature being used.
 
   const searchMatches = useMemo(
     () =>
       searchOpen && conversation !== undefined
-        ? findMatches(conversation.messages, searchQuery)
+        ? findMatches(conversation.messages, searchQuery, searchScope)
         : [],
-    [searchOpen, conversation, searchQuery],
+    [searchOpen, conversation, searchQuery, searchScope],
   );
   const searchMatchIds = useMemo(
     () => new Set(searchMatches.map((match) => match.id)),
@@ -2039,6 +2049,7 @@ export function Marmotter({
   const asideNode = showSearchResults ? (
     <MessageSearchResults
       query={searchQuery}
+      scope={searchScope}
       matches={searchMatches}
       activeId={activeSearchId}
       onPick={(index) => setSearchIndex(index)}
@@ -2342,6 +2353,11 @@ export function Marmotter({
                   query={searchQuery}
                   onQueryChange={(next) => {
                     setSearchQuery(next);
+                    setSearchIndex(0);
+                  }}
+                  scope={searchScope}
+                  onScopeChange={(next) => {
+                    setSearchScope(next);
                     setSearchIndex(0);
                   }}
                   matchCount={searchMatches.length}
