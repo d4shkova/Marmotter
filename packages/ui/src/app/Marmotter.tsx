@@ -36,6 +36,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
 import { TitleBar, type TitleBarProps } from '../layout/TitleBar.js';
+import { WindowResizeHandles, type WindowEdge } from '../layout/WindowResizeHandles.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
@@ -263,6 +264,15 @@ export interface MarmotterProps {
    * layer. Web passes nothing and there is no bar.
    */
   readonly windowChrome?: Omit<TitleBarProps, 'leading' | 'trailing'>;
+  /**
+   * Begins resizing the window from one of its edges.
+   *
+   * Passed by a build that draws its own window frame: with the OS's
+   * decorations off there is no resize border, so the shell draws grips along
+   * its own edges and hands the drag back here. Web passes nothing and none are
+   * drawn.
+   */
+  readonly resizeWindow?: (edge: WindowEdge) => void;
 }
 
 /** The whole client. */
@@ -279,6 +289,7 @@ export function Marmotter({
   preferences,
   secrets,
   windowChrome,
+  resizeWindow,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -2427,6 +2438,7 @@ export function Marmotter({
 
   return (
     <>
+      {resizeWindow === undefined ? null : <WindowResizeHandles onResize={resizeWindow} />}
       <AppShell
         {...(titleBarNode === undefined ? {} : { titleBar: titleBarNode })}
         sidebarCollapsed={view.sidebarCollapsed}
