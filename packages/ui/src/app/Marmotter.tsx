@@ -102,6 +102,8 @@ import {
   type DccOfferRecord,
   type TargetRef,
   classifyDccReoffer,
+  matchPendingRequest,
+  sameFilename,
   draftFor,
   isTransferInFlight,
   isHighlight,
@@ -1494,7 +1496,8 @@ export function Marmotter({
 
   // XDCC downloads requested but not yet answered, keyed by network + folded bot
   // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
-  // to the oldest outstanding request from that bot.
+  // to the request it names — a bot sends its queue in its own order, so the
+  // oldest outstanding request is often not the one being answered.
   const pendingXdcc = useRef(new Map<string, string[]>());
 
   // What to do when a bot advertises a pack. Held in a ref so the long-lived
@@ -1524,55 +1527,66 @@ export function Marmotter({
   >(() => {});
   handleDccOffer.current = (networkId, networkName, from, target, send) => {
     const key = pendingKey(networkId, from);
-    const queue = pendingXdcc.current.get(key);
-    if (queue !== undefined && queue.length > 0) {
-      const [offerId, ...rest] = queue;
-      if (rest.length > 0) {
-        pendingXdcc.current.set(key, rest);
-      } else {
-        pendingXdcc.current.delete(key);
-      }
-      if (offerId === undefined) {
-        return;
-      }
-      if (send.passive) {
-        useView.getState().setDccOfferStatus(offerId, {
-          status: 'failed',
-          error: "The bot sent a passive transfer, which Marmotter can't fetch.",
-        });
-        return;
-      }
+    const queue = pendingXdcc.current.get(key) ?? [];
+    // Every row this same bot advertised, which is what an answer is matched
+    // against: both the queue and the re-offer rule work on the filename, so
+    // they have to be looking at the same list.
+    const rows = useView
+      .getState()
+      .dccOffers.filter((entry) => pendingKey(entry.networkId, entry.from) === key);
+
+    const refuse = (offerId: string): void => {
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'failed',
+        error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+      });
+    };
+    const fetchInto = (offerId: string): void => {
       fetchIntoFolder(offerId, {
         host: send.host,
         port: send.port,
         filename: send.filename,
         ...(send.size === undefined ? {} : { size: send.size }),
       });
+    };
+
+    const answered = matchPendingRequest(queue, rows, send.filename);
+    if (answered !== undefined) {
+      // Only the request that was answered leaves the queue. Taking the head
+      // instead meant a re-offer of one pack consumed the request for another,
+      // and the answers that followed matched nothing.
+      const rest = queue.filter((id) => id !== answered);
+      if (rest.length > 0) {
+        pendingXdcc.current.set(key, rest);
+      } else {
+        pendingXdcc.current.delete(key);
+      }
+      if (send.passive) {
+        refuse(answered);
+      } else {
+        fetchInto(answered);
+      }
       return;
     }
+
     // Not matched to a request still in its queue. A DCC SEND that matches a
-    // file already on the list is the serving bot re-offering it, not a new
-    // file; the classifier decides whether that means retrying a failed row,
-    // ignoring a duplicate, or listing a genuinely new offer.
-    const foldedFrom = pendingKey(networkId, from);
-    const existing = useView
-      .getState()
-      .dccOffers.find(
-        (entry) =>
-          entry.filename === send.filename &&
-          pendingKey(entry.networkId, entry.from) === foldedFrom,
-      );
+    // file already on the list is the serving bot offering it again — a row
+    // still waiting on a request whose queue entry has already been used, or
+    // one whose last attempt failed — rather than a new file; the classifier
+    // decides whether that means connecting, ignoring a duplicate, or listing
+    // a genuinely new offer.
+    const existing = rows.find((entry) => sameFilename(entry.filename, send.filename));
     switch (classifyDccReoffer(existing, send)) {
       case 'retry':
-        // `existing` is defined on this branch; retry that same row at the
-        // address this re-offer advertises.
+        // `existing` is defined on this branch; connect for that same row at
+        // the address this offer advertises.
         if (existing !== undefined) {
-          fetchIntoFolder(existing.id, {
-            host: send.host,
-            port: send.port,
-            filename: send.filename,
-            ...(send.size === undefined ? {} : { size: send.size }),
-          });
+          fetchInto(existing.id);
+        }
+        return;
+      case 'refuse':
+        if (existing !== undefined) {
+          refuse(existing.id);
         }
         return;
       case 'ignore':

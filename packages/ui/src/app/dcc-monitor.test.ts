@@ -4,6 +4,8 @@ import { shallow } from 'zustand/shallow';
 import {
   DEFAULT_USER_OPTIONS,
   classifyDccReoffer,
+  matchPendingRequest,
+  sameFilename,
   selectViewWithoutOffers,
   useView,
 } from './view-store.js';
@@ -236,15 +238,65 @@ describe('classifying a serving bot re-offer', () => {
     expect(classifyDccReoffer({ status: 'failed' }, active)).toBe('retry');
   });
 
-  it('does not retry a failed row from a passive re-offer it cannot fetch', () => {
-    expect(classifyDccReoffer({ status: 'failed' }, { passive: true })).toBe('ignore');
+  it('connects for a row still waiting on the request this offer answers', () => {
+    expect(classifyDccReoffer({ status: 'requested' }, active)).toBe('retry');
   });
 
-  it('ignores a re-offer of a row that is mid-transfer, saved, or still waiting', () => {
+  it('refuses, rather than ignores, a passive offer of a row that is waiting', () => {
+    expect(classifyDccReoffer({ status: 'failed' }, { passive: true })).toBe('refuse');
+    expect(classifyDccReoffer({ status: 'requested' }, { passive: true })).toBe('refuse');
+  });
+
+  it('ignores a re-offer of a row that is mid-transfer, saved, or untouched', () => {
     expect(classifyDccReoffer({ status: 'downloading' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
-    expect(classifyDccReoffer({ status: 'requested' }, active)).toBe('ignore');
+  });
+});
+
+describe('matching an answer to the request it belongs to', () => {
+  const row = (id: string, filename: string): { id: string; filename: string } => ({
+    id,
+    filename,
+  });
+  const rows = [
+    row('a', 'American.Dad.S08E09.1080p.mkv'),
+    row('b', 'American.Dad.S08E10.1080p.mkv'),
+    row('c', 'American.Dad.S08E11.1080p.mkv'),
+  ];
+
+  it('answers the request the file names, not the one at the front', () => {
+    expect(matchPendingRequest(['a', 'b', 'c'], rows, 'American.Dad.S08E11.1080p.mkv')).toBe('c');
+  });
+
+  it('matches through a name the bot rewrote', () => {
+    expect(matchPendingRequest(['a', 'b'], rows, 'american_dad_s08e10_1080p.mkv')).toBe('b');
+  });
+
+  it('leaves a row outside the queue to the re-offer rule', () => {
+    expect(matchPendingRequest(['a'], rows, 'American.Dad.S08E11.1080p.mkv')).toBeUndefined();
+  });
+
+  it('falls back to the front of the queue for a name it cannot place', () => {
+    expect(matchPendingRequest(['b', 'c'], rows, 'something.else.entirely.mkv')).toBe('b');
+  });
+
+  it('answers nothing when there is no queue', () => {
+    expect(matchPendingRequest([], rows, 'American.Dad.S08E09.1080p.mkv')).toBeUndefined();
+  });
+});
+
+describe('comparing advertised names', () => {
+  it('matches a name through case, spaces and separators', () => {
+    expect(sameFilename('A File Name.mkv', 'a_file_name.mkv')).toBe(true);
+  });
+
+  it('keeps two different episodes apart', () => {
+    expect(sameFilename('show.s01e01.mkv', 'show.s01e02.mkv')).toBe(false);
+  });
+
+  it('does not match two names with no letters or digits between them', () => {
+    expect(sameFilename('...', '___')).toBe(false);
   });
 });
 

@@ -86,20 +86,77 @@ export function isTransferInFlight(status: DccStatus): boolean {
 }
 
 /**
+ * Whether two advertised names are the same file.
+ *
+ * A serving bot does not always send back the name it advertised: spaces become
+ * underscores, dots become spaces, case wanders. Comparing only the letters and
+ * digits matches the file through all of that, and is still strict enough that
+ * two different episodes never collide.
+ */
+export function sameFilename(a: string, b: string): boolean {
+  if (a === b) {
+    return true;
+  }
+  const reduce = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const left = reduce(a);
+  return left !== '' && left === reduce(b);
+}
+
+/**
+ * Which queued XDCC request a `DCC SEND` is answering, if any.
+ *
+ * A bot sends a queue in whatever order suits it, re-offers a pack every few
+ * seconds until somebody connects, and may answer a request minutes after the
+ * next one was made. Taking the front of the queue for each offer therefore
+ * went wrong in three ways at once: the wrong row downloaded, a re-offer ate
+ * a request that had not been answered yet, and once the queue had been eaten
+ * the remaining answers matched nothing at all and were dropped in silence —
+ * a bot announcing it was ready to send while nothing ever connected.
+ *
+ * So the filename decides. `queue` is the ids of this bot's outstanding
+ * requests, `rows` the monitor's rows for that same bot, and the answer is the
+ * queued row this offer names. Falling back to the head of the queue is kept
+ * for a name that matches nothing on the list — a bot that renamed the file
+ * beyond recognition — but not for one that matches a row outside the queue,
+ * where the row itself is the better answer.
+ */
+export function matchPendingRequest(
+  queue: readonly string[],
+  rows: readonly Pick<DccOfferRecord, 'id' | 'filename'>[],
+  filename: string,
+): string | undefined {
+  const named = queue.find((id) =>
+    rows.some((row) => row.id === id && sameFilename(row.filename, filename)),
+  );
+  if (named !== undefined) {
+    return named;
+  }
+  if (rows.some((row) => sameFilename(row.filename, filename))) {
+    return undefined;
+  }
+  return queue[0];
+}
+
+/**
  * What to do with a `DCC SEND` that did not answer a request still waiting in
  * the queue but does match a file already on the list.
  *
- * `retry` — the row's last attempt failed and this is the serving bot's own
- * re-offer, which is a fresh chance: connect again, at the address this offer
+ * `retry` — the row is waiting to be sent or its last attempt failed, and this
+ * is the serving bot's own offer of it: connect, at the address this offer
  * carries. Serving bots re-send every few seconds precisely because the first
- * connection often races their listening socket and is refused.
+ * connection often races their listening socket and is refused, and a row left
+ * at `requested` is exactly the row a late answer belongs to.
  *
- * `ignore` — a duplicate of a row that is mid-transfer, already saved, or still
+ * `refuse` — the same, but the offer is a passive one the monitor cannot fetch:
+ * the row is failed with a reason rather than left waiting on a transfer that
+ * will never start.
+ *
+ * `ignore` — a duplicate of a row that is mid-transfer, already saved, or
  * sitting there waiting for the user to start it; nothing to do.
  *
  * `record` — no such row: a genuinely new, unsolicited offer to list.
  */
-export type DccReofferAction = 'retry' | 'ignore' | 'record';
+export type DccReofferAction = 'retry' | 'refuse' | 'ignore' | 'record';
 
 /**
  * Decides how an incoming `DCC SEND` relates to the file monitor's rows.
@@ -116,8 +173,8 @@ export function classifyDccReoffer(
   if (existing === undefined) {
     return 'record';
   }
-  if (existing.status === 'failed' && !send.passive) {
-    return 'retry';
+  if (existing.status === 'failed' || existing.status === 'requested') {
+    return send.passive ? 'refuse' : 'retry';
   }
   return 'ignore';
 }
