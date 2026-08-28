@@ -26,9 +26,16 @@ export interface LoggingSettingsProps {
   readonly onChange: (changes: Partial<LoggingPolicy>) => void;
   /** Where the logs are and what they cost, once the store has been asked. */
   readonly location: { readonly path: string; readonly bytes: number } | undefined;
-  readonly onChooseFolder: () => void;
-  readonly onOpenFolder: () => void;
-  readonly onExport: () => void;
+  /**
+   * Moves where new logs are written. Absent where the platform has no folder
+   * picker — on Android an app writes to its own storage and nowhere else, so
+   * there is no choice to offer and the control is not drawn.
+   */
+  readonly onChooseFolder?: () => void;
+  /** Shows the folder. Absent where the platform has no file manager for it. */
+  readonly onOpenFolder?: () => void;
+  /** Absent where the platform has no save dialog to choose a destination in. */
+  readonly onExport?: () => void;
   /** Deletes everything now. Confirmed here rather than acted on immediately. */
   readonly onClear: () => void;
   /** Applies the retention rule now, rather than at the next hourly sweep. */
@@ -163,16 +170,24 @@ export function LoggingSettings({
                 ? (policy.path ?? 'The app data folder')
                 : `${location.path} — ${formatBytes(location.bytes)}`
             }
-            trailing={
-              <div className="flex items-center gap-1.5">
-                <Button size="small" onClick={onChooseFolder}>
-                  Change
-                </Button>
-                <Button size="small" onClick={onOpenFolder}>
-                  Open
-                </Button>
-              </div>
-            }
+            {...(onChooseFolder === undefined && onOpenFolder === undefined
+              ? {}
+              : {
+                  trailing: (
+                    <div className="flex items-center gap-1.5">
+                      {onChooseFolder === undefined ? null : (
+                        <Button size="small" onClick={onChooseFolder}>
+                          Change
+                        </Button>
+                      )}
+                      {onOpenFolder === undefined ? null : (
+                        <Button size="small" onClick={onOpenFolder}>
+                          Open
+                        </Button>
+                      )}
+                    </div>
+                  ),
+                })}
           />
 
           <ListRow
@@ -185,15 +200,17 @@ export function LoggingSettings({
             }
           />
 
-          <ListRow
-            title="Export"
-            subtitle="Write the logs out as one file you keep."
-            trailing={
-              <Button size="small" onClick={onExport}>
-                Export
-              </Button>
-            }
-          />
+          {onExport === undefined ? null : (
+            <ListRow
+              title="Export"
+              subtitle="Write the logs out as one file you keep."
+              trailing={
+                <Button size="small" onClick={onExport}>
+                  Export
+                </Button>
+              }
+            />
+          )}
 
           {forever ? null : (
             <ListRow

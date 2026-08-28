@@ -872,7 +872,7 @@ export function Marmotter({
   };
 
   const openLogFolder = (): void => {
-    void logs?.reveal().catch((error: unknown) => logError(String(error)));
+    void logs?.reveal?.().catch((error: unknown) => logError(String(error)));
   };
 
   const exportLogs = (): void => {
@@ -2237,9 +2237,14 @@ export function Marmotter({
                   policy: view.logging,
                   onChange: view.updateLogging,
                   location: logLocation,
-                  onChooseFolder: changeLogFolder,
-                  onOpenFolder: openLogFolder,
-                  onExport: exportLogs,
+                  // Each of these is offered only where the platform can
+                  // actually do it. Android has no folder picker, no save
+                  // dialog, and no file manager that will open an app's own
+                  // storage; a button that quietly did nothing would be worse
+                  // than no button.
+                  ...(chooseLogFolder === undefined ? {} : { onChooseFolder: changeLogFolder }),
+                  ...(logs.reveal === undefined ? {} : { onOpenFolder: openLogFolder }),
+                  ...(chooseExportFile === undefined ? {} : { onExport: exportLogs }),
                   onClear: clearLogs,
                   onPurgeNow: purgeLogsNow,
                   onSearch: () => view.setPane('log-search'),

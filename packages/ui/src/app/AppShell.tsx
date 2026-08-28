@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { cn } from '../lib/cn.js';
+import { useKeyboardInset } from '../lib/keyboard.js';
 
 export type Breakpoint = 'mobile' | 'tablet' | 'desktop';
 
@@ -78,20 +79,39 @@ export function AppShell({
   className,
 }: AppShellProps): ReactNode {
   const breakpoint = useBreakpoint();
-  // With a title bar above them the columns fill what is left rather than the
-  // whole viewport, which is the only thing its presence changes about them.
-  const frame = titleBar === undefined ? 'h-dvh' : 'min-h-0 flex-1';
+  const keyboard = useKeyboardInset();
+  // The frame owns the viewport height now, so the columns fill what is left of
+  // it — under a title bar where there is one, and under nothing where there
+  // is not.
+  const frame = 'min-h-0 flex-1';
+
+  /**
+   * The edges the platform has claimed, kept off every column at once.
+   *
+   * Top and sides here; the bottom belongs to whatever is actually against it,
+   * which is the tab bar on mobile and a sheet when one is open, and both pad
+   * themselves. Doing it on the frame rather than per component is what keeps
+   * the slide-over channel list and the bottom sheet inside the safe area
+   * without either of them knowing a notch exists.
+   *
+   * `paddingBottom` is the keyboard, not a safe-area inset: where the platform
+   * draws the keyboard over the page instead of shrinking it, this is what
+   * lifts the composer back above it. Zero everywhere else. See
+   * `lib/keyboard.ts`.
+   */
+  const insets = 'pt-[var(--safe-top)] pl-[var(--safe-left)] pr-[var(--safe-right)]';
+  const style = keyboard === 0 ? undefined : { paddingBottom: `${keyboard}px` };
 
   /** Wraps the columns in the window frame, once the breakpoint has built them. */
-  const framed = (columns: ReactNode): ReactNode =>
-    titleBar === undefined ? (
-      columns
-    ) : (
-      <div className="flex h-dvh flex-col overflow-hidden bg-[var(--bg-base)]">
-        {titleBar}
-        {columns}
-      </div>
-    );
+  const framed = (columns: ReactNode): ReactNode => (
+    <div
+      className={cn('flex h-dvh flex-col overflow-hidden bg-[var(--bg-base)]', insets)}
+      style={style}
+    >
+      {titleBar}
+      {columns}
+    </div>
+  );
 
   if (breakpoint === 'mobile') {
     return framed(

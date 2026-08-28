@@ -1,0 +1,10 @@
+{
+  "default": {
+    "identifier": "default",
+    "description": "Baseline capability set for the Marmotter Android activity.",
+    "local": true,
+    "windows": ["main"],
+    "permissions": ["core:default", "notification:default", "sql:default"],
+    "platforms": ["android"]
+  }
+}

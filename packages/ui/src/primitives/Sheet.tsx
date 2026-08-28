@@ -79,7 +79,7 @@ export function Sheet({
           // still appears, it just does not slide.
           'motion-safe:animate-none',
           bottom
-            ? 'rounded-t-sheet pb-[env(safe-area-inset-bottom)]'
+            ? 'rounded-t-sheet pb-[var(--safe-bottom)]'
             : cn('rounded-sheet', size === 'wide' ? 'max-w-2xl' : 'max-w-md'),
           className,
         )}

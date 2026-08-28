@@ -16,6 +16,7 @@
 export * from './themes.js';
 export * from './lib/cn.js';
 export * from './lib/focus.js';
+export * from './lib/keyboard.js';
 export * from './lib/long-press.js';
 export * from './lib/nick-color.js';
 

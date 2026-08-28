@@ -127,8 +127,8 @@ export interface SqliteLogStoreOptions {
   readonly path: string;
   /** Writes the export file. Supplied so this module still does no file I/O. */
   readonly writeFile: (path: string, text: string) => Promise<void>;
-  /** Shows the folder in the file manager. */
-  readonly reveal: (path: string) => Promise<void>;
+  /** Shows the folder. Absent on a platform with no file manager to show it. */
+  readonly reveal?: (path: string) => Promise<void>;
   /** Formats a record for the export file, so an export reads like a log. */
   readonly formatLine: (record: LogRecord) => string;
 }
@@ -243,9 +243,15 @@ export function createSqliteLogStore(options: SqliteLogStoreOptions): LogStore {
       return { path: options.path, bytes: rows[0]?.bytes ?? 0 };
     },
 
-    async reveal() {
-      await options.reveal(options.path);
-    },
+    // Offered only where the platform can actually open the folder, so the
+    // settings screen can tell the difference and hide the button.
+    ...(options.reveal === undefined
+      ? {}
+      : {
+          async reveal() {
+            await options.reveal?.(options.path);
+          },
+        }),
 
     async clear() {
       const database = await db();

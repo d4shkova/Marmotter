@@ -41,7 +41,7 @@ export function TabBar<T extends string>({
       className={cn(
         'sticky bottom-0 z-30 flex items-stretch',
         'bg-[var(--bg-elevated)]/80 [backdrop-filter:var(--blur-vibrancy)]',
-        'border-t border-[var(--separator)] pb-[env(safe-area-inset-bottom)]',
+        'border-t border-[var(--separator)] pb-[var(--safe-bottom)]',
         className,
       )}
     >

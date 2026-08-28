@@ -63,10 +63,23 @@ const files = {
   },
 };
 
+/** The same file operations with the folder-opening one taken off. */
+const { reveal: _reveal, ...withoutReveal } = files;
+
 export interface LogStoreOptions {
   readonly policy: LoggingPolicy;
   /** Maps a network's display name back to its ID, for plaintext search hits. */
   readonly networkIdFor: (networkName: string) => string;
+  /**
+   * Whether this platform can show the log folder in a file manager.
+   *
+   * True on desktop. False on Android, where the logs sit in the app's own
+   * storage — not a folder any file manager will open, and not a `log_reveal`
+   * command that shell registers. The store leaves `reveal` off when this is
+   * false and the settings screen hides the button rather than offering one
+   * that does nothing.
+   */
+  readonly revealFolder?: boolean;
 }
 
 /**
@@ -83,11 +96,15 @@ export async function defaultLogFolder(): Promise<string> {
 /** Builds the store the policy asks for. */
 export async function createLogStore(options: LogStoreOptions): Promise<LogStore> {
   const root = options.policy.path ?? (await defaultLogFolder());
+  const revealable = options.revealFolder ?? true;
 
   if (options.policy.format === 'plaintext') {
     return createPlaintextLogStore({
       root,
-      fs: files,
+      // The key is left off rather than set to undefined: with
+      // `exactOptionalPropertyTypes` those are not the same thing, and only the
+      // absent one reads as "this platform cannot do that".
+      fs: revealable ? files : withoutReveal,
       networkIdFor: options.networkIdFor,
     });
   }
@@ -97,10 +114,14 @@ export async function createLogStore(options: LogStoreOptions): Promise<LogStore
     // which is where a database with no folder chosen belongs.
     path: options.policy.path === undefined ? 'marmotter-logs.db' : `${root}/marmotter-logs.db`,
     writeFile: files.writeAbsolute,
-    reveal: async (path) => {
-      const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-      await files.reveal(cut <= 0 ? await defaultLogFolder() : path.slice(0, cut));
-    },
+    ...(revealable
+      ? {
+          reveal: async (path: string) => {
+            const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+            await files.reveal(cut <= 0 ? await defaultLogFolder() : path.slice(0, cut));
+          },
+        }
+      : {}),
     formatLine,
   });
 }

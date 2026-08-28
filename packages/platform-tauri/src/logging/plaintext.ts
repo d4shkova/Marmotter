@@ -30,7 +30,8 @@ export interface LogFileSystem {
   list(root: string): Promise<readonly LogFileInfo[]>;
   write(root: string, name: string, text: string): Promise<void>;
   remove(root: string, name: string): Promise<void>;
-  reveal(root: string): Promise<void>;
+  /** Shows the folder. Absent on a platform with no file manager to show it. */
+  reveal?(root: string): Promise<void>;
   /** Writes an export to an absolute path outside the log folder. */
   writeAbsolute(path: string, text: string): Promise<void>;
 }
@@ -180,9 +181,15 @@ export function createPlaintextLogStore(options: PlaintextLogStoreOptions): LogS
       return { path: root, bytes: files.reduce((total, file) => total + file.bytes, 0) };
     },
 
-    async reveal() {
-      await fs.reveal(root);
-    },
+    // Offered only where the platform can actually open the folder, so the
+    // settings screen can tell the difference and hide the button.
+    ...(fs.reveal === undefined
+      ? {}
+      : {
+          async reveal() {
+            await fs.reveal?.(root);
+          },
+        }),
 
     async clear() {
       const files = await fs.list(root);

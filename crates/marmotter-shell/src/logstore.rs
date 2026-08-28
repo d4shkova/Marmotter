@@ -5,7 +5,13 @@
 //! looks like, which file a message belongs in, or when something is old enough
 //! to delete — all of that is in `packages/client/src/logging`, in TypeScript,
 //! where it is tested without a disk. What is here is open, append, read, list,
-//! write, delete, and show a folder.
+//! write, and delete.
+//!
+//! Showing the folder is deliberately not here. It is the one file operation
+//! that is not the same job on both platforms: a desktop hands the path to a
+//! file manager, and Android has none that will open an app's own storage, so
+//! that shell registers no such command and the settings screen draws no
+//! button. See `apps/desktop/src-tauri/src/opener.rs`.
 //!
 //! Every path is resolved inside the log folder the caller was given by
 //! `log_default_dir`, or inside a folder the user chose themselves. A path that
@@ -112,14 +118,6 @@ pub fn log_delete(root: String, name: String) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(describe("delete the log file", &error)),
     }
-}
-
-/// Shows the log folder in the platform's file manager.
-#[tauri::command]
-pub fn log_reveal(root: String) -> Result<(), String> {
-    let path = PathBuf::from(&root);
-    fs::create_dir_all(&path).map_err(|error| describe("create the log folder", &error))?;
-    opener::open(&path).map_err(|error| format!("Could not open the log folder: {error}"))
 }
 
 /// Walks a folder, recording every file relative to the log root.

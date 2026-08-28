@@ -293,8 +293,19 @@ describe('export, location and clearing', () => {
 
   it('opens the folder rather than a file inside it', async () => {
     const fs = memoryFs();
-    await store(fs).reveal();
+    await store(fs).reveal?.();
     expect(fs.revealed).toEqual(['/logs']);
+  });
+
+  /**
+   * Android has no file manager that will open an app's own storage, so its
+   * shell supplies no `reveal` and the settings screen hides the button. The
+   * store has to leave the method off for that to be visible — a method that
+   * resolved without doing anything would draw a button that lies.
+   */
+  it('offers no way to open the folder where the platform cannot', () => {
+    const { reveal: _reveal, ...withoutReveal } = memoryFs();
+    expect(store(withoutReveal).reveal).toBeUndefined();
   });
 
   it('clears everything and says how much went', async () => {
