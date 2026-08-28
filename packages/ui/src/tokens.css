@@ -360,6 +360,405 @@
   --speaker-8: #9fb4d9;
 }
 
+/**
+ * Menthe — mint on near-black, with the one warning colour it can spare.
+ *
+ * The accent family is green here, which puts it further from red than any
+ * other theme manages: alarm is the hot pink at the end of the given palette,
+ * a colour nothing else in the interface uses, so red-as-trouble survives a
+ * theme with no red in its furniture at all.
+ */
+[data-theme='menthe'] {
+  /* The mint ramp. 050 is near-white, 900 is near-black. */
+  --blue-050: #eafaf4;
+  --blue-100: #c9f2e4;
+  --blue-200: #9fe8d1;
+  --blue-300: #5bd3af;
+  --blue-400: #3ecea4;
+  --blue-500: #26ab86;
+  --blue-600: #1f9375;
+  --blue-700: #1c886b;
+  --blue-800: #12604c;
+  --blue-900: #0b3b2f;
+
+  /* Green-biased neutrals, from the darkest colour in the palette. */
+  --ink-000: #041c1e;
+  --ink-900: #0a282a;
+  --ink-800: #113437;
+  --ink-700: #1a4245;
+  --ink-600: #245053;
+
+  /* Alarm, and the only warm colour in the theme. */
+  --red-400: #ff7aa8;
+  --red-500: #f92c7b;
+  --red-900: #360621;
+
+  /* Text, fills and edges, as the alias layer mixes them. */
+  --label-strong: #ffffff;
+  --label-ink: #d7f2e9;
+  --fill-ink: #6fae9e;
+  --separator-ink: #35635c;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #04231d;
+  --scrim-ink: #041c1e;
+
+  /* Sidebar rows: a channel and a person, told apart at a glance. */
+  --row-channel: #5bd3af;
+  --row-person: #a9c8ff;
+
+  /* The eight voices. Mint runs out of light steps quickly, so three of them
+     come from the cyan and periwinkle that sit either side of it. */
+  --speaker-1: #aef5dd;
+  --speaker-2: #5bd3af;
+  --speaker-3: #3ecea4;
+  --speaker-4: #7fe2f5;
+  --speaker-5: #4fd1e8;
+  --speaker-6: #ff9ec4;
+  --speaker-7: #c3ccff;
+  --speaker-8: #d9c48f;
+}
+
+/**
+ * Lagune — pale aqua over deep water.
+ *
+ * The quietest of the seven: one narrow family from a near-white aqua down to
+ * a green so dark it reads as black, with nothing in it that raises its voice
+ * except the alarm.
+ */
+[data-theme='lagune'] {
+  /* The aqua ramp, near-white down to the water it is named for. */
+  --blue-050: #eafffb;
+  --blue-100: #aefcea;
+  --blue-200: #9dead9;
+  --blue-300: #7ecbbb;
+  --blue-400: #6cb8a8;
+  --blue-500: #57a494;
+  --blue-600: #30907f;
+  --blue-700: #267769;
+  --blue-800: #1c5e52;
+  --blue-900: #0e3b33;
+
+  /* Surfaces, from the deepest green in the palette upwards. */
+  --ink-000: #001b16;
+  --ink-900: #04241f;
+  --ink-800: #0a2f28;
+  --ink-700: #113b33;
+  --ink-600: #18473e;
+
+  /* Alarm keeps its own red: nothing else here is warm. */
+  --red-400: #ff8a80;
+  --red-500: #ff5347;
+  --red-900: #3a0f0c;
+
+  /* Text, fills and edges. */
+  --label-strong: #ffffff;
+  --label-ink: #d6f2ea;
+  --fill-ink: #6ea79a;
+  --separator-ink: #356257;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #001b16;
+  --scrim-ink: #001b16;
+
+  /* Sidebar rows. */
+  --row-channel: #aefcea;
+  --row-person: #a9c6ff;
+
+  /* Eight voices out of a narrow family, so the last three lean on the
+     neighbouring blue and the warm end for separation. */
+  --speaker-1: #eafffb;
+  --speaker-2: #aefcea;
+  --speaker-3: #7ecbbb;
+  --speaker-4: #57a494;
+  --speaker-5: #7fd6f5;
+  --speaker-6: #a9c6ff;
+  --speaker-7: #e0c9a0;
+  --speaker-8: #d5b3e0;
+}
+
+/**
+ * Néon — a navy city at night.
+ *
+ * Deep blue surfaces with a cyan and a violet lit over them, and a magenta for
+ * alarm. The accent is the one step of the ramp that stays legible on a
+ * midnight background without becoming a light itself.
+ */
+[data-theme='neon'] {
+  /* The ramp, from a white-blue through cyan down to the navy underneath. */
+  --blue-050: #f0f8ff;
+  --blue-100: #d8eeff;
+  --blue-200: #a9e6f7;
+  --blue-300: #8fe2f2;
+  --blue-400: #21cae8;
+  --blue-500: #3d92e0;
+  --blue-600: #3a7cc4;
+  --blue-700: #2f6ab0;
+  --blue-800: #1d3a72;
+  --blue-900: #101f4a;
+
+  /* Surfaces. The base is the darkest navy in the palette. */
+  --ink-000: #070b2c;
+  --ink-900: #0d1338;
+  --ink-800: #141d4c;
+  --ink-700: #1c285f;
+  --ink-600: #243272;
+
+  /* Alarm, in the magenta at the warm end of the given colours. */
+  --red-400: #ff85ac;
+  --red-500: #ff4d88;
+  --red-900: #3d0a20;
+
+  /* Text, fills and edges. */
+  --label-strong: #ffffff;
+  --label-ink: #d5e2ff;
+  --fill-ink: #6f80c0;
+  --separator-ink: #3a4a8c;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #070b2c;
+  --scrim-ink: #070b2c;
+
+  /* Sidebar rows: a cyan channel, a violet person. */
+  --row-channel: #21cae8;
+  --row-person: #b79cff;
+
+  /* Eight voices across the whole width of the palette — cyan, blue, violet,
+     magenta — which is what a theme built on two families can afford. */
+  --speaker-1: #a9dcf7;
+  --speaker-2: #21cae8;
+  --speaker-3: #3d92e0;
+  --speaker-4: #b79cff;
+  --speaker-5: #e08ce0;
+  --speaker-6: #7fe6c8;
+  --speaker-7: #ffc98a;
+  --speaker-8: #d8eeff;
+}
+
+/**
+ * Sapin — near-black with a fir green in it.
+ *
+ * The darkest surfaces of any theme: three steps of almost-black, with a teal
+ * accent and a coral doing the work that colour has to do. Red is red here, so
+ * the reserved-hue rule holds without qualification.
+ */
+[data-theme='sapin'] {
+  /* The teal ramp. */
+  --blue-050: #def9f1;
+  --blue-100: #b7ece2;
+  --blue-200: #8fdcd4;
+  --blue-300: #5cc6c6;
+  --blue-400: #40a9ae;
+  --blue-500: #319197;
+  --blue-600: #2b8180;
+  --blue-700: #24706e;
+  --blue-800: #164645;
+  --blue-900: #0e2e2d;
+
+  /* Neutrals, near enough to black to be black. */
+  --ink-000: #070707;
+  --ink-900: #0d100f;
+  --ink-800: #121614;
+  --ink-700: #1b201e;
+  --ink-600: #262c29;
+
+  /* Alarm, and the only pure red in the given palette. */
+  --red-400: #ff6f6d;
+  --red-500: #e13534;
+  --red-900: #3a0f0c;
+
+  /* Text, fills and edges. */
+  --label-strong: #ffffff;
+  --label-ink: #dfe8e5;
+  --fill-ink: #7e918c;
+  --separator-ink: #3d4a47;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #070707;
+  --scrim-ink: #000000;
+
+  /* Sidebar rows. */
+  --row-channel: #7ab2ab;
+  --row-person: #def9f1;
+
+  /* Eight voices: the teals, then the coral, green and violet that keep the
+     last four from reading as one another. */
+  --speaker-1: #def9f1;
+  --speaker-2: #7ab2ab;
+  --speaker-3: #5cc6c6;
+  --speaker-4: #40a9ae;
+  --speaker-5: #ee8365;
+  --speaker-6: #4fc98a;
+  --speaker-7: #c9b3e8;
+  --speaker-8: #a8bcd8;
+}
+
+/**
+ * Crépuscule — ice over twilight water.
+ *
+ * Teal surfaces with the palest blue in the palette on top of them, and the
+ * plum end of the given colours spent on the voices rather than the furniture,
+ * where it would have muddied the teal.
+ */
+[data-theme='crepuscule'] {
+  /* The ramp, ice down to deep water. */
+  --blue-050: #eafafb;
+  --blue-100: #beeff2;
+  --blue-200: #a5e4ea;
+  --blue-300: #7ad2dc;
+  --blue-400: #55bcc8;
+  --blue-500: #3aa3b0;
+  --blue-600: #2f8794;
+  --blue-700: #2f7e8b;
+  --blue-800: #0f4a52;
+  --blue-900: #0a3238;
+
+  /* Surfaces, from the darkest teal upwards. */
+  --ink-000: #002527;
+  --ink-900: #0a2f33;
+  --ink-800: #143a40;
+  --ink-700: #1e454d;
+  --ink-600: #28525a;
+
+  /* Alarm. The dark plum is the muted end, never the alert itself. */
+  --red-400: #ff8f8a;
+  --red-500: #ff5a52;
+  --red-900: #30222d;
+
+  /* Text, fills and edges. */
+  --label-strong: #ffffff;
+  --label-ink: #d5eef0;
+  --fill-ink: #6b9aa0;
+  --separator-ink: #37676e;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #002527;
+  --scrim-ink: #002527;
+
+  /* Sidebar rows. */
+  --row-channel: #beeff2;
+  --row-person: #c0b6e8;
+
+  /* Eight voices: the teals, then the plum and rose the palette keeps in
+     reserve. */
+  --speaker-1: #beeff2;
+  --speaker-2: #63c3cd;
+  --speaker-3: #e0a8e8;
+  --speaker-4: #5fd3a8;
+  --speaker-5: #c0b6e8;
+  --speaker-6: #f0a090;
+  --speaker-7: #a8c8f0;
+  --speaker-8: #e0cba0;
+}
+
+/**
+ * Orage — a sky blue over storm navy.
+ *
+ * The blues run bright and the deep reds in the given palette are too dark to
+ * carry an alert on a background this dark, so they sit under it: alarm is a
+ * hotter red mixed to be seen, and the peach at the top of the palette is a
+ * voice rather than a warning.
+ */
+[data-theme='orage'] {
+  /* The ramp, from a near-white sky down to the navy under the storm. */
+  --blue-050: #eaf6fd;
+  --blue-100: #cfe9f8;
+  --blue-200: #a5d5ef;
+  --blue-300: #6bb9e0;
+  --blue-400: #349ed8;
+  --blue-500: #248bc7;
+  --blue-600: #2278b8;
+  --blue-700: #1f6ea8;
+  --blue-800: #0f3d63;
+  --blue-900: #0a2448;
+
+  /* Surfaces, from the darkest indigo in the palette. */
+  --ink-000: #040625;
+  --ink-900: #0a1030;
+  --ink-800: #101a3f;
+  --ink-700: #18244f;
+  --ink-600: #22305f;
+
+  /* Alarm. The palette's own deep red is the muted step behind it. */
+  --red-400: #ff8f7a;
+  --red-500: #f2503a;
+  --red-900: #4d070c;
+
+  /* Text, fills and edges. */
+  --label-strong: #ffffff;
+  --label-ink: #d6e6f8;
+  --fill-ink: #6e86b0;
+  --separator-ink: #31456e;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #040625;
+
+  /* Sidebar rows: a sky channel, a peach person. */
+  --row-channel: #6bb9e0;
+  --row-person: #ffd6cc;
+
+  /* Eight voices, blue through peach. */
+  --speaker-1: #cfe9f8;
+  --speaker-2: #6bb9e0;
+  --speaker-3: #349ed8;
+  --speaker-4: #ffd6cc;
+  --speaker-5: #ee9f8a;
+  --speaker-6: #a9b6ff;
+  --speaker-7: #7fe0d0;
+  --speaker-8: #d9c08a;
+}
+
+/**
+ * Brume — a light theme in blues that have faded.
+ *
+ * The only light one of the seven, which makes it the one that leans hardest
+ * on the mixed translucent tokens: the scrim, the fills and three of the four
+ * label steps all invert from one primitive each.
+ */
+[data-theme='brume'] {
+  /* The ramp, near-white down to the navy the text is written in. */
+  --blue-050: #eef6fd;
+  --blue-100: #d6e8fb;
+  --blue-200: #bcd9f9;
+  --blue-300: #9fc6f6;
+  --blue-400: #537dc5;
+  --blue-500: #3e62a9;
+  --blue-600: #2f4c85;
+  --blue-700: #243c6b;
+  --blue-800: #1a2c50;
+  --blue-900: #011435;
+
+  /* Surfaces, from the page up. Each step is a shade deeper than the last. */
+  --ink-000: #f7fbff;
+  --ink-900: #eef6fd;
+  --ink-800: #d6e8fb;
+  --ink-700: #bcd9f9;
+  --ink-600: #9fc6f6;
+
+  /* Alarm, dark enough to be read on a pale page. */
+  --red-400: #c22232;
+  --red-500: #a3101f;
+  --red-900: #ffe0e2;
+
+  /* Text, fills and edges, inverted from the dark themes' one value each. */
+  --label-strong: #011435;
+  --label-ink: #011435;
+  --fill-ink: #7798c8;
+  --separator-ink: #8cb0e0;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #ffffff;
+  --scrim-ink: #011435;
+
+  /* Sidebar rows. */
+  --row-channel: #2f4c85;
+  --row-person: #7a3a93;
+
+  /* Dark enough to read on a near-white page, and spread wide enough that
+     eight people are eight colours. */
+  --speaker-1: #1f4d99;
+  --speaker-2: #3e62a9;
+  --speaker-3: #7a3a93;
+  --speaker-4: #1f6b6b;
+  --speaker-5: #8a4b1f;
+  --speaker-6: #5c3f8a;
+  --speaker-7: #8a2f5c;
+  --speaker-8: #4a5560;
+}
 /* ===================================================== 2. semantic aliases */
 
 /**
