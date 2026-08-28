@@ -36,6 +36,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { TabBar } from '../layout/TabBar.js';
 import { NavBar } from '../layout/NavBar.js';
 import { TitleBar, type TitleBarProps } from '../layout/TitleBar.js';
+import { WindowResizeHandles, type WindowEdge } from '../layout/WindowResizeHandles.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
@@ -62,7 +63,12 @@ import { readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
-import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSearch.js';
+import {
+  MessageSearchBar,
+  MessageSearchResults,
+  findMatches,
+  type SearchScope,
+} from './MessageSearch.js';
 import { RawLog } from './RawLog.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
@@ -102,6 +108,8 @@ import {
   type DccOfferRecord,
   type TargetRef,
   classifyDccReoffer,
+  matchPendingRequest,
+  sameFilename,
   draftFor,
   isTransferInFlight,
   isHighlight,
@@ -256,6 +264,15 @@ export interface MarmotterProps {
    * layer. Web passes nothing and there is no bar.
    */
   readonly windowChrome?: Omit<TitleBarProps, 'leading' | 'trailing'>;
+  /**
+   * Begins resizing the window from one of its edges.
+   *
+   * Passed by a build that draws its own window frame: with the OS's
+   * decorations off there is no resize border, so the shell draws grips along
+   * its own edges and hands the drag back here. Web passes nothing and none are
+   * drawn.
+   */
+  readonly resizeWindow?: (edge: WindowEdge) => void;
 }
 
 /** The whole client. */
@@ -272,6 +289,7 @@ export function Marmotter({
   preferences,
   secrets,
   windowChrome,
+  resizeWindow,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -358,6 +376,7 @@ export function Marmotter({
   /** In-conversation search: whether it is open, what for, and where in the hits. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<SearchScope>('text');
   const [searchIndex, setSearchIndex] = useState(0);
   /** A link from a message waiting for the user to confirm before it opens. */
   const [linkToOpen, setLinkToOpen] = useState<string | undefined>(undefined);
@@ -434,13 +453,17 @@ export function Marmotter({
     setSearchQuery('');
     setSearchIndex(0);
   }, [selection?.networkId, selection?.target]);
+  // The scope is deliberately not reset with the query: somebody looking
+  // through one person's messages is usually about to do it in the next
+  // channel too, and having to switch back every time would be the kind of
+  // small friction that stops a feature being used.
 
   const searchMatches = useMemo(
     () =>
       searchOpen && conversation !== undefined
-        ? findMatches(conversation.messages, searchQuery)
+        ? findMatches(conversation.messages, searchQuery, searchScope)
         : [],
-    [searchOpen, conversation, searchQuery],
+    [searchOpen, conversation, searchQuery, searchScope],
   );
   const searchMatchIds = useMemo(
     () => new Set(searchMatches.map((match) => match.id)),
@@ -1494,7 +1517,8 @@ export function Marmotter({
 
   // XDCC downloads requested but not yet answered, keyed by network + folded bot
   // nick, each a queue of offer ids. The bot's eventual DCC SEND is matched back
-  // to the oldest outstanding request from that bot.
+  // to the request it names — a bot sends its queue in its own order, so the
+  // oldest outstanding request is often not the one being answered.
   const pendingXdcc = useRef(new Map<string, string[]>());
 
   // What to do when a bot advertises a pack. Held in a ref so the long-lived
@@ -1524,55 +1548,66 @@ export function Marmotter({
   >(() => {});
   handleDccOffer.current = (networkId, networkName, from, target, send) => {
     const key = pendingKey(networkId, from);
-    const queue = pendingXdcc.current.get(key);
-    if (queue !== undefined && queue.length > 0) {
-      const [offerId, ...rest] = queue;
-      if (rest.length > 0) {
-        pendingXdcc.current.set(key, rest);
-      } else {
-        pendingXdcc.current.delete(key);
-      }
-      if (offerId === undefined) {
-        return;
-      }
-      if (send.passive) {
-        useView.getState().setDccOfferStatus(offerId, {
-          status: 'failed',
-          error: "The bot sent a passive transfer, which Marmotter can't fetch.",
-        });
-        return;
-      }
+    const queue = pendingXdcc.current.get(key) ?? [];
+    // Every row this same bot advertised, which is what an answer is matched
+    // against: both the queue and the re-offer rule work on the filename, so
+    // they have to be looking at the same list.
+    const rows = useView
+      .getState()
+      .dccOffers.filter((entry) => pendingKey(entry.networkId, entry.from) === key);
+
+    const refuse = (offerId: string): void => {
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'failed',
+        error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+      });
+    };
+    const fetchInto = (offerId: string): void => {
       fetchIntoFolder(offerId, {
         host: send.host,
         port: send.port,
         filename: send.filename,
         ...(send.size === undefined ? {} : { size: send.size }),
       });
+    };
+
+    const answered = matchPendingRequest(queue, rows, send.filename);
+    if (answered !== undefined) {
+      // Only the request that was answered leaves the queue. Taking the head
+      // instead meant a re-offer of one pack consumed the request for another,
+      // and the answers that followed matched nothing.
+      const rest = queue.filter((id) => id !== answered);
+      if (rest.length > 0) {
+        pendingXdcc.current.set(key, rest);
+      } else {
+        pendingXdcc.current.delete(key);
+      }
+      if (send.passive) {
+        refuse(answered);
+      } else {
+        fetchInto(answered);
+      }
       return;
     }
+
     // Not matched to a request still in its queue. A DCC SEND that matches a
-    // file already on the list is the serving bot re-offering it, not a new
-    // file; the classifier decides whether that means retrying a failed row,
-    // ignoring a duplicate, or listing a genuinely new offer.
-    const foldedFrom = pendingKey(networkId, from);
-    const existing = useView
-      .getState()
-      .dccOffers.find(
-        (entry) =>
-          entry.filename === send.filename &&
-          pendingKey(entry.networkId, entry.from) === foldedFrom,
-      );
+    // file already on the list is the serving bot offering it again — a row
+    // still waiting on a request whose queue entry has already been used, or
+    // one whose last attempt failed — rather than a new file; the classifier
+    // decides whether that means connecting, ignoring a duplicate, or listing
+    // a genuinely new offer.
+    const existing = rows.find((entry) => sameFilename(entry.filename, send.filename));
     switch (classifyDccReoffer(existing, send)) {
       case 'retry':
-        // `existing` is defined on this branch; retry that same row at the
-        // address this re-offer advertises.
+        // `existing` is defined on this branch; connect for that same row at
+        // the address this offer advertises.
         if (existing !== undefined) {
-          fetchIntoFolder(existing.id, {
-            host: send.host,
-            port: send.port,
-            filename: send.filename,
-            ...(send.size === undefined ? {} : { size: send.size }),
-          });
+          fetchInto(existing.id);
+        }
+        return;
+      case 'refuse':
+        if (existing !== undefined) {
+          refuse(existing.id);
         }
         return;
       case 'ignore':
@@ -2025,6 +2060,7 @@ export function Marmotter({
   const asideNode = showSearchResults ? (
     <MessageSearchResults
       query={searchQuery}
+      scope={searchScope}
       matches={searchMatches}
       activeId={activeSearchId}
       onPick={(index) => setSearchIndex(index)}
@@ -2081,8 +2117,14 @@ export function Marmotter({
     <>
       <NavBar
         title={title}
-        {...(conversation?.topic?.text === undefined || conversation.topic.text === ''
-          ? {}
+        {...(view.pane !== 'chat' ||
+        conversation?.topic?.text === undefined ||
+        conversation.topic.text === ''
+          ? // The topic belongs to the conversation, not to the window: a pane
+            // that has taken the column over — Files, Settings, the channel
+            // browser — is named by its own title, and leaving the last
+            // channel's topic under it described something nobody is looking at.
+            {}
           : { subtitle: conversation.topic.text })}
         {...(view.pane === 'chat' &&
         conversation !== undefined &&
@@ -2330,6 +2372,11 @@ export function Marmotter({
                     setSearchQuery(next);
                     setSearchIndex(0);
                   }}
+                  scope={searchScope}
+                  onScopeChange={(next) => {
+                    setSearchScope(next);
+                    setSearchIndex(0);
+                  }}
                   matchCount={searchMatches.length}
                   activeOrdinal={searchMatches.length === 0 ? 0 : activeSearchPos + 1}
                   onPrev={() => stepSearch(-1)}
@@ -2391,6 +2438,7 @@ export function Marmotter({
 
   return (
     <>
+      {resizeWindow === undefined ? null : <WindowResizeHandles onResize={resizeWindow} />}
       <AppShell
         {...(titleBarNode === undefined ? {} : { titleBar: titleBarNode })}
         sidebarCollapsed={view.sidebarCollapsed}

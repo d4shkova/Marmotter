@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef } from 'react';
 import { cn } from '../lib/cn.js';
 import { nickColorVar } from '../lib/nick-color.js';
 import { IconButton } from '../primitives/IconButton.js';
+import { SegmentedControl, type Segment } from '../primitives/SegmentedControl.js';
 import { formatTime } from './format.js';
 
 /** One message that matches the current search, in buffer order. */
@@ -12,7 +13,29 @@ export interface SearchMatch {
 }
 
 /**
- * Messages whose text contains the query, case-insensitively.
+ * What the query is matched against.
+ *
+ * `text` is find-in-page: the words in the messages. `nick` searches by who
+ * wrote them, which is the other question people actually ask of a channel —
+ * "what has this person said here" — and which a text search cannot answer,
+ * since a nick appears in the column beside a message rather than in it.
+ */
+export type SearchScope = 'text' | 'nick';
+
+/** The scopes, in the order the switch offers them. */
+export const SEARCH_SCOPES: readonly Segment<SearchScope>[] = [
+  { value: 'text', label: 'Messages' },
+  { value: 'nick', label: 'People' },
+];
+
+/**
+ * Messages matching the query, case-insensitively, in buffer order.
+ *
+ * In `text` scope the query is looked for in what was said; in `nick` scope, in
+ * who said it. A nick match is a prefix or a whole name rather than a substring
+ * anywhere: `sam` should find Sam and Sam_ without also finding everyone whose
+ * name happens to contain those letters, which is the difference between
+ * pulling up one person's messages and pulling up several people's.
  *
  * Folded events — joins, parts, quits, nick changes — are left out: their text
  * is a mechanism ("joined"), not something a reader searches for, and they may
@@ -20,7 +43,11 @@ export interface SearchMatch {
  * other message renders as its own row, so a match here always has somewhere to
  * jump to.
  */
-export function findMatches(messages: readonly Message[], query: string): readonly SearchMatch[] {
+export function findMatches(
+  messages: readonly Message[],
+  query: string,
+  scope: SearchScope = 'text',
+): readonly SearchMatch[] {
   const needle = query.trim().toLowerCase();
   if (needle === '') {
     return [];
@@ -30,7 +57,11 @@ export function findMatches(messages: readonly Message[], query: string): readon
     if (FOLDABLE_KINDS.has(message.kind)) {
       continue;
     }
-    if (message.text.toLowerCase().includes(needle)) {
+    const hit =
+      scope === 'nick'
+        ? (message.source?.nick ?? '').toLowerCase().startsWith(needle)
+        : message.text.toLowerCase().includes(needle);
+    if (hit) {
       matches.push({ id: message.id, message });
     }
   }
@@ -40,6 +71,9 @@ export function findMatches(messages: readonly Message[], query: string): readon
 export interface MessageSearchBarProps {
   readonly query: string;
   readonly onQueryChange: (query: string) => void;
+  /** Whether the query is matched against what was said or against who said it. */
+  readonly scope: SearchScope;
+  readonly onScopeChange: (scope: SearchScope) => void;
   readonly matchCount: number;
   /** 1-based position of the active match, or 0 when there are none. */
   readonly activeOrdinal: number;
@@ -58,6 +92,8 @@ export interface MessageSearchBarProps {
 export function MessageSearchBar({
   query,
   onQueryChange,
+  scope,
+  onScopeChange,
   matchCount,
   activeOrdinal,
   onPrev,
@@ -80,8 +116,10 @@ export function MessageSearchBar({
       <input
         ref={field}
         type="search"
-        aria-label="Search this conversation"
-        placeholder="Search messages"
+        aria-label={
+          scope === 'nick' ? 'Search this conversation by person' : 'Search this conversation'
+        }
+        placeholder={scope === 'nick' ? 'Search by who wrote it' : 'Search messages'}
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         onKeyDown={(event) => {
@@ -101,6 +139,17 @@ export function MessageSearchBar({
           'min-w-0 flex-1 bg-transparent font-mono text-footnote text-[var(--label-primary)]',
           'placeholder:text-[var(--label-quaternary)] focus:outline-none',
         )}
+      />
+
+      {/* What the query is matched against. A segmented control rather than a
+          checkbox because these are two ways of asking, not a modifier on one:
+          the same words mean different things on either side of it. */}
+      <SegmentedControl
+        label="What to search"
+        value={scope}
+        onChange={onScopeChange}
+        segments={SEARCH_SCOPES}
+        className="shrink-0"
       />
 
       <span
@@ -140,6 +189,8 @@ export function MessageSearchBar({
 
 export interface MessageSearchResultsProps {
   readonly query: string;
+  /** Which question the results answer, which changes the empty state's words. */
+  readonly scope?: SearchScope;
   readonly matches: readonly SearchMatch[];
   /** The id of the match currently centred in the message list. */
   readonly activeId: string | undefined;
@@ -160,6 +211,7 @@ export interface MessageSearchResultsProps {
  */
 export function MessageSearchResults({
   query,
+  scope = 'text',
   matches,
   activeId,
   onPick,
@@ -191,7 +243,13 @@ export function MessageSearchResults({
 
       {matches.length === 0 ? (
         <p className="px-3 py-3 text-footnote text-[var(--label-secondary)]">
-          {query.trim() === '' ? 'Type to search this conversation.' : 'Nothing here matches that.'}
+          {query.trim() === ''
+            ? scope === 'nick'
+              ? 'Type a name to see everything they have said here.'
+              : 'Type to search this conversation.'
+            : scope === 'nick'
+              ? 'Nobody here goes by that.'
+              : 'Nothing here matches that.'}
         </p>
       ) : (
         <ol className="min-h-0 flex-1 overflow-y-auto py-1">

@@ -1,6 +1,6 @@
 {
   "name": "@marmotter/web",
-  "version": "0.0.0",
+  "version": "1.0.5",
   "private": true,
   "type": "module",
   "description": "Marmotter browser build. Session-only state, no persistence.",

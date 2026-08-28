@@ -8,7 +8,21 @@
  * copy of the palette, free to disagree with the one on screen.
  */
 
-export const THEME_IDS = ['midnight', 'monochrome', 'ember', 'blossom', 'paper', 'nebula'] as const;
+export const THEME_IDS = [
+  'midnight',
+  'monochrome',
+  'ember',
+  'blossom',
+  'paper',
+  'nebula',
+  'menthe',
+  'lagune',
+  'neon',
+  'sapin',
+  'crepuscule',
+  'orage',
+  'brume',
+] as const;
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
@@ -52,6 +66,41 @@ export const THEMES: readonly ThemeInfo[] = [
     id: 'nebula',
     name: 'Nebula',
     description: 'Purple and blue.',
+  },
+  {
+    id: 'menthe',
+    name: 'Menthe',
+    description: 'Mint on near-black, with a pink alarm.',
+  },
+  {
+    id: 'lagune',
+    name: 'Lagune',
+    description: 'Pale aqua over deep water.',
+  },
+  {
+    id: 'neon',
+    name: 'Néon',
+    description: 'Cyan and violet on midnight blue.',
+  },
+  {
+    id: 'sapin',
+    name: 'Sapin',
+    description: 'Near-black, with a fir green in it.',
+  },
+  {
+    id: 'crepuscule',
+    name: 'Crépuscule',
+    description: 'Ice over twilight water.',
+  },
+  {
+    id: 'orage',
+    name: 'Orage',
+    description: 'Sky blue over storm navy.',
+  },
+  {
+    id: 'brume',
+    name: 'Brume',
+    description: 'Light, in blues that have faded.',
   },
 ];
 

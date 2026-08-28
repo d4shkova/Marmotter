@@ -41,7 +41,12 @@ import { Marmotter } from './Marmotter.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
 import { MessageRow } from './MessageRow.js';
-import { MessageSearchBar, MessageSearchResults, findMatches } from './MessageSearch.js';
+import {
+  MessageSearchBar,
+  MessageSearchResults,
+  findMatches,
+  type SearchScope,
+} from './MessageSearch.js';
 import { RawLog } from './RawLog.js';
 import { Settings } from './Settings.js';
 import { Sidebar } from './Sidebar.js';
@@ -274,7 +279,8 @@ export const Messages: StoryObj = {
 
 export const SearchingMessages: StoryObj = {
   render: function SearchingMessages() {
-    const matches = findMatches(messages, 'build');
+    const [scope, setScope] = useState<SearchScope>('text');
+    const matches = findMatches(messages, scope === 'nick' ? 'tamsin' : 'build', scope);
     const [index, setIndex] = useState(0);
     const activeId = matches[index % matches.length]?.id;
     const step = (delta: number) =>
@@ -286,8 +292,10 @@ export const SearchingMessages: StoryObj = {
       <div className="flex h-[28rem] w-[56rem] overflow-hidden rounded-card border border-[var(--separator)]">
         <div className="flex min-w-0 flex-1 flex-col">
           <MessageSearchBar
-            query="build"
+            query={scope === 'nick' ? 'tamsin' : 'build'}
             onQueryChange={() => {}}
+            scope={scope}
+            onScopeChange={setScope}
             matchCount={matches.length}
             activeOrdinal={(index % matches.length) + 1}
             onPrev={() => step(-1)}

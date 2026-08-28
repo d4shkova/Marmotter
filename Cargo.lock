@@ -2307,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-desktop"
-version = "0.0.0"
+version = "1.0.5"
 dependencies = [
  "keyring",
  "marmotter-transport",
@@ -2322,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-transport"
-version = "0.0.0"
+version = "1.0.5"
 dependencies = [
  "rcgen",
  "rustls",

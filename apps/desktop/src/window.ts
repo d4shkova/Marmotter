@@ -1,4 +1,4 @@
-import type { WindowControls } from '@marmotter/ui';
+import type { WindowControls, WindowEdge } from '@marmotter/ui';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useState } from 'react';
 
@@ -20,6 +20,35 @@ export const DRAG_PROPS = { 'data-tauri-drag-region': true } as const;
  */
 export function windowControls(): WindowControls {
   return navigator.userAgent.includes('Macintosh') ? 'native-inset' : 'custom';
+}
+
+/**
+ * Our edge names, in the compass points Tauri's window API asks for.
+ *
+ * Kept here rather than in the shell: which way round a window manager counts
+ * is a platform detail, and `@marmotter/ui` names an edge by where it is.
+ */
+const RESIZE_DIRECTION = {
+  top: 'North',
+  bottom: 'South',
+  left: 'West',
+  right: 'East',
+  'top-left': 'NorthWest',
+  'top-right': 'NorthEast',
+  'bottom-left': 'SouthWest',
+  'bottom-right': 'SouthEast',
+} as const satisfies Record<WindowEdge, string>;
+
+/**
+ * Starts a window resize from the edge that was grabbed.
+ *
+ * The window is undecorated, so the OS draws no resize border and the shell
+ * draws its own grips instead; this is what they hand the drag to. The promise
+ * is deliberately dropped — the window manager owns the drag from here, and
+ * there is nothing to wait for or to tell the user if it declines.
+ */
+export function startResize(edge: WindowEdge): void {
+  void getCurrentWindow().startResizeDragging(RESIZE_DIRECTION[edge]);
 }
 
 export interface WindowChrome {

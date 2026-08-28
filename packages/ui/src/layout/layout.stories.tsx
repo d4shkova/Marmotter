@@ -7,6 +7,7 @@ import { ListGroup } from './ListGroup.js';
 import { NavBar } from './NavBar.js';
 import { TabBar } from './TabBar.js';
 import { TitleBar } from './TitleBar.js';
+import { WindowResizeHandles } from './WindowResizeHandles.js';
 
 export default {
   title: 'Layout',
@@ -43,6 +44,32 @@ export const TitleBarTrafficLightInset: StoryObj = {
       </div>
     </div>
   ),
+};
+
+export const WindowResizeGrips: StoryObj = {
+  render: function WindowResizeGrips() {
+    const [edge, setEdge] = useState<string>('none yet');
+
+    return (
+      <>
+        {/* Fixed to the frame, as they are in the app: these are the window's
+            own edges, so in this canvas they are the canvas's. Hovering the
+            very edge of the frame shows the resize cursor, and pressing it
+            reports which edge the window manager would have been handed. */}
+        <WindowResizeHandles onResize={(next) => setEdge(next)} />
+        <div className="max-w-md rounded-card border border-[var(--separator)] p-4">
+          <p className="text-subhead text-[var(--label-secondary)]">
+            The desktop window is drawn without the system's decorations, which takes its resize
+            border with them. These grips put it back: a few pixels along each edge and a square at
+            each corner, carrying a cursor and nothing else.
+          </p>
+          <p className="mt-3 font-mono text-footnote text-[var(--label-primary)]">
+            Last grabbed: {edge}
+          </p>
+        </div>
+      </>
+    );
+  },
 };
 
 export const NavBarCompact: StoryObj = {

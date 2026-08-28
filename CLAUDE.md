@@ -302,12 +302,13 @@ threshold. Widening the palette means widening that ramp, not adding hues.
 
 ### Themes
 
-The description above is the default theme, **Midnight**. Five more ship beside
-it — Monochrome, Ember, Blossom, Paper, Nebula — and each is exactly what this
-section promises a theme is: a block of primitives under `[data-theme='…']` in
-`tokens.css`, with the alias layer written once for all of them. Adding one
-means adding a block and a row in `packages/ui/src/themes.ts`; it must never
-mean touching a component.
+The description above is the default theme, **Midnight**. Twelve more ship
+beside it — Monochrome, Ember, Blossom, Paper, Nebula, and the seven named in
+French: Menthe, Lagune, Néon, Sapin, Crépuscule, Orage, Brume — and each is
+exactly what this section promises a theme is: a block of primitives under
+`[data-theme='…']` in `tokens.css`, with the alias layer written once for all of
+them. Adding one means adding a block and a row in
+`packages/ui/src/themes.ts`; it must never mean touching a component.
 
 Three rules hold across all of them. The alias layer is selected by `:root` and
 by `[data-theme]`, so a theme applied to a nested element re-resolves against
@@ -321,7 +322,10 @@ accent and the status colours for each one.
 Ember and Paper are built on red, which is the one place the reserved-hue rule
 bends — somebody asked for those palettes. Alarm stays distinguishable in both:
 the danger red is a different red from the accent, far enough from it to read as
-one, and the test asserts that rather than trusting it.
+one, and the test asserts that rather than trusting it. The same test holds the
+line the other way for the themes whose accent family is green or teal: alarm is
+still the one warm colour in the interface, whether that is a red or, in Menthe,
+the single hot pink the palette keeps for it.
 
 ### Typography
 

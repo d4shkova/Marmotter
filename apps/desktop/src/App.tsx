@@ -8,7 +8,7 @@ import { createDesktopPreferences } from './preferences';
 import { createDesktopSecrets } from './secrets';
 import { openExternalUrl } from './opener';
 import { createDesktopTransport } from './transport';
-import { DRAG_PROPS, useWindowChrome, windowControls } from './window';
+import { DRAG_PROPS, startResize, useWindowChrome, windowControls } from './window';
 
 /**
  * The desktop app.
@@ -39,6 +39,11 @@ export function App(): JSX.Element {
         onToggleMaximize: chrome.toggleMaximize,
         onClose: chrome.close,
       }}
+      // Undecorated windows have no resize border of their own, so the shell
+      // draws grips along its edges and they start the drag here. A maximised
+      // window has nothing to resize and its edges are the screen's, where a
+      // strip that swallowed clicks would be in the way rather than useful.
+      {...(chrome.maximized ? {} : { resizeWindow: startResize })}
       createTransport={() => createDesktopTransport()}
       notifier={notifier}
       dcc={dcc}

@@ -17,14 +17,12 @@ describe('choosing a theme', () => {
 
     const options = screen.getAllByRole('radio');
     expect(options).toHaveLength(THEMES.length);
-    expect(options.map((option) => option.getAttribute('aria-checked'))).toEqual([
-      'true',
-      'false',
-      'false',
-      'false',
-      'false',
-      'false',
-    ]);
+    // One is chosen and the rest are not, however many there are: the list
+    // grows every time a theme is added, and a hand-written column of 'false'
+    // would only ever be a count of how many there were the day it was written.
+    expect(options.map((option) => option.getAttribute('aria-checked'))).toEqual(
+      THEMES.map((theme) => (theme.id === 'midnight' ? 'true' : 'false')),
+    );
   });
 
   it('hands back the theme that was picked, and closes', () => {
