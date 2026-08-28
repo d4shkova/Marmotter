@@ -9,6 +9,7 @@ import type {
 import { defaultLoggingPolicy } from '@marmotter/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type SessionEvent, createSession } from './session.js';
+import { POLL_INTERVAL_MS } from './state/notify.js';
 import { TransportConnectError } from './transport/connect-error.js';
 
 /** A transport that records what was sent and lets a test push lines back. */
@@ -641,6 +642,56 @@ describe('the notify list', () => {
     session.addNotify(['tamsin']);
     session.removeNotify(['tamsin']);
     expect(transport.sent).toContain('MONITOR - tamsin');
+  });
+});
+
+describe('the connection ending', () => {
+  it('stops polling for friends once the connection is gone', async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeTransport();
+      const session = createSession({ profile: profile(), transport, now });
+      await session.connect();
+      // No MONITOR and no WATCH, which is what puts the notify list on the
+      // WHOIS poll rather than on a server-side list.
+      transport.receive(
+        ':irc.test 001 marmot :Welcome',
+        ':irc.test 005 marmot CHANTYPES=# :are supported by this server',
+        ':irc.test 376 marmot :End of MOTD',
+      );
+      session.addNotify(['tamsin']);
+
+      vi.advanceTimersByTime(POLL_INTERVAL_MS);
+      expect(transport.sent.filter((line) => line === 'WHOIS tamsin')).toHaveLength(1);
+
+      // A closed socket refuses writes, which is what the poll would run into.
+      transport.close();
+      transport.send = () => {
+        throw new Error('The connection is not open.');
+      };
+
+      expect(() => vi.advanceTimersByTime(POLL_INTERVAL_MS * 3)).not.toThrow();
+      expect(transport.sent.filter((line) => line === 'WHOIS tamsin')).toHaveLength(1);
+
+      session.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes the socket even when the parting line cannot be sent', async () => {
+    const transport = new FakeTransport();
+    const session = createSession({ profile: profile(), transport, now });
+    await session.connect();
+
+    // A connection still handshaking, or one dropped without a close event, is
+    // not `disconnected` and yet cannot be written to.
+    transport.send = () => {
+      throw new Error('The connection is not open.');
+    };
+
+    expect(() => session.disconnect('bye')).not.toThrow();
+    expect(transport.disconnected).toBe(true);
   });
 });
 

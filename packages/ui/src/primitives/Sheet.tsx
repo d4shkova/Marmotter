@@ -14,6 +14,15 @@ export interface SheetProps {
    * The default is centred, which is the desktop and tablet shape.
    */
   readonly bottom?: boolean;
+  /**
+   * How wide the centred sheet may grow.
+   *
+   * `wide` is for a form with enough related short fields to pair them across
+   * two columns — an address beside its port. At the default width those pairs
+   * have to stack, which is what makes a desktop form scroll for no reason.
+   * Ignored for a bottom sheet, which is full-width by definition.
+   */
+  readonly size?: 'default' | 'wide';
   readonly className?: string;
 }
 
@@ -31,6 +40,7 @@ export function Sheet({
   children,
   footer,
   bottom = false,
+  size = 'default',
   className,
 }: SheetProps): ReactNode {
   const panel = useRef<HTMLDivElement>(null);
@@ -68,7 +78,9 @@ export function Sheet({
           // Only the transform is dropped under reduced motion; the sheet
           // still appears, it just does not slide.
           'motion-safe:animate-none',
-          bottom ? 'rounded-t-sheet pb-[env(safe-area-inset-bottom)]' : 'max-w-md rounded-sheet',
+          bottom
+            ? 'rounded-t-sheet pb-[env(safe-area-inset-bottom)]'
+            : cn('rounded-sheet', size === 'wide' ? 'max-w-2xl' : 'max-w-md'),
           className,
         )}
       >

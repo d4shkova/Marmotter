@@ -127,6 +127,15 @@ export function Composer({
     });
   }, [active]);
 
+  // The typing timer outlives the field it belongs to otherwise: it fires
+  // `onTyping(false)` for a conversation that is no longer on screen, against a
+  // component that is no longer mounted. Cleared on the way out, and on a move
+  // to another conversation, which is a different composer as far as the
+  // network is concerned.
+  useEffect(() => {
+    return () => clearTimeout(typingTimer.current);
+  }, []);
+
   const noteTyping = (): void => {
     if (onTyping === undefined) {
       return;

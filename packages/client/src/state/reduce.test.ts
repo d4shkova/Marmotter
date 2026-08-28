@@ -249,6 +249,24 @@ describe('member list amendments', () => {
     expect(memberOf(session, '#test', 'emilyp').realname).toBe('A New Name');
   });
 
+  it('names who left and who dropped, reason or not', () => {
+    // The text has to stand on its own: a folded run of events is expanded as
+    // a list of these lines with no nick column beside them, so a line that is
+    // only the parting reason names nobody.
+    const parted = feed(joined(), [
+      ':emilyp!~e@host PART #test :going to bed',
+      ':jonquil!~j@host QUIT :Ping timeout: 240 seconds',
+    ]);
+    expect(messageTexts(parted, '#test')).toContain('emilyp left: going to bed');
+    expect(messageTexts(parted, '#test')).toContain(
+      'jonquil disconnected: Ping timeout: 240 seconds',
+    );
+
+    const silent = feed(joined(), [':emilyp!~e@host PART #test', ':jonquil!~j@host QUIT']);
+    expect(messageTexts(silent, '#test')).toContain('emilyp left');
+    expect(messageTexts(silent, '#test')).toContain('jonquil disconnected');
+  });
+
   it('tracks our own away state', () => {
     const session = feed(registeredSession(), [':irc.test 306 marmot :You have been marked away']);
     expect(session.state.away).toBe(true);

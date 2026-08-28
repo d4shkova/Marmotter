@@ -691,6 +691,74 @@ describe('every component passes axe', () => {
   });
 });
 
+describe('the settings sections', () => {
+  const settings = (): ReactNode => (
+    <Settings
+      networks={[networkFixture()]}
+      appearance={{
+        theme: 'midnight',
+        nickColumnWidth: 12,
+        alignNicksRight: true,
+        foldEvents: true,
+        showTimestamps: true,
+        unfurlLinks: false,
+        highlightWords: [],
+        notificationsEnabled: true,
+        showBrowseChannelsShortcut: true,
+      }}
+      onAppearanceChange={noop}
+      ctcp={DEFAULT_CTCP_POLICY}
+      onCtcpChange={noop}
+      userOptions={DEFAULT_USER_OPTIONS}
+      onUserOptionsChange={noop}
+      dccAvailable={false}
+      onChooseDownloadFolder={noop}
+      onReconnect={noop}
+      onDisconnect={noop}
+      onEdit={noop}
+      onRemove={noop}
+      onAddNetwork={noop}
+      onResetSettings={noop}
+    />
+  );
+
+  // Only one section is on screen at a time, so the sweep above reaches the
+  // first one only. Each of the others has to be opened to be checked.
+  it.each(['Appearance', 'Notifications', 'Privacy', 'Advanced'])(
+    'passes axe with %s open',
+    async (label) => {
+      const user = userEvent.setup();
+      const { container } = render(<main>{settings()}</main>);
+
+      await user.click(screen.getByRole('button', { name: label }));
+      const results = await axe.run(container, {
+        rules: { 'color-contrast': { enabled: false } },
+      });
+      expect(results.violations.map((violation) => violation.id)).toEqual([]);
+    },
+  );
+
+  it('offers no Logging section where the platform keeps nothing', () => {
+    render(settings());
+    // A rail entry leading to an empty panel would be a dead end.
+    expect(screen.queryByRole('button', { name: 'Logging' })).toBeNull();
+  });
+
+  it('shows one section at a time', async () => {
+    const user = userEvent.setup();
+    render(settings());
+
+    // The network list is what Networks holds; Message list is what Appearance
+    // holds. Neither may be on screen while the other is.
+    expect(screen.getByText('Libera.Chat')).toBeDefined();
+    expect(screen.queryByText('Message list')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Appearance' }));
+    expect(screen.queryByText('Libera.Chat')).toBeNull();
+    expect(screen.getByText('Message list')).toBeDefined();
+  });
+});
+
 describe('keyboard operation', () => {
   it('moves through a segmented control with the arrow keys', async () => {
     const onChange = vi.fn();

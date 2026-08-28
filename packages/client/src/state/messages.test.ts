@@ -121,6 +121,20 @@ describe('inserting', () => {
     expect(messages).toHaveLength(1);
   });
 
+  it('keeps what one copy of a message knew when the other did not', () => {
+    // The same line by two routes: live, carrying the account tag and the reply
+    // it was to, and again through history without either. Merging the second
+    // over the first must add detail, never erase it.
+    const live = buffer(['a', '2026-08-02T09:00:00.000Z']);
+    const merged = insertMessage(
+      [{ ...(live[0] as Message), account: 'tamsin', replyTo: 'm1' }],
+      message({ id: 'a', at: at('2026-08-02T09:00:00.000Z'), text: 'a' }),
+    );
+
+    expect(merged[0]?.account).toBe('tamsin');
+    expect(merged[0]?.replyTo).toBe('m1');
+  });
+
   it('does not add the same message twice', () => {
     const existing = buffer(['a', '2026-08-02T09:00:00.000Z']);
     const messages = insertMessage(

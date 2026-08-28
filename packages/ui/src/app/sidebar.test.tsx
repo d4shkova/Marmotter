@@ -1,5 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { emptyChannel, initialNetworkState } from '@marmotter/client';
 import { Sidebar } from './Sidebar.js';
 
 afterEach(cleanup);
@@ -30,5 +31,31 @@ describe('where settings open from', () => {
     // Adding a network still belongs to the sidebar either way: its header
     // button, beside the empty state's own.
     expect(screen.getAllByRole('button', { name: 'Add a network' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the right-click menu on a channel', () => {
+  const withChannel = () => ({
+    ...initialNetworkState('libera', 'Libera.Chat', 'marmot'),
+    phase: 'registered' as const,
+    channels: new Map([['#marmotter', { ...emptyChannel('#marmotter'), joined: true }]]),
+  });
+
+  it('offers whatever the shell put on it, for the channel it was opened on', () => {
+    const onSelect = vi.fn();
+    const conversationMenu = vi.fn(() => [
+      { id: 'autojoin', label: 'Join automatically', onSelect },
+    ]);
+
+    render(<Sidebar {...props} networks={[withChannel()]} conversationMenu={conversationMenu} />);
+
+    fireEvent.contextMenu(screen.getByText('#marmotter'));
+
+    expect(conversationMenu).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'libera' }),
+      '#marmotter',
+      'channel',
+    );
+    expect(screen.getByRole('menuitem', { name: 'Join automatically' })).toBeDefined();
   });
 });

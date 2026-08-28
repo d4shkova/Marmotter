@@ -14,12 +14,14 @@ import {
 } from '@marmotter/shared';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Button } from '../primitives/Button.js';
-import { RadioGroup } from '../primitives/Radio.js';
+import { Field } from '../primitives/Field.js';
+import { SegmentedControl } from '../primitives/SegmentedControl.js';
 import { Select, type SelectOption } from '../primitives/Select.js';
 import { Sheet } from '../primitives/Sheet.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
 import { putSecret, replaceSecret } from './secrets.js';
+import { formatAutojoin, parseAutojoin } from './autojoin.js';
 
 /** The value the network picker uses for "not one of these". */
 const CUSTOM = 'custom';
@@ -51,6 +53,16 @@ const PORT_FOR: Record<Security, number> = {
 
 /** How to sign in, as a person would describe it rather than as a mechanism. */
 type LoginMethod = 'none' | 'sasl' | 'nickserv';
+
+/** Which control a complaint belongs under, and what it says. */
+interface FormError {
+  readonly field: 'host' | 'port' | 'nick' | 'socket' | 'account' | 'password';
+  readonly message: string;
+}
+
+/** The message for one field, or nothing if the complaint is about another. */
+const errorFor = (error: FormError | undefined, field: FormError['field']): string | undefined =>
+  error?.field === field ? error.message : undefined;
 
 /** Which security choice an existing endpoint was saved with. */
 const securityOf = (endpoint: ServerEndpoint | undefined): Security => {
@@ -190,7 +202,15 @@ export function AddNetwork({
   /** True when a password is already stored and the field is deliberately blank. */
   const [passwordSaved, setPasswordSaved] = useState(false);
   const [operatorCommands, setOperatorCommands] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [autojoin, setAutojoin] = useState('');
+  /**
+   * What is wrong, and which field it is wrong in.
+   *
+   * Named rather than a single message at the foot of the form: an error
+   * printed under the control that caused it is the one a person reads, and a
+   * form this long can scroll the foot out of sight entirely.
+   */
+  const [error, setError] = useState<FormError | undefined>(undefined);
 
   // Opening the sheet loads whatever it is opening onto: a blank form for a new
   // network, the saved values for one being edited.
@@ -217,6 +237,7 @@ export function AddNetwork({
       setAccount('');
       setPasswordSaved(false);
       setOperatorCommands(false);
+      setAutojoin('');
       return;
     }
 
@@ -240,6 +261,7 @@ export function AddNetwork({
     // user configured last week.
     setPasswordSaved(secretOf(editing.auth) !== undefined);
     setOperatorCommands(editing.operatorCommands === true);
+    setAutojoin(formatAutojoin(editing.autojoin));
   }, [open, editing, defaultIdentity.nick]);
 
   const chosen = findNetwork(choice);
@@ -299,7 +321,9 @@ export function AddNetwork({
 
   /** What to keep from an edited profile, or the defaults for a new one. */
   const carried = {
-    autojoin: editing?.autojoin ?? [],
+    // Parsed against what was saved, so a channel that already had a key keeps
+    // it rather than losing the password because its name was retyped.
+    autojoin: parseAutojoin(autojoin, editing?.autojoin ?? []),
     connectCommands: editing?.connectCommands ?? [],
     encoding: editing?.encoding ?? 'utf-8',
     autoReconnect: editing?.autoReconnect ?? true,
@@ -371,15 +395,18 @@ export function AddNetwork({
   };
 
   /** Complains about a login that cannot work, or returns nothing. */
-  const loginProblem = (): string | undefined => {
+  const loginProblem = (): FormError | undefined => {
     if (login === 'none') {
       return undefined;
     }
     if (account.trim() === '') {
-      return 'Enter the account name you signed up with, or set signing in to Not signed in.';
+      return {
+        field: 'account',
+        message: 'Enter the account name you signed up with, or choose Not signed in.',
+      };
     }
     if (password.trim() === '' && !passwordSaved) {
-      return 'Enter the password for that account.';
+      return { field: 'password', message: 'Enter the password for that account.' };
     }
     return undefined;
   };
@@ -390,15 +417,15 @@ export function AddNetwork({
       return;
     }
     if (effective.host.trim() === '') {
-      setError('Enter the address of the server to connect to.');
+      setError({ field: 'host', message: 'Enter the address of the server to connect to.' });
       return;
     }
     if (nick.trim() === '') {
-      setError('Choose a name for other people to see.');
+      setError({ field: 'nick', message: 'Choose a name for other people to see.' });
       return;
     }
     if (!Number.isInteger(effective.port) || effective.port < 1 || effective.port > 65535) {
-      setError('The port has to be a number between 1 and 65535.');
+      setError({ field: 'port', message: 'The port has to be a number between 1 and 65535.' });
       return;
     }
     const problem = loginProblem();
@@ -440,15 +467,21 @@ export function AddNetwork({
     try {
       parsed = new URL(url);
     } catch {
-      setError('That is not a web address. It should start with wss:// or ws://.');
+      setError({
+        field: 'socket',
+        message: 'That is not a web address. It should start with wss:// or ws://.',
+      });
       return;
     }
     if (parsed.protocol !== 'wss:' && parsed.protocol !== 'ws:') {
-      setError('A web address for IRC starts with wss:// — or ws:// for an unencrypted one.');
+      setError({
+        field: 'socket',
+        message: 'A web address for IRC starts with wss:// — or ws:// for an unencrypted one.',
+      });
       return;
     }
     if (nick.trim() === '') {
-      setError('Choose a name for other people to see.');
+      setError({ field: 'nick', message: 'Choose a name for other people to see.' });
       return;
     }
     const problem = loginProblem();
@@ -478,10 +511,26 @@ export function AddNetwork({
     onClose();
   };
 
+  /**
+   * Which fields are rendered right now, so a complaint about one of them is
+   * left to it and every other complaint still reaches the foot of the form.
+   *
+   * Derived rather than listed: a fixed list goes stale the moment a branch
+   * changes which controls it draws, and the failure mode is a form that
+   * refuses to submit while saying nothing about why.
+   */
+  const onScreen = new Set<FormError['field']>([
+    'nick',
+    ...(custom && usesSocket ? (['socket'] as const) : []),
+    ...(custom && !usesSocket ? (['host', 'port'] as const) : []),
+    ...(login === 'none' ? [] : (['account', 'password'] as const)),
+  ]);
+
   return (
     <Sheet
       open={open}
       onClose={onClose}
+      size="wide"
       title={editing === undefined ? 'Add a network' : `Edit ${editing.name}`}
       footer={
         <>
@@ -492,7 +541,7 @@ export function AddNetwork({
         </>
       }
     >
-      <div className="flex flex-col gap-5 pt-2">
+      <div className="flex flex-col gap-4 pt-1">
         {editing === undefined ? (
           <Select
             label="Which network?"
@@ -507,132 +556,147 @@ export function AddNetwork({
             }
           />
         ) : (
-          <p className="text-subhead text-[var(--label-secondary)]">
+          <p className="text-footnote text-[var(--label-secondary)]">
             These take effect on the next connection. If this network is connected now, saving
             reconnects it so it is running on what you saved.
           </p>
         )}
 
+        {/* Paired across two columns on anything wider than a phone: an address
+            and its port are one decision, and stacking them is what makes this
+            form scroll. */}
         {custom && usesSocket ? (
           <>
-            <TextField
-              label="Name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              hint="What this network is called in the sidebar."
-            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                hint="What this network is called in the sidebar."
+              />
+              <TextField
+                label="Your name on this network"
+                value={nick}
+                placeholder="marmot"
+                onChange={(event) => setNick(event.target.value)}
+                error={errorFor(error, 'nick')}
+                hint="Other people see this."
+              />
+            </div>
             <TextField
               label="Web address"
               value={socketUrl}
               placeholder="wss://irc.example.net/webirc"
               onChange={(event) => setSocketUrl(event.target.value)}
-              hint="Some networks offer one of these. It is the only kind of address a browser can open."
+              error={errorFor(error, 'socket')}
+              hint="The only kind of address a browser can open."
             />
           </>
         ) : custom ? (
           <>
-            <TextField
-              label="Name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              hint="What this network is called in the sidebar."
-            />
-            <TextField
-              label="Server address"
-              value={host}
-              placeholder="irc.example.net"
-              onChange={(event) => setHost(event.target.value)}
-            />
-            <TextField
-              label="Port"
-              value={port}
-              inputMode="numeric"
-              onChange={(event) => {
-                setPortEdited(true);
-                setPort(event.target.value);
-              }}
-              hint={
-                portEdited
-                  ? 'Your own number. Changing the security setting leaves it alone.'
-                  : `Set to ${PORT_FOR[security]} to match the security setting. Change it and it stays as you leave it.`
-              }
-            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                hint="What this network is called in the sidebar."
+              />
+              <TextField
+                label="Your name on this network"
+                value={nick}
+                placeholder="marmot"
+                onChange={(event) => setNick(event.target.value)}
+                error={errorFor(error, 'nick')}
+                hint="Other people see this."
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+              <TextField
+                label="Server address"
+                value={host}
+                placeholder="irc.example.net"
+                onChange={(event) => setHost(event.target.value)}
+                error={errorFor(error, 'host')}
+              />
+              <TextField
+                label="Port"
+                value={port}
+                inputMode="numeric"
+                onChange={(event) => {
+                  setPortEdited(true);
+                  setPort(event.target.value);
+                }}
+                error={errorFor(error, 'port')}
+                // Short enough to stay on one line beside the address: a hint
+                // that wraps here opens a ragged gap under the whole row.
+                hint={portEdited ? 'Your own number.' : 'Matches security.'}
+              />
+            </div>
           </>
-        ) : null}
+        ) : (
+          <TextField
+            label="Your name on this network"
+            value={nick}
+            placeholder="marmot"
+            onChange={(event) => setNick(event.target.value)}
+            error={errorFor(error, 'nick')}
+            hint={
+              defaultIdentity.nick !== '' && nick === defaultIdentity.nick
+                ? 'Other people see this. Change it to use a different name here only.'
+                : 'Other people see this. You can change it later.'
+            }
+          />
+        )}
 
-        <TextField
-          label="Your name on this network"
-          value={nick}
-          placeholder="marmot"
-          onChange={(event) => setNick(event.target.value)}
-          hint={
-            defaultIdentity.nick !== '' && nick === defaultIdentity.nick
-              ? 'Other people see this. Change it to use a different name here only.'
-              : 'Other people see this. You can change it later.'
-          }
-        />
+        {/* One line of consequence for the option in force, rather than three
+            stacked paragraphs for options nobody has chosen. The consequence
+            itself is not dropped: CLAUDE.md requires the security implication
+            be stated in plain language, and it still is — for the choice that
+            is actually going to be used. */}
+        <Field
+          id="security"
+          label="Connection security"
+          hint={SECURITY_HINT[security](certAccepted)}
+        >
+          <SegmentedControl
+            label="Connection security"
+            value={security}
+            onChange={changeSecurity}
+            full
+            segments={[
+              { value: 'encrypted', label: 'Encrypted' },
+              { value: 'off', label: 'Not encrypted' },
+              // Only where an address can be typed. On a network picked from
+              // the directory there is nowhere to put the URL, so offering it
+              // disabled was a control that could never be used.
+              ...(custom ? [{ value: 'websocket' as Security, label: 'A web address' }] : []),
+            ]}
+          />
+        </Field>
 
-        <RadioGroup
-          legend="Connection security"
-          value={security}
-          onChange={changeSecurity}
-          options={[
-            {
-              value: 'encrypted',
-              label: 'Encrypted',
-              description: certAccepted
-                ? "Recommended. You've chosen to trust this server's own certificate, so it connects without checking it."
-                : "Recommended. Nobody in between can read what you send. If the server's certificate can't be checked, you'll be asked whether to trust it.",
-            },
-            {
-              value: 'off',
-              label: 'Not encrypted',
-              description:
-                'Anyone between you and the server can read everything you send, including your password.',
-            },
-            {
-              value: 'websocket',
-              label: 'A web address',
-              description:
-                'For a network that offers one. This is the only kind a browser can open, and it needs the address rather than a server and port.',
-              disabled: !custom,
-            },
-          ]}
-        />
-
-        <RadioGroup
-          legend="Signing in"
-          value={login}
-          onChange={(next) => setLogin(next as LoginMethod)}
-          options={[
-            {
-              value: 'none',
-              label: 'Not signed in',
-              description: 'Fine for most networks, and for a name nobody has registered.',
-            },
-            {
-              value: 'sasl',
-              label: 'Sign in while connecting',
-              description:
-                'Recommended where the network offers it. Your name is yours before anybody else can see you online.',
-            },
-            {
-              value: 'nickserv',
-              label: 'Sign in after connecting',
-              description:
-                'For older networks. Sends your password to the account service once you are on, which means a moment where you are online and not yet signed in.',
-            },
-          ]}
-        />
+        <Field id="login" label="Signing in" hint={LOGIN_HINT[login]}>
+          <SegmentedControl
+            label="Signing in"
+            value={login}
+            onChange={setLogin}
+            full
+            segments={[
+              { value: 'none', label: 'Not signed in' },
+              { value: 'sasl', label: 'While connecting' },
+              { value: 'nickserv', label: 'After connecting' },
+            ]}
+          />
+        </Field>
 
         {login === 'none' ? null : (
-          <>
+          <div className="grid gap-4 sm:grid-cols-2">
             <TextField
               label="Account name"
               value={account}
               placeholder={nick === '' ? 'marmot' : nick}
               onChange={(event) => setAccount(event.target.value)}
-              hint="The account you registered with the network, which is often the same as your name."
+              error={errorFor(error, 'account')}
+              hint="Often the same as your name."
             />
             <TextField
               label="Password"
@@ -640,38 +704,74 @@ export function AddNetwork({
               value={password}
               autoComplete="off"
               onChange={(event) => setPassword(event.target.value)}
+              error={errorFor(error, 'password')}
               hint={
                 passwordSaved && password === ''
-                  ? 'A password is saved for this network. Leave this empty to keep it.'
+                  ? 'A password is saved. Leave this empty to keep it.'
                   : security === 'off'
-                    ? 'This network is set to connect unencrypted, so this password is readable by anyone in between.'
+                    ? 'This network connects unencrypted, so this is readable in transit.'
                     : remembersPasswords
                       ? // The keychain, not the settings file. Worth naming: it
                         // is the difference between "somewhere the operating
                         // system protects" and "a file in a folder".
-                        "Saved to this device's keychain, not to a file, so you do not have to type it again."
-                      : 'Kept for this session only. This device has nowhere to store a password safely, so you will be asked again next time.'
+                        "Saved to this device's keychain, not to a file."
+                      : 'Kept for this session only. This device cannot store it safely.'
               }
             />
-          </>
+          </div>
         )}
+
+        <TextField
+          label="Channels to join automatically"
+          value={autojoin}
+          placeholder="#marmotter, #irc"
+          onChange={(event) => setAutojoin(event.target.value)}
+          hint="Joined every time this network connects. Separate them with commas or spaces, and leave it empty for none."
+        />
 
         <Toggle
           label="I am a server operator on this network"
-          hint="Offers the operator commands — sign in as an operator, disconnect somebody, message every operator — in the command bar. It grants nothing: the network decides what you may actually do."
+          hint="Offers the operator commands in the command bar. It grants nothing: the network decides what you may actually do."
           checked={operatorCommands}
           onChange={setOperatorCommands}
         />
 
-        {error === undefined ? null : (
+        {/* The complaints that belong to a control are printed under it. This
+            catches anything left over, so nothing can fail silently. */}
+        {error === undefined || onScreen.has(error.field) ? null : (
           <p role="alert" className="text-footnote text-[var(--danger)]">
-            {error}
+            {error.message}
           </p>
         )}
       </div>
     </Sheet>
   );
 }
+
+/**
+ * What each security choice means for the person, in one line.
+ *
+ * A function of whether the certificate was already accepted, because that
+ * changes what "Encrypted" is actually doing on this network.
+ */
+const SECURITY_HINT: Record<Security, (certAccepted: boolean) => string> = {
+  encrypted: (certAccepted) =>
+    certAccepted
+      ? "Recommended. You've chosen to trust this server's own certificate, so it connects without checking it."
+      : "Recommended. Nobody in between can read what you send. If the certificate can't be checked, you'll be asked whether to trust it.",
+  off: () =>
+    'Anyone between you and the server can read everything you send, including your password.',
+  websocket: () =>
+    'For a network that offers one. This is the only kind a browser can open, and it needs the address rather than a server and port.',
+};
+
+/** What each way of signing in costs or gains, in one line. */
+const LOGIN_HINT: Record<LoginMethod, string> = {
+  none: 'Fine for most networks, and for a name nobody has registered.',
+  sasl: 'Recommended where the network offers it. Your name is yours before anybody else can see you online.',
+  nickserv:
+    'For older networks. Sends your password to the account service once you are on, so there is a moment where you are online and not yet signed in.',
+};
 
 /** The secret reference a login method carries, where it carries one. */
 function secretOf(auth: AuthConfig | undefined): SecretRef | undefined {
