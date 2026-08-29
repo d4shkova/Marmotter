@@ -79,7 +79,14 @@ dependencies {
     // The Android Keystore, for `SecretsPlugin`. This is the whole reason
     // passwords can be kept on a phone at all; see CLAUDE.md on secrets.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    // Tauri's Android runtime: the activity, the plugin base class, and the
-    // bridge the Rust side calls through.
-    implementation("app.tauri:tauri-android:2.+")
 }
+
+// Tauri's Android runtime — the activity, the plugin base class, and the bridge
+// the Rust side calls through — plus every plugin that ships Android code.
+//
+// Not a Maven coordinate: there is no `app.tauri:tauri-android` to depend on.
+// The runtime is Kotlin inside the `tauri` crate and each plugin's Android half
+// is inside that plugin's crate, so these are project dependencies on paths
+// that differ per machine. `tauri-build` writes this file while cargo builds
+// for an Android target, and settings.gradle.kts makes sure that has happened.
+apply(from = "tauri.build.gradle.kts")

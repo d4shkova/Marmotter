@@ -9,3 +9,9 @@ local.properties
 gradlew
 gradlew.bat
 gradle/wrapper/gradle-wrapper.jar
+
+# Written by tauri-build during the Android cargo build: the list of Tauri
+# projects this build depends on, at paths inside the local cargo registry.
+# Per-machine by definition, and regenerated whenever cargo runs.
+tauri.settings.gradle
+app/tauri.build.gradle.kts

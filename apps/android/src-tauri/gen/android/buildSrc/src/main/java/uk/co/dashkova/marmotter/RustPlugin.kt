@@ -125,6 +125,12 @@ abstract class CargoBuildTask : DefaultTask() {
         project.exec {
             workingDir = crate
             commandLine("cargo", "build", "--lib", "--release", "--target", triple)
+            // Tells tauri-build to keep `tauri.settings.gradle` and
+            // `app/tauri.build.gradle.kts` current — the list of Tauri projects
+            // this build depends on. settings.gradle.kts creates them on a
+            // clean checkout; this is what keeps them right afterwards, when a
+            // plugin is added or the Tauri version moves.
+            environment("TAURI_ANDROID_PROJECT_PATH", project.rootDir.absolutePath)
             environment("CARGO_TARGET_${key}_LINKER", linker.absolutePath)
             environment("CC_$triple", linker.absolutePath)
             environment("AR_$triple", File(bin, "llvm-ar").absolutePath)
