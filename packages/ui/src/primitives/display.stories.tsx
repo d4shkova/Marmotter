@@ -6,6 +6,7 @@ import { Badge, StatusDot } from './Badge.js';
 import { Button } from './Button.js';
 import { EmptyState } from './EmptyState.js';
 import { ListRow } from './ListRow.js';
+import { SwipeRow } from './SwipeRow.js';
 import { Table } from './Table.js';
 import { Tabs } from './Tabs.js';
 import { ToastRegion } from './Toast.js';
@@ -253,5 +254,33 @@ export const Tooltips: StoryObj = {
     <Tooltip content="Copy this line" delayMs={0}>
       <Button variant="secondary">Hover or focus me</Button>
     </Tooltip>
+  ),
+};
+
+export const SwipeableRows: StoryObj = {
+  name: 'Swipe actions',
+  parameters: {
+    docs: {
+      description: {
+        story:
+          'Drag a row aside with a finger or a pen to reach the two things people do to a ' +
+          'conversation repeatedly. A mouse gets nothing here and opens the same actions by ' +
+          'right-clicking instead. Leaving needs most of the row, so brushing the list while ' +
+          'scrolling cannot drop you out of a channel.',
+      },
+    },
+  },
+  render: () => (
+    <div className="w-72 overflow-hidden rounded-card bg-[var(--bg-elevated)]">
+      <SwipeRow
+        leading={{ label: 'Mark as read', onAction: () => {} }}
+        trailing={{ label: 'Leave channel', onAction: () => {}, destructive: true }}
+      >
+        <ListRow title="#marmotter" subtitle="12 unread" />
+      </SwipeRow>
+      <SwipeRow trailing={{ label: 'Close conversation', onAction: () => {}, destructive: true }}>
+        <ListRow title="dashkova" subtitle="Person" />
+      </SwipeRow>
+    </div>
   ),
 };

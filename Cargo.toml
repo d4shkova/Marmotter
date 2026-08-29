@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/marmotter-transport", "apps/desktop/src-tauri"]
+members = [
+  "crates/marmotter-transport",
+  "crates/marmotter-shell",
+  "apps/desktop/src-tauri",
+  "apps/android/src-tauri",
+]
 
 [workspace.package]
 version = "1.0.5"

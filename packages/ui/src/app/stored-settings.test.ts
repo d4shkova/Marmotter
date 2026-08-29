@@ -35,6 +35,7 @@ describe('settings through the file and back', () => {
         highlightWords: ['marmot', 'burrow'],
         notificationsEnabled: false,
         showBrowseChannelsShortcut: false,
+        sidePanelsAtEdges: true,
       },
       ctcp: { version: false, ping: true, time: false, clientinfo: false, versionText: 'nothing' },
       userOptions: {

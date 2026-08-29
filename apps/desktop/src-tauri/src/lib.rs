@@ -4,11 +4,13 @@
 //! logic lives in `packages/protocol`, in TypeScript.
 
 pub mod dcc;
-pub mod logstore;
 pub mod opener;
-pub mod prefs;
 pub mod secrets;
-pub mod transport;
+
+// The socket, the log files and the settings file are the same job on every
+// Tauri shell, so they come from `marmotter-shell` and are shared with Android.
+// What is left in this crate is what only a desktop has.
+use marmotter_shell::{logstore, prefs, transport};
 
 /// Builds and runs the Tauri application.
 ///
@@ -44,7 +46,7 @@ pub fn run() {
             logstore::log_list,
             logstore::log_write,
             logstore::log_delete,
-            logstore::log_reveal,
+            opener::log_reveal,
             prefs::prefs_read,
             prefs::prefs_write,
             secrets::secret_set,

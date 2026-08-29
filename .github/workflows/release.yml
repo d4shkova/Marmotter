@@ -68,3 +68,70 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  android:
+    name: Android (APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the NDK
+        # Named explicitly rather than taken as "latest": the Rust plugin in
+        # gen/android looks for a linker at a path inside it, and a silently
+        # changing NDK is a silently changing build.
+        run: |
+          sdkmanager --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the packages and the Android frontend
+        # Before cargo, not after: `tauri::generate_context!` embeds whatever
+        # `frontendDist` points at into the Rust library at compile time, so a
+        # missing `dist/` is a build that succeeds and ships a blank window.
+        run: |
+          pnpm -r --filter=./packages/* build
+          pnpm --filter @marmotter/android build
+
+      - name: Generate the Gradle wrapper
+        # The wrapper jar is a binary and is not committed; this regenerates it
+        # from the version pinned in gradle/wrapper/gradle-wrapper.properties.
+        working-directory: apps/android/src-tauri/gen/android
+        run: gradle wrapper
+
+      - name: Build the APK
+        # Debug, because that is the only variant anybody can install: without a
+        # keystore the release APKs are unsigned, and Android refuses those from
+        # the package installer and from `adb install` alike. Release is built
+        # too, so R8 and the resource shrinker still have to pass — it just is
+        # not what gets uploaded. Wiring a real keystore is a follow-up.
+        working-directory: apps/android/src-tauri/gen/android
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marmotter-android-apk
+          path: apps/android/src-tauri/gen/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14

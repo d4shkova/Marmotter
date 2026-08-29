@@ -273,6 +273,17 @@ export interface MarmotterProps {
    * drawn.
    */
   readonly resizeWindow?: (edge: WindowEdge) => void;
+  /**
+   * Told how many networks are currently connected, whenever that changes.
+   *
+   * Android passes one: a phone will stop a backgrounded process holding open
+   * sockets unless the app is running a foreground service, so the shell has to
+   * say when there is a connection worth keeping alive and when there is not.
+   * Desktop and web pass nothing — neither platform kills an app for having a
+   * socket open, and a phone is the only one where staying connected has to be
+   * declared.
+   */
+  readonly onConnectionsChanged?: (connected: number) => void;
 }
 
 /** The whole client. */
@@ -290,6 +301,7 @@ export function Marmotter({
   secrets,
   windowChrome,
   resizeWindow,
+  onConnectionsChanged,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -427,6 +439,15 @@ export function Marmotter({
       }),
     [registry.profiles, registry.networks, view.networkOrder],
   );
+
+  // Registered rather than merely connected: a socket that is still negotiating
+  // has nothing to lose yet, and one that is reconnecting on its own backoff is
+  // not a reason to hold a phone awake.
+  const connectedCount = networks.filter((state) => state.phase === 'registered').length;
+
+  useEffect(() => {
+    onConnectionsChanged?.(connectedCount);
+  }, [connectedCount, onConnectionsChanged]);
 
   const editingProfile = editingId === undefined ? undefined : registry.profiles.get(editingId);
   const listingNetwork =
@@ -872,7 +893,7 @@ export function Marmotter({
   };
 
   const openLogFolder = (): void => {
-    void logs?.reveal().catch((error: unknown) => logError(String(error)));
+    void logs?.reveal?.().catch((error: unknown) => logError(String(error)));
   };
 
   const exportLogs = (): void => {
@@ -2045,12 +2066,15 @@ export function Marmotter({
   // The right-hand column carries the member list, for a channel. The DCC file
   // monitor used to sit under it here; it now lives at the foot of the sidebar
   // instead, so it has a home whether or not a channel is open.
-  const showMembers =
-    view.memberListOpen &&
+  // Whether this conversation has a member list at all, which is a different
+  // question from whether it is open — and the one the control that opens it
+  // has to be able to ask.
+  const membersAvailable =
     conversation !== undefined &&
     selection?.target !== undefined &&
     network !== undefined &&
     isChannel(selection.target, network.support);
+  const showMembers = view.memberListOpen && membersAvailable;
   const showDccPanel = view.userOptions.dccMonitorEnabled && dcc !== undefined;
   // While searching, the right-hand column shows the hits instead of the member
   // list — that is where CLAUDE-md-style the user asked to see every instance,
@@ -2139,21 +2163,20 @@ export function Marmotter({
               titleHint: 'Double-click to open channel settings',
             }
           : {})}
-        leading={
-          breakpoint === 'mobile' ? (
-            <IconButton
-              label="Show channels"
-              icon={<span aria-hidden="true">☰</span>}
-              onClick={() => setDrawerOpen(true)}
-            />
-          ) : (
-            <IconButton
-              label={view.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
-              icon={<span aria-hidden="true">◧</span>}
-              onClick={() => view.setSidebarCollapsed(!view.sidebarCollapsed)}
-            />
-          )
-        }
+        {...(breakpoint === 'mobile'
+          ? // No leading control on a phone. The channel list is opened by the
+            // handle against the left edge of the conversation, which points at
+            // where the panel comes from rather than sitting in a bar.
+            {}
+          : {
+              leading: (
+                <IconButton
+                  label={view.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+                  icon={<span aria-hidden="true">◧</span>}
+                  onClick={() => view.setSidebarCollapsed(!view.sidebarCollapsed)}
+                />
+              ),
+            })}
         trailing={
           <>
             {network === undefined || session === undefined ? null : (
@@ -2203,7 +2226,10 @@ export function Marmotter({
                     }
                   />
                 ) : null}
-                {isChannel(selection.target, network.support) ? (
+                {/* On a phone the member list has its own handle against the
+                    right edge, so the bar keeps only what a wider layout needs:
+                    there, the panel is a column and has no edge to come from. */}
+                {breakpoint !== 'mobile' && isChannel(selection.target, network.support) ? (
                   <IconButton
                     label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
                     icon={<span aria-hidden="true">≡</span>}
@@ -2237,9 +2263,14 @@ export function Marmotter({
                   policy: view.logging,
                   onChange: view.updateLogging,
                   location: logLocation,
-                  onChooseFolder: changeLogFolder,
-                  onOpenFolder: openLogFolder,
-                  onExport: exportLogs,
+                  // Each of these is offered only where the platform can
+                  // actually do it. Android has no folder picker, no save
+                  // dialog, and no file manager that will open an app's own
+                  // storage; a button that quietly did nothing would be worse
+                  // than no button.
+                  ...(chooseLogFolder === undefined ? {} : { onChooseFolder: changeLogFolder }),
+                  ...(logs.reveal === undefined ? {} : { onOpenFolder: openLogFolder }),
+                  ...(chooseExportFile === undefined ? {} : { onExport: exportLogs }),
                   onClear: clearLogs,
                   onPurgeNow: purgeLogsNow,
                   onSearch: () => view.setPane('log-search'),
@@ -2444,6 +2475,15 @@ export function Marmotter({
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
+        // The shell draws the handles against the screen edges; the bottom bar
+        // carries the same two controls otherwise. One placement or the other,
+        // never both — two ways to open one panel is one too many.
+        {...(view.appearance.sidePanelsAtEdges
+          ? {
+              onOpenSidebar: () => setDrawerOpen(true),
+              ...(membersAvailable ? { onOpenAside: () => view.setMemberListOpen(true) } : {}),
+            }
+          : {})}
         asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
@@ -2476,6 +2516,38 @@ export function Marmotter({
             <TabBar
               value={view.pane === 'chat' ? 'chats' : view.pane}
               onChange={(value) => view.setPane(value === 'chats' ? 'chat' : 'settings')}
+              // The two side panels, at the ends of the row where a thumb
+              // already is. Moved to the screen edges by a setting, and then
+              // drawn there instead of here rather than as well.
+              {...(view.appearance.sidePanelsAtEdges
+                ? {}
+                : {
+                    leading: (
+                      <IconButton
+                        label="Show channels"
+                        size="small"
+                        icon={<span aria-hidden="true">›</span>}
+                        onClick={() => setDrawerOpen(true)}
+                      />
+                    ),
+                    ...(membersAvailable
+                      ? {
+                          trailing: (
+                            <IconButton
+                              label={
+                                view.memberListOpen
+                                  ? 'Hide the member list'
+                                  : 'Show the member list'
+                              }
+                              size="small"
+                              pressed={view.memberListOpen}
+                              icon={<span aria-hidden="true">‹</span>}
+                              onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                            />
+                          ),
+                        }
+                      : {}),
+                  })}
               items={[
                 { value: 'chats', label: 'Chats', icon: <span aria-hidden="true">◍</span> },
                 { value: 'settings', label: 'Settings', icon: <span aria-hidden="true">⚙</span> },

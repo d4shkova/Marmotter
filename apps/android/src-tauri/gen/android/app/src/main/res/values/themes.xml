@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The interface is drawn edge to edge and paints its own background, so the
+      system bars are transparent and the page runs underneath them. Every edge
+      the platform claims is padded back out of the way in `packages/ui` from
+      `env(safe-area-inset-*)`, which is what `viewport-fit=cover` in
+      `index.html` makes mean something.
+    -->
+    <style name="Theme.Marmotter" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- Matches the bg-base token, so there is no white flash before the
+             webview paints. The one place a colour is repeated outside
+             tokens.css, because Android needs it before any CSS has loaded. -->
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

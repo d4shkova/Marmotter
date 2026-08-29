@@ -1,8 +1,9 @@
 # Building Marmotter — cheat sheet
 
-One codebase, two desktop builds. There is no cross-compiling: **build Linux on
-Linux and Windows on Windows.** For both without installing anything, push a tag
-and let CI do it.
+One codebase, two desktop builds and an APK. There is no cross-compiling
+between the desktops: **build Linux on Linux and Windows on Windows.** Android
+does cross-compile, from either. For all of them without installing anything,
+push a tag and let CI do it.
 
 Everything below is run from the repository root.
 
@@ -20,7 +21,7 @@ checkout, `git pull` before building.
 
 ---
 
-## Common to both
+## Common to all of them
 
 | Tool | Version | Get it                                                   |
 | ---- | ------- | -------------------------------------------------------- |
@@ -30,11 +31,13 @@ checkout, `git pull` before building.
 
 ```sh
 pnpm install          # once, and after any dependency change
-pnpm tauri build      # the whole thing: frontend, Rust, bundles
+pnpm tauri build      # the desktop app: frontend, Rust, bundles
 ```
 
 The workspace packages do **not** need building first — Vite resolves them to
-source. `pnpm install && pnpm tauri build` works from a clean checkout.
+source. `pnpm install && pnpm tauri build` works from a clean checkout. Android
+is the exception and is spelled out below: its Gradle build does not run Vite,
+so the frontend has to be built first.
 
 ---
 
@@ -178,6 +181,161 @@ were measured from a real build, the Windows ones were not.
 
 ---
 
+## Android
+
+### Prerequisites
+
+The Android SDK, an NDK, and a JDK. Android Studio installs all three; on a
+headless machine, the command-line tools plus:
+
+```sh
+export ANDROID_HOME="$HOME/Android/Sdk"     # wherever yours actually lives
+sdkmanager --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
+```
+
+Setting `ANDROID_NDK_HOME` is optional: with `ANDROID_HOME` set, the Gradle
+plugin uses the highest NDK installed under it. Set it when you have several
+and want a particular one — which is what CI does, so a release is always built
+against a known NDK rather than whichever the runner happened to have.
+
+Then the Rust targets:
+
+```sh
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+```
+
+### Build
+
+```sh
+pnpm -r --filter=./packages/* build
+pnpm --filter @marmotter/android build      # the frontend, into apps/android/dist
+cd apps/android/src-tauri/gen/android
+gradle wrapper                              # once; the wrapper jar is not committed
+./gradlew assembleDebug
+```
+
+**`pnpm --filter @marmotter/android build` has to run before Gradle does.**
+`tauri::generate_context!` embeds whatever `frontendDist` points at into the
+Rust library at compile time, so a missing `dist/` is not an error — it is a
+build that succeeds and ships a blank window.
+
+### Out
+
+`apps/android/src-tauri/gen/android/app/build/outputs/apk/debug/`, one APK per
+ABI plus a universal one. Install with:
+
+```sh
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+```
+
+### Live reload, if you want it
+
+The debug APK serves the frontend it was built with. That is deliberate: a
+`devUrl` in `tauri.conf.json` would make **every** debug build try to reach a
+dev server, and a phone's `localhost` is the phone — so an APK you just wanted
+to install would show "Failed to request http://localhost:1421" instead of the
+app.
+
+To iterate on the interface without rebuilding the Rust each time, set it up on
+purpose:
+
+```sh
+pnpm --filter @marmotter/android dev            # serves on :1421
+adb reverse tcp:1421 tcp:1421                   # the phone's :1421 is now yours
+```
+
+then add `"devUrl": "http://localhost:1421"` to `build` in
+`apps/android/src-tauri/tauri.conf.json` and build the library without
+`--features custom-protocol`, so it looks for that server instead of serving
+what it embedded. Take the URL back out before building an APK for anyone else
+— there is a test that fails if you forget.
+
+### Debug, not release, until there is a keystore
+
+**`assembleRelease` produces APKs nothing can install.** Android has no "allow
+unsigned" setting: an APK with no signature is refused by the package installer
+and by `adb install` alike, and the refusal is silent in a file manager. A debug
+build is signed, with a keystore Gradle generates for you, which is why it is
+the one to put on a phone.
+
+Release is still worth building — it is what runs R8 and the resource shrinker —
+it just cannot leave your machine. Wiring a real keystore is a follow-up; it is
+deliberately not half-done, because a build that looks signed and is not is
+worse than one that plainly is not.
+
+### What the app does and does not do in the background
+
+Marmotter runs a foreground service while any network is connected, which is
+the only way Android will let a backgrounded app keep a socket open. The
+ongoing notification it puts in the shade is not decoration — it is how you see
+that the app is holding connections open, and how you stop it.
+
+It still is not reliable presence, and the app does not pretend otherwise.
+Android may stop the service under memory pressure or a battery saver, and a
+doze window suspends the network long before the process goes. **If you want to
+be sure you are still in the channel an hour later, point Marmotter at a
+bouncer** — your own [ZNC](https://znc.in) or [soju](https://soju.im) — and add
+it as an ordinary network profile:
+
+- Host and port: your bouncer's, with TLS on.
+- Password: for ZNC, `username/network:password`; for soju,
+  `username/network` with your password. Either goes in the profile's
+  server-password field, or SASL PLAIN where your bouncer supports it.
+
+The bouncer stays connected, holds the backlog, and replays it when the phone
+comes back. That is what it is for, and it is a better answer than any amount
+of fighting the platform's power management — which is why there is no push
+infrastructure here and never will be. See CLAUDE.md.
+
+### Two things that catch people out
+
+- **A blank window** almost always means `dist/` was stale or missing when
+  cargo ran. Rebuild the frontend, then Gradle.
+- **"This app isn't 16 KB compatible"** means the native library was linked
+  with the old 4 KB page alignment. The build asks for 16 KB explicitly; if you
+  see this, check whether `RUSTFLAGS` is set in your shell in a way that
+  displaced it, and confirm with:
+
+  ```sh
+  llvm-readelf -l lib/arm64-v8a/libmarmotter_android_lib.so | grep LOAD
+  ```
+
+  The `Align` column should read `0x4000`, not `0x1000`.
+
+- **Nothing in logcat from the app itself.** The shell logs to logcat under
+  the tag `Marmotter`, starting with a line as `run` is entered:
+
+  ```sh
+  adb logcat -s Marmotter
+  ```
+
+  If that line never appears, the Rust entry point was not reached and the
+  problem is on the Kotlin or JNI side rather than in the app.
+
+- **`frontendDist` … doesn't exist** from cargo means `dist/` was not built
+  before the Rust was. That is the intended failure: the alternative is a
+  library that embeds nothing and asks a dev server for the interface at
+  runtime.
+- **A black screen and no error** usually means the page loaded and rendered
+  nothing, because `--bg-base` is black. Open `chrome://inspect/#devices` in
+  Chrome on the desktop with the app running: a debug build has webview
+  DevTools, so the console is right there. The Rust profile follows the Gradle
+  variant, so `assembleDebug` is what makes that possible —
+  `-Pmarmotter.cargoProfile=debug` forces it if you are building some other
+  task.
+- **`No NDK is installed under …`** means exactly that; the message names the
+  `sdkmanager` line to fix it. The plugin will find an installed NDK on its own
+  but will not invent a path to one, because a wrong path produces a library
+  that fails to load on the phone rather than a build error.
+- **`icons/icon.ico not found`** from `cargo check --workspace` on Windows is
+  not an Android problem. tauri-build generates a Windows resource for every
+  Tauri crate when the host is Windows, including this one, so the `.ico` is
+  kept beside the app for that reason alone. If it goes missing, copy
+  `apps/desktop/src-tauri/icons/icon.ico` back into
+  `apps/android/src-tauri/icons/`.
+
+---
+
 ## Let CI build both
 
 ```sh
@@ -186,7 +344,9 @@ git tag v0.1.0 && git push origin v0.1.0
 
 `.github/workflows/release.yml` builds Linux (deb, AppImage) and Windows (MSI,
 NSIS) and attaches the installers to a **draft** release — so nothing is public
-until you publish it.
+until you publish it. It also builds the Android APKs and uploads them as a
+workflow artifact rather than attaching them to the release, because they are
+unsigned.
 
 ---
 
@@ -195,6 +355,7 @@ until you publish it.
 ```sh
 pnpm tauri dev     # desktop shell, frontend hot-reloads, no bundle step
 pnpm dev:web       # browser build on http://localhost:5173
+pnpm --filter @marmotter/android dev   # the Android frontend, on :1421
 ```
 
 ## Before pushing

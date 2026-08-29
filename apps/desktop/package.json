@@ -13,12 +13,11 @@
   },
   "dependencies": {
     "@marmotter/client": "workspace:*",
+    "@marmotter/platform-tauri": "workspace:*",
     "@marmotter/shared": "workspace:*",
     "@marmotter/ui": "workspace:*",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
-    "@tauri-apps/plugin-notification": "^2.3.3",
-    "@tauri-apps/plugin-sql": "^2.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

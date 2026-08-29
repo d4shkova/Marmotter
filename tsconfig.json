@@ -11,7 +11,8 @@
       "@marmotter/protocol": ["./packages/protocol/src/index.ts"],
       "@marmotter/shared": ["./packages/shared/src/index.ts"],
       "@marmotter/client": ["./packages/client/src/index.ts"],
-      "@marmotter/ui": ["./packages/ui/src/index.ts"]
+      "@marmotter/ui": ["./packages/ui/src/index.ts"],
+      "@marmotter/platform-tauri": ["./packages/platform-tauri/src/index.ts"]
     }
   },
   "include": [

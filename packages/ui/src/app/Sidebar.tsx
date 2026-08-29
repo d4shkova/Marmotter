@@ -4,6 +4,7 @@ import { cn } from '../lib/cn.js';
 import { Badge, type ConnectionStatus, StatusDot } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
+import { SwipeRow, type SwipeAction } from '../primitives/SwipeRow.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { IconButton } from '../primitives/IconButton.js';
 import type { TargetRef, Unread } from './view-store.js';
@@ -383,48 +384,60 @@ function NetworkGroup({
         <ul className="flex flex-col">
           {channels.map((channel) => (
             <li key={channel.name}>
-              <ConversationRow
-                label={channel.name}
-                kind="channel"
-                ref_={{ networkId: network.id, target: channel.name }}
-                selection={selection}
-                onSelect={onSelect}
-                unread={unreadFor({ networkId: network.id, target: channel.name })}
+              <SwipeRow
                 {...(conversationMenu === undefined
                   ? {}
-                  : {
-                      onContextMenu: (event: MouseEvent) =>
-                        onOpenMenu(
-                          event,
-                          `Actions for ${channel.name}`,
-                          conversationMenu(network, channel.name, 'channel'),
-                        ),
-                    })}
-              />
+                  : swipeActionsFrom(conversationMenu(network, channel.name, 'channel')))}
+              >
+                <ConversationRow
+                  label={channel.name}
+                  kind="channel"
+                  ref_={{ networkId: network.id, target: channel.name }}
+                  selection={selection}
+                  onSelect={onSelect}
+                  unread={unreadFor({ networkId: network.id, target: channel.name })}
+                  {...(conversationMenu === undefined
+                    ? {}
+                    : {
+                        onContextMenu: (event: MouseEvent) =>
+                          onOpenMenu(
+                            event,
+                            `Actions for ${channel.name}`,
+                            conversationMenu(network, channel.name, 'channel'),
+                          ),
+                      })}
+                />
+              </SwipeRow>
             </li>
           ))}
 
           {queries.map((query) => (
             <li key={query.name}>
-              <ConversationRow
-                label={query.name}
-                tag="Person"
-                kind="person"
-                ref_={{ networkId: network.id, target: query.name }}
-                selection={selection}
-                onSelect={onSelect}
-                unread={unreadFor({ networkId: network.id, target: query.name })}
+              <SwipeRow
                 {...(conversationMenu === undefined
                   ? {}
-                  : {
-                      onContextMenu: (event: MouseEvent) =>
-                        onOpenMenu(
-                          event,
-                          `Actions for ${query.name}`,
-                          conversationMenu(network, query.name, 'person'),
-                        ),
-                    })}
-              />
+                  : swipeActionsFrom(conversationMenu(network, query.name, 'person')))}
+              >
+                <ConversationRow
+                  label={query.name}
+                  tag="Person"
+                  kind="person"
+                  ref_={{ networkId: network.id, target: query.name }}
+                  selection={selection}
+                  onSelect={onSelect}
+                  unread={unreadFor({ networkId: network.id, target: query.name })}
+                  {...(conversationMenu === undefined
+                    ? {}
+                    : {
+                        onContextMenu: (event: MouseEvent) =>
+                          onOpenMenu(
+                            event,
+                            `Actions for ${query.name}`,
+                            conversationMenu(network, query.name, 'person'),
+                          ),
+                      })}
+                />
+              </SwipeRow>
             </li>
           ))}
 
@@ -445,6 +458,36 @@ function NetworkGroup({
       )}
     </section>
   );
+}
+
+/**
+ * The two actions a finger can reach by dragging a row aside.
+ *
+ * Read out of the row's own menu rather than passed in beside it. They are the
+ * same actions with the same handlers, so deriving them is what stops a swipe
+ * and a long-press from ever doing different things — and means a change to
+ * either action is made in one place.
+ *
+ * Marking read is offered only when there is something to mark, which is the
+ * same condition that greys it out in the menu. Leaving is destructive and
+ * `SwipeRow` makes it need most of the row's width, so brushing the list while
+ * scrolling cannot drop somebody out of a channel.
+ */
+function swipeActionsFrom(items: readonly MenuItem[]): {
+  leading?: SwipeAction;
+  trailing?: SwipeAction;
+} {
+  const read = items.find((item) => item.id === 'read');
+  const remove = items.find((item) => item.id === 'leave' || item.id === 'close');
+
+  return {
+    ...(read === undefined || read.disabled === true
+      ? {}
+      : { leading: { label: read.label, onAction: read.onSelect } }),
+    ...(remove === undefined
+      ? {}
+      : { trailing: { label: remove.label, onAction: remove.onSelect, destructive: true } }),
+  };
 }
 
 /** What colour a row's name is drawn in, by what the row stands for. */

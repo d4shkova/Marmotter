@@ -81,8 +81,15 @@ export interface LogStore {
 
   location(): Promise<LogLocation>;
 
-  /** Shows the log folder in the platform's file manager. */
-  reveal(): Promise<void>;
+  /**
+   * Shows the log folder in the platform's file manager.
+   *
+   * Absent where the platform has none to show it in. Android is the case that
+   * matters: an app's own storage is not somewhere the file manager will open,
+   * and a button that silently did nothing would be worse than no button. The
+   * settings screen hides the control when this is missing.
+   */
+  reveal?(): Promise<void>;
 
   /** Deletes everything, for somebody who wants it all gone now. */
   clear(): Promise<number>;

@@ -1,27 +1,45 @@
 import { Marmotter } from '@marmotter/ui';
+import {
+  createLogStore,
+  createNotifier,
+  createPreferences,
+  createSecrets,
+  createTransport,
+  openExternalUrl,
+} from '@marmotter/platform-tauri';
 import { open as openDialog, save } from '@tauri-apps/plugin-dialog';
+import { UserAttentionType, getCurrentWindow } from '@tauri-apps/api/window';
 import { type JSX, useMemo } from 'react';
 import { createDesktopDcc } from './dcc';
-import { createDesktopLogStore } from './logging';
-import { createDesktopNotifier } from './notifier';
-import { createDesktopPreferences } from './preferences';
-import { createDesktopSecrets } from './secrets';
-import { openExternalUrl } from './opener';
-import { createDesktopTransport } from './transport';
 import { DRAG_PROPS, startResize, useWindowChrome, windowControls } from './window';
 
 /**
  * The desktop app.
  *
- * The shell itself lives in `@marmotter/ui` and is shared with the web build;
- * what differs here is the platform's own capabilities — a real socket through
- * Rust, notifications, the DCC file monitor, and somewhere to keep logs.
+ * The shell itself lives in `@marmotter/ui` and is shared with the web build,
+ * and the platform capabilities a Tauri shell provides live in
+ * `@marmotter/platform-tauri` and are shared with the Android build. What is
+ * left here is what only a desktop has: a window of its own to draw chrome for,
+ * and the DCC file monitor.
  */
 export function App(): JSX.Element {
-  const notifier = useMemo(() => createDesktopNotifier(), []);
+  const notifier = useMemo(
+    () =>
+      createNotifier({
+        // The plugin has no click-to-focus callback on desktop, so the window
+        // asks for attention itself: a taskbar flash on Windows, whatever the
+        // desktop environment does on Linux. Informational rather than
+        // critical — a mention is not an emergency. Android passes nothing
+        // here; its notification is already in the system tray.
+        afterShow: () => {
+          void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
+        },
+      }),
+    [],
+  );
   const dcc = useMemo(() => createDesktopDcc(), []);
-  const preferences = useMemo(() => createDesktopPreferences(), []);
-  const secrets = useMemo(() => createDesktopSecrets(), []);
+  const preferences = useMemo(() => createPreferences(), []);
+  const secrets = useMemo(() => createSecrets(), []);
   const controls = useMemo(() => windowControls(), []);
   const chrome = useWindowChrome();
 
@@ -44,7 +62,7 @@ export function App(): JSX.Element {
       // window has nothing to resize and its edges are the screen's, where a
       // strip that swallowed clicks would be in the way rather than useful.
       {...(chrome.maximized ? {} : { resizeWindow: startResize })}
-      createTransport={() => createDesktopTransport()}
+      createTransport={() => createTransport()}
       notifier={notifier}
       dcc={dcc}
       openExternal={openExternalUrl}
@@ -52,7 +70,7 @@ export function App(): JSX.Element {
       // user has chosen. Web passes nothing here and must keep passing nothing:
       // that absence is what guarantees a browser tab cannot persist message
       // content. See CLAUDE.md.
-      createLogStore={createDesktopLogStore}
+      createLogStore={createLogStore}
       // The name and fallbacks given at first run, kept in the app data folder.
       // No password ever goes in that file; those resolve against the keychain.
       preferences={preferences}

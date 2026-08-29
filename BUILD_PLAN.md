@@ -566,6 +566,17 @@ verify by inspection in a test.
 
 ## Phase 9 — Android
 
+> **Two decisions, 2026-08-29.** Secrets on Android go to the Android Keystore
+> through a Kotlin plugin (`EncryptedSharedPreferences`), because `keyring` has
+> no Android backend and asking for a password on every launch was judged too
+> cumbersome to ship. And `gen/android` is committed and hand-written rather
+> than generated, so the manifest, the foreground service and the keystore
+> plugin are reviewable here; its Gradle plugin for the Rust cross-build is
+> ours and deliberately small rather than an imitation of the one the Tauri CLI
+> generates. The APK is **unsigned** for now — wiring a keystore into the
+> release job is a follow-up, and a build that looks signed and is not is worse
+> than one that plainly is not.
+
 - Tauri v2 mobile target. `TauriTransport` works unchanged.
 - Mobile layout: bottom tabs, slide-over channel list, bottom-sheet member list,
   swipe actions, safe-area insets, keyboard avoidance.

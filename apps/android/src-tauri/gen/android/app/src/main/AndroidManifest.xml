@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- IRC over a socket. The whole app. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      Mentions, and the ongoing notice the foreground service is required to
+      show. Runtime-requested on Android 13 and later, and denying it costs
+      notifications and nothing else — the client asks once and carries on.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Holding a connection open while the app is not in front. Android 14 and
+      later want the reason declared as well as the permission; reading and
+      writing a socket on the user's behalf is `dataSync`.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+      Deliberately absent, and each for a reason:
+
+      - No storage permissions. Logs go to the app's own storage, which needs
+        none, and asking for one would be asking to read the whole device to
+        write a file we already have somewhere to put.
+      - No REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. The app is not entitled to
+        exempt itself from the platform's power management, and somebody who
+        needs presence they can rely on wants a bouncer instead.
+      - No location, contacts, camera, or microphone. An IRC client has no
+        business with any of them.
+    -->
+
+    <!--
+      No android:name on the application. There is no Tauri Application class to
+      subclass — the lifecycle wiring lives in the generated TauriActivity,
+      which registers its observer with ProcessLifecycleOwner. Naming a class
+      that does not exist here is fatal at process start, before any of this
+      app's own code runs.
+    -->
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Marmotter">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Marmotter"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize">
+            <!--
+              `configChanges` is what makes a rotation survive: the activity is
+              told the configuration moved rather than being destroyed and
+              rebuilt, so the webview, the session and the scrollback are all
+              still there afterwards. BUILD_PLAN's acceptance asks for exactly
+              that.
+
+              `adjustResize` shrinks the layout viewport when the keyboard
+              opens, which is the behaviour `useKeyboardInset` prefers and
+              measures for; it falls back to measuring the overlap where a
+              WebView ignores it.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

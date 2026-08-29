@@ -19,12 +19,28 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const appDir = fileURLToPath(new URL('..', import.meta.url));
+
+/**
+ * Vite's own entry point, run with the Node already running this test.
+ *
+ * Deliberately not `npx`. On Windows the launcher is `npx.cmd`, and
+ * `execFileSync` does not apply `PATHEXT` — so the whole suite failed there
+ * with `spawnSync npx ENOENT` while passing everywhere else. Resolving the
+ * script and handing it to `process.execPath` needs no shell, no `PATH` lookup
+ * and no launcher, which makes it the same call on every platform.
+ */
+const viteBin = join(
+  dirname(createRequire(import.meta.url).resolve('vite/package.json')),
+  'bin',
+  'vite.js',
+);
 
 /**
  * Ways a browser can keep something between page loads.
@@ -62,7 +78,7 @@ beforeAll(() => {
   try {
     // The real production build, with the real minifier and the real tree
     // shaking. Anything the bundle would ship, it ships here.
-    execFileSync('npx', ['vite', 'build', '--outDir', out, '--emptyOutDir'], {
+    execFileSync(process.execPath, [viteBin, 'build', '--outDir', out, '--emptyOutDir'], {
       cwd: appDir,
       stdio: 'pipe',
     });

@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Baseline capability set for the Marmotter Android activity.",
+  "platforms": ["android"],
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default", "sql:default"]
+}

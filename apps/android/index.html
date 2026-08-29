@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` puts the page under the status and navigation bars
+      rather than in a letterbox between them, which is what makes
+      `env(safe-area-inset-*)` mean anything. Every edge the interface draws
+      against pads itself back out of the way; see `packages/ui`.
+
+      `interactive-widget=resizes-content` is what makes the software keyboard
+      shrink the layout viewport instead of sliding it up. Without it the
+      composer is pushed off the top of a scrolled message list and the list
+      cannot be reached while typing.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="dark" />
+    <title>Marmotter</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

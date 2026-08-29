@@ -48,15 +48,30 @@ marmotter/
 │   ├── protocol/        # Pure TS. No I/O, no React. IRC parser + IRCv3.
 │   ├── client/          # Connection state machine, event → state reduction
 │   ├── ui/              # React components, design system
-│   └── shared/          # Types shared across packages
+│   ├── shared/          # Types shared across packages
+│   └── platform-tauri/  # Capabilities the two Tauri shells share
 ├── apps/
 │   ├── desktop/         # Tauri v2 app (Linux, Windows)
 │   ├── web/             # Vite web build
-│   └── android/         # Tauri v2 mobile, later
+│   └── android/         # Tauri v2 mobile
 ├── crates/
-│   └── marmotter-transport/ # Rust: TCP/TLS sockets, exposed as Tauri commands
+│   ├── marmotter-transport/ # Rust: TCP/TLS sockets
+│   └── marmotter-shell/     # Tauri commands both shells share
 └── relay/               # Go stateless WSS↔TCP relay
 ```
+
+`platform-tauri` and `marmotter-shell` are the same decision made twice, once
+per language. The desktop and Android apps are two shells over one interface,
+and most of what they give the shell is the same code calling the same
+commands — the socket, the log files, the settings file, the notification
+service. Duplicating that would mean two copies of the log stores and the
+preference parser, which are the files where a quiet divergence loses somebody
+their scrollback or their networks. What stays in each app is what only that
+platform has: window chrome and the DCC file monitor on desktop; the keystore,
+the link intent and the foreground service on Android.
+
+**The web build imports neither, and must keep importing neither.** That
+absence is what guarantees a browser tab cannot persist message content.
 
 ## Critical architectural rule
 

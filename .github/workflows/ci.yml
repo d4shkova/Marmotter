@@ -132,6 +132,27 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the Android frontend
+        # `marmotter-android` has no `devUrl`, so `generate_context!` embeds
+        # `apps/android/dist` and will not compile without it — not only for the
+        # APK, but for `cargo check` and `cargo clippy` too. That is the
+        # behaviour we want: a missing frontend should stop the build rather
+        # than ship an app that asks a dev server for its interface.
+        #
+        # `apps/desktop` keeps its `devUrl` and needs no such step. Vite
+        # resolves the workspace packages to source, so the app's own build is
+        # all this needs.
+        run: pnpm --filter @marmotter/android build
+
       - name: Install ergo
         # The transport integration tests connect to a real IRC server rather
         # than a mock, so one has to exist.

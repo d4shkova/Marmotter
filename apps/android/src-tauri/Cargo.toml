@@ -1,0 +1,63 @@
+[package]
+name = "marmotter-android"
+description = "Marmotter Android shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "marmotter_android_lib"
+# `cdylib` is the one that matters here: an Android app loads the Rust side as a
+# shared library through JNI, not as an executable.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[features]
+# Serve the frontend embedded in this library, rather than fetching it over
+# HTTP from a dev server.
+#
+# Tauri decides that from this feature and nothing else: `dev` is `!custom-
+# protocol`, whatever the cargo profile. The Tauri CLI passes it on production
+# builds, which is why `apps/desktop` needs no such line — but the APK is built
+# by Gradle rather than the CLI, so RustPlugin passes it there.
+#
+# Deliberately not a default. Cargo compiles `tauri` once for the whole
+# workspace with the union of every crate's features, so a default here reaches
+# `marmotter-desktop` too and takes it out of dev mode — which shows up as the
+# desktop crate demanding a `dist/` that nothing asked anyone to build. Off by
+# default, on where it is meant.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The socket, the log files and the settings file, shared with the desktop
+# shell. Everything else in this crate is something only Android does.
+marmotter-shell = { path = "../../../crates/marmotter-shell" }
+tauri = { version = "2", features = [] }
+# An Android WebView has no web Notification API, so a mention reaches the
+# system tray through the plugin or not at all.
+tauri-plugin-notification = "2"
+# The local log database, off by default and empty until somebody switches
+# logging on.
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+# Handing a link to the platform. On Android this becomes an ACTION_VIEW intent,
+# which is why the desktop's `opener` crate is not what is used here — it has no
+# Android support at all.
+tauri-plugin-opener = "2"
+# The payloads crossing to the Kotlin keystore plugin.
+serde = { version = "1", features = ["derive"] }
+# Warnings from the connection service go to logcat, which is where an
+# Android problem is actually looked for.
+log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# What puts `log` output into logcat. Without it every `log::` call in this
+# crate and in Tauri goes nowhere, which is exactly as useful as it sounds when
+# an app starts and draws nothing: there is no way to tell a shell that never
+# ran from one that ran and failed. Installed first thing in `run`.
+android_logger = "0.14"

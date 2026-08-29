@@ -910,6 +910,24 @@
   --hairline: 0.5px;
   --blur-vibrancy: blur(20px) saturate(180%);
 
+  /*
+   * The edges the platform has already spoken for.
+   *
+   * A status bar, a gesture handle, a camera cutout, the rounded corners of a
+   * phone screen. `env()` resolves to zero everywhere that has none of those —
+   * every desktop window and every ordinary browser tab — so components pad
+   * themselves against these unconditionally and no layout needs to know which
+   * platform it is running on.
+   *
+   * They mean anything at all only because the Android build's viewport meta
+   * says `viewport-fit=cover`; without it the page is letterboxed between the
+   * system bars and every one of these is zero. See `apps/android/index.html`.
+   */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
   --duration-sheet: 200ms;
   --easing-sheet: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-press: 120ms;

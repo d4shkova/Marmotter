@@ -1,0 +1,30 @@
+{
+  "name": "@marmotter/platform-tauri",
+  "version": "1.0.5",
+  "private": true,
+  "type": "module",
+  "description": "Platform capabilities shared by the Tauri shells: desktop and Android.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@marmotter/client": "workspace:*",
+    "@marmotter/shared": "workspace:*",
+    "@marmotter/ui": "workspace:*",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-sql": "^2.4.0"
+  }
+}
