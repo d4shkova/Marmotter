@@ -406,6 +406,15 @@ export function Settings({
                 </div>
 
                 <div className="px-4 py-2.5">
+                  <Toggle
+                    label="Put the channel and member buttons on the screen edges"
+                    hint="On a phone. They sit at the ends of the bottom bar otherwise, where your thumb already is."
+                    checked={appearance.sidePanelsAtEdges}
+                    onChange={(sidePanelsAtEdges) => onAppearanceChange({ sidePanelsAtEdges })}
+                  />
+                </div>
+
+                <div className="px-4 py-2.5">
                   <Stepper
                     label="How long notices stay"
                     value={userOptions.toastSeconds}

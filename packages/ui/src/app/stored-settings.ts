@@ -93,6 +93,7 @@ function readAppearance(value: unknown): Appearance {
       fields['showBrowseChannelsShortcut'],
       DEFAULT_APPEARANCE.showBrowseChannelsShortcut,
     ),
+    sidePanelsAtEdges: bool(fields['sidePanelsAtEdges'], DEFAULT_APPEARANCE.sidePanelsAtEdges),
   };
 }
 
@@ -181,6 +182,7 @@ export function writeStoredSettings(settings: StoredSettings): Record<string, un
       highlightWords: [...settings.appearance.highlightWords],
       notificationsEnabled: settings.appearance.notificationsEnabled,
       showBrowseChannelsShortcut: settings.appearance.showBrowseChannelsShortcut,
+      sidePanelsAtEdges: settings.appearance.sidePanelsAtEdges,
     },
     ctcp: {
       version: settings.ctcp.version,

@@ -2475,8 +2475,15 @@ export function Marmotter({
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
-        onOpenSidebar={() => setDrawerOpen(true)}
-        {...(membersAvailable ? { onOpenAside: () => view.setMemberListOpen(true) } : {})}
+        // The shell draws the handles against the screen edges; the bottom bar
+        // carries the same two controls otherwise. One placement or the other,
+        // never both — two ways to open one panel is one too many.
+        {...(view.appearance.sidePanelsAtEdges
+          ? {
+              onOpenSidebar: () => setDrawerOpen(true),
+              ...(membersAvailable ? { onOpenAside: () => view.setMemberListOpen(true) } : {}),
+            }
+          : {})}
         asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
@@ -2509,32 +2516,38 @@ export function Marmotter({
             <TabBar
               value={view.pane === 'chat' ? 'chats' : view.pane}
               onChange={(value) => view.setPane(value === 'chats' ? 'chat' : 'settings')}
-              // The same two panels the handles against the screen edges open,
-              // repeated where a thumb already is. Both are shortcuts to one
-              // thing rather than two ways of doing different things.
-              leading={
-                <IconButton
-                  label="Show channels"
-                  size="small"
-                  icon={<span aria-hidden="true">›</span>}
-                  onClick={() => setDrawerOpen(true)}
-                />
-              }
-              {...(membersAvailable
-                ? {
-                    trailing: (
+              // The two side panels, at the ends of the row where a thumb
+              // already is. Moved to the screen edges by a setting, and then
+              // drawn there instead of here rather than as well.
+              {...(view.appearance.sidePanelsAtEdges
+                ? {}
+                : {
+                    leading: (
                       <IconButton
-                        label={
-                          view.memberListOpen ? 'Hide the member list' : 'Show the member list'
-                        }
+                        label="Show channels"
                         size="small"
-                        pressed={view.memberListOpen}
-                        icon={<span aria-hidden="true">‹</span>}
-                        onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                        icon={<span aria-hidden="true">›</span>}
+                        onClick={() => setDrawerOpen(true)}
                       />
                     ),
-                  }
-                : {})}
+                    ...(membersAvailable
+                      ? {
+                          trailing: (
+                            <IconButton
+                              label={
+                                view.memberListOpen
+                                  ? 'Hide the member list'
+                                  : 'Show the member list'
+                              }
+                              size="small"
+                              pressed={view.memberListOpen}
+                              icon={<span aria-hidden="true">‹</span>}
+                              onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                            />
+                          ),
+                        }
+                      : {}),
+                  })}
               items={[
                 { value: 'chats', label: 'Chats', icon: <span aria-hidden="true">◍</span> },
                 { value: 'settings', label: 'Settings', icon: <span aria-hidden="true">⚙</span> },

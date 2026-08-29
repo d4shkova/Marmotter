@@ -503,6 +503,7 @@ describe('every component passes axe', () => {
           highlightWords: [],
           notificationsEnabled: true,
           showBrowseChannelsShortcut: true,
+          sidePanelsAtEdges: false,
         }}
         onAppearanceChange={noop}
         ctcp={DEFAULT_CTCP_POLICY}
@@ -705,6 +706,7 @@ describe('the settings sections', () => {
         highlightWords: [],
         notificationsEnabled: true,
         showBrowseChannelsShortcut: true,
+        sidePanelsAtEdges: false,
       }}
       onAppearanceChange={noop}
       ctcp={DEFAULT_CTCP_POLICY}

@@ -316,6 +316,16 @@ export interface Appearance {
    * take the action they came for.
    */
   readonly showBrowseChannelsShortcut: boolean;
+  /**
+   * Puts the two side-panel controls against the edges of the conversation
+   * rather than at the ends of the bottom bar.
+   *
+   * Phone widths only — every wider layout has both panels on screen or in the
+   * nav bar. The bar is the default because that is where a thumb already is
+   * and it costs the conversation nothing; the edges are larger targets, and
+   * sit beside the panel each one opens.
+   */
+  readonly sidePanelsAtEdges: boolean;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -328,6 +338,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   highlightWords: [],
   notificationsEnabled: true,
   showBrowseChannelsShortcut: true,
+  sidePanelsAtEdges: false,
 };
 
 const keyOf = (ref: TargetRef): string => `${ref.networkId} ${ref.target ?? ''}`;
