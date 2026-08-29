@@ -110,7 +110,10 @@ describe('the manifest', () => {
 describe('the Tauri configuration', () => {
   const config = JSON.parse(
     readFileSync(fileURLToPath(new URL('../src-tauri/tauri.conf.json', import.meta.url)), 'utf8'),
-  ) as { app?: { windows?: unknown[] }; build?: { frontendDist?: string } };
+  ) as {
+    app?: { windows?: unknown[] };
+    build?: { frontendDist?: string; devUrl?: string };
+  };
 
   /**
    * On Android the window is the webview. Tauri creates its windows from this
@@ -129,5 +132,18 @@ describe('the Tauri configuration', () => {
    */
   it('points at the frontend the Android build produces', () => {
     expect(config.build?.frontendDist).toBe('../dist');
+  });
+
+  /**
+   * A `devUrl` is what Tauri loads instead of the embedded frontend whenever
+   * the Rust side is built in debug — which is every installable APK this
+   * project produces, because debug is the only variant that can be signed.
+   * The result is a phone trying to reach a dev server on its own localhost:
+   * "Failed to request http://localhost:1421". Live reload needs `adb reverse`
+   * as well as a URL, so it is set up deliberately rather than left on by
+   * default; see docs/BUILDING.md.
+   */
+  it('has no devUrl, so a debug build serves what it embedded', () => {
+    expect(config.build?.devUrl).toBeUndefined();
   });
 });

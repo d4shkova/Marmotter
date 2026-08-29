@@ -228,6 +228,27 @@ ABI plus a universal one. Install with:
 adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
 
+### Live reload, if you want it
+
+The debug APK serves the frontend it was built with. That is deliberate: a
+`devUrl` in `tauri.conf.json` would make **every** debug build try to reach a
+dev server, and a phone's `localhost` is the phone — so an APK you just wanted
+to install would show "Failed to request http://localhost:1421" instead of the
+app.
+
+To iterate on the interface without rebuilding the Rust each time, set it up on
+purpose:
+
+```sh
+pnpm --filter @marmotter/android dev            # serves on :1421
+adb reverse tcp:1421 tcp:1421                   # the phone's :1421 is now yours
+```
+
+then add `"devUrl": "http://localhost:1421"` to `build` in
+`apps/android/src-tauri/tauri.conf.json` and rebuild once. Take it out again
+before building an APK for anyone else — there is a test that fails if you
+forget.
+
 ### Debug, not release, until there is a keystore
 
 **`assembleRelease` produces APKs nothing can install.** Android has no "allow
