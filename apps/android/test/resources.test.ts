@@ -157,13 +157,31 @@ describe('the Android crate', () => {
   /**
    * Tauri serves its embedded frontend only when `custom-protocol` is on:
    * internally `dev` is `!custom-protocol`, regardless of the cargo profile.
-   * The Tauri CLI passes the feature on production builds, but the APK is built
-   * by Gradle rather than the CLI, so it has to be a default here — without it
-   * every build asks a dev server for the interface, and a phone's localhost is
-   * the phone.
+   * The Tauri CLI passes it on production builds; the APK is built by Gradle,
+   * so RustPlugin passes it instead.
+   *
+   * It must not be a default. Cargo compiles `tauri` once for the whole
+   * workspace with the union of every crate's features, so a default here
+   * reaches `marmotter-desktop` too and takes it out of dev mode — which
+   * surfaces as the desktop crate demanding a `dist/` nobody asked for,
+   * and only when the two crates are built in the same invocation.
    */
-  it('serves its embedded frontend by default', () => {
-    expect(manifest).toContain('default = ["custom-protocol"]');
+  it('offers custom-protocol without turning it on for the workspace', () => {
     expect(manifest).toContain('custom-protocol = ["tauri/custom-protocol"]');
+    expect(manifest).not.toContain('default = [');
+  });
+
+  it('has the Android build pass it, since nothing else will', () => {
+    const plugin = readFileSync(
+      fileURLToPath(
+        new URL(
+          '../src-tauri/gen/android/buildSrc/src/main/java/uk/co/dashkova/marmotter/RustPlugin.kt',
+          import.meta.url,
+        ),
+      ),
+      'utf8',
+    );
+
+    expect(plugin).toContain('"--features", "custom-protocol"');
   });
 });

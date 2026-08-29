@@ -16,19 +16,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 unsafe_code = "forbid"
 
 [features]
-# Serve the frontend that is embedded in this library, rather than fetching it
-# over HTTP from a dev server.
+# Serve the frontend embedded in this library, rather than fetching it over
+# HTTP from a dev server.
 #
 # Tauri decides that from this feature and nothing else: `dev` is `!custom-
 # protocol`, whatever the cargo profile. The Tauri CLI passes it on production
-# builds, which is why `apps/desktop` needs no such line — but the Android APK
-# is built by Gradle rather than the CLI, so nothing was passing it and every
-# build, debug and release alike, tried to reach a dev server that was not
-# there. On a phone that is its own localhost, so it never could be.
+# builds, which is why `apps/desktop` needs no such line — but the APK is built
+# by Gradle rather than the CLI, so RustPlugin passes it there.
 #
-# Default on, because an installable APK is the ordinary case. Live reload
-# wants it off — see docs/BUILDING.md.
-default = ["custom-protocol"]
+# Deliberately not a default. Cargo compiles `tauri` once for the whole
+# workspace with the union of every crate's features, so a default here reaches
+# `marmotter-desktop` too and takes it out of dev mode — which shows up as the
+# desktop crate demanding a `dist/` that nothing asked anyone to build. Off by
+# default, on where it is meant.
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]

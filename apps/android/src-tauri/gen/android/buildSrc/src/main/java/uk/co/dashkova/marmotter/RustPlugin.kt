@@ -169,6 +169,12 @@ abstract class CargoBuildTask : DefaultTask() {
             commandLine(
                 buildList {
                     addAll(listOf("cargo", "build", "--lib", "--target", triple))
+                    // Serves the frontend this library embeds instead of
+                    // asking a dev server for it. Not a default feature: it
+                    // would reach the desktop crate through cargo's
+                    // workspace-wide feature unification. See the crate's
+                    // Cargo.toml.
+                    addAll(listOf("--features", "custom-protocol"))
                     if (profile == "release") {
                         add("--release")
                     }

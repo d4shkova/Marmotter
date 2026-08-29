@@ -245,10 +245,10 @@ adb reverse tcp:1421 tcp:1421                   # the phone's :1421 is now yours
 ```
 
 then add `"devUrl": "http://localhost:1421"` to `build` in
-`apps/android/src-tauri/tauri.conf.json`, and build the library with
-`--no-default-features` so it looks for that server instead of serving what it
-embedded. Put both back before building an APK for anyone else — there is a
-test that fails if you forget the first.
+`apps/android/src-tauri/tauri.conf.json` and build the library without
+`--features custom-protocol`, so it looks for that server instead of serving
+what it embedded. Take the URL back out before building an APK for anyone else
+— there is a test that fails if you forget.
 
 ### Debug, not release, until there is a keystore
 

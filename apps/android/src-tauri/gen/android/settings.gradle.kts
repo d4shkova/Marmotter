@@ -79,6 +79,9 @@ fun generateTauriGradleFiles() {
     val builder = ProcessBuilder(
         buildList {
             addAll(listOf("cargo", "build", "--lib", "--target", "aarch64-linux-android"))
+            // As in RustPlugin, so this build and the ones after it agree and
+            // cargo does not rebuild everything between them.
+            addAll(listOf("--features", "custom-protocol"))
             if (!debug) {
                 add("--release")
             }
