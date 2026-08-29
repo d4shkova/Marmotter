@@ -9,6 +9,23 @@ import org.gradle.api.tasks.TaskAction
 import java.io.File
 
 /**
+ * One Android ABI, and the two different names the toolchains give it.
+ *
+ * `triple` is what Rust calls the target. `clangPrefix` is what the NDK calls
+ * its wrapper for the same thing, and the two are not always equal: 32-bit ARM
+ * is `armv7-linux-androideabi` to Rust and `armv7a-linux-androideabi` to the
+ * NDK — one letter apart, and the sort of difference that is invisible until a
+ * build fails on exactly one ABI.
+ */
+private data class Abi(val name: String, val triple: String, val clangPrefix: String)
+
+private val ABIS = listOf(
+    Abi("arm64-v8a", "aarch64-linux-android", "aarch64-linux-android"),
+    Abi("armeabi-v7a", "armv7-linux-androideabi", "armv7a-linux-androideabi"),
+    Abi("x86_64", "x86_64-linux-android", "x86_64-linux-android"),
+)
+
+/**
  * Builds the Rust library for each Android ABI and puts it where Gradle looks.
  *
  * Deliberately ours and deliberately small, rather than an imitation of the
@@ -27,19 +44,14 @@ import java.io.File
  */
 class RustPlugin : Plugin<Project> {
     override fun apply(project: Project) {
-        val abis = mapOf(
-            "arm64-v8a" to "aarch64-linux-android",
-            "armeabi-v7a" to "armv7-linux-androideabi",
-            "x86_64" to "x86_64-linux-android",
-        )
-
-        val tasks = abis.map { (abi, triple) ->
+        val tasks = ABIS.map { abi ->
             project.tasks.register(
-                "cargoBuild${abi.replaceFirstChar { it.uppercase() }.replace("-", "")}",
+                "cargoBuild${abi.name.replaceFirstChar { it.uppercase() }.replace("-", "")}",
                 CargoBuildTask::class.java,
             ) {
-                this.abi = abi
-                this.triple = triple
+                this.abi = abi.name
+                this.triple = abi.triple
+                this.clangPrefix = abi.clangPrefix
             }
         }
 
@@ -75,6 +87,10 @@ abstract class CargoBuildTask : DefaultTask() {
     @get:Input
     lateinit var triple: String
 
+    /** What the NDK names its clang wrapper for this ABI. See [Abi]. */
+    @get:Input
+    lateinit var clangPrefix: String
+
     /**
      * The API level the linker targets.
      *
@@ -94,7 +110,7 @@ abstract class CargoBuildTask : DefaultTask() {
         val workspace = crate.parentFile.parentFile.parentFile
         val host = hostTag()
         val bin = File(ndk, "toolchains/llvm/prebuilt/$host/bin")
-        val linker = File(bin, "$triple$apiLevel-clang")
+        val linker = File(bin, "$clangPrefix$apiLevel-clang")
         if (!linker.exists()) {
             throw GradleException(
                 "No NDK linker at ${linker.absolutePath}. The NDK at ${ndk.absolutePath} is " +
