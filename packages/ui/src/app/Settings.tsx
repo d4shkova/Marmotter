@@ -46,7 +46,12 @@ export interface SettingsProps {
    */
   readonly dccAvailable: boolean;
   /** Opens the platform folder picker for where downloads are saved. */
-  readonly onChooseDownloadFolder: () => void;
+  /**
+   * Opens the folder picker. Absent where the platform has none, and then the
+   * row shows the folder the shell chose rather than a button that cannot open
+   * anything.
+   */
+  readonly onChooseDownloadFolder?: () => void;
   /** Reconnects a network whose connection dropped or failed. */
   readonly onReconnect: (networkId: string) => void;
   readonly onDisconnect: (networkId: string) => void;
@@ -434,21 +439,38 @@ export function Settings({
                 {!dccAvailable ? null : (
                   <>
                     <ListRow
-                      title="Download folder"
-                      subtitle={userOptions.downloadFolder ?? 'Not set'}
-                      trailing={
-                        <Button size="small" onClick={onChooseDownloadFolder}>
-                          {userOptions.downloadFolder === undefined ? 'Choose' : 'Change'}
-                        </Button>
+                      title={
+                        onChooseDownloadFolder === undefined
+                          ? 'Files are saved to'
+                          : 'Download folder'
                       }
+                      subtitle={
+                        userOptions.downloadFolder ??
+                        (onChooseDownloadFolder === undefined
+                          ? 'Working out where files can be saved'
+                          : 'Not set')
+                      }
+                      {...(onChooseDownloadFolder === undefined
+                        ? {}
+                        : {
+                            trailing: (
+                              <Button size="small" onClick={onChooseDownloadFolder}>
+                                {userOptions.downloadFolder === undefined ? 'Choose' : 'Change'}
+                              </Button>
+                            ),
+                          })}
                     />
                     <div className="px-4 py-2.5">
                       <Toggle
                         label="Watch for files offered over DCC"
                         hint={
                           userOptions.downloadFolder === undefined
-                            ? 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
-                            : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
+                            ? onChooseDownloadFolder === undefined
+                              ? 'Marmotter has nowhere it can save files on this device yet.'
+                              : 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
+                            : onChooseDownloadFolder === undefined
+                              ? 'Shows a file monitor you can open from the channel list. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you tap Download. Files are saved inside the app, and uninstalling it takes them with it.'
+                              : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
                         }
                         checked={userOptions.dccMonitorEnabled}
                         disabled={userOptions.downloadFolder === undefined}

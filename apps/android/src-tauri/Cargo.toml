@@ -35,8 +35,9 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# The socket, the log files and the settings file, shared with the desktop
-# shell. Everything else in this crate is something only Android does.
+# The socket, the log files, the settings file and the DCC download, shared
+# with the desktop shell. Everything else in this crate is something only
+# Android does.
 marmotter-shell = { path = "../../../crates/marmotter-shell" }
 tauri = { version = "2", features = [] }
 # An Android WebView has no web Notification API, so a mention reaches the

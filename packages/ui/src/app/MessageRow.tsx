@@ -138,7 +138,10 @@ function TextRow({
   const isAction = message.kind === 'action';
 
   // The actions for whoever wrote the line, reached the way every other IRC
-  // client offers them: right-click the name, or hold it on a touch screen.
+  // client offers them: right-click the name, or hold the line on a touch
+  // screen. The hold is on the whole row rather than on the name alone — a
+  // nick column is a few characters wide and asking somebody to land a finger
+  // inside it is asking them to miss.
   const openMenu = (event: {
     clientX: number;
     clientY: number;
@@ -158,9 +161,15 @@ function TextRow({
 
   return (
     <div
+      {...longPress}
       className={cn(
         'group relative flex items-baseline gap-2 px-4 py-px',
         'hover:bg-[var(--fill-quaternary)]',
+        // A held line opens the menu, so it must not also start a text
+        // selection or the WebView's own copy bubble on the way there.
+        onNickMenu === undefined || nick === ''
+          ? undefined
+          : 'pointer-coarse:touch-manipulation pointer-coarse:select-none',
         highlighted && 'bg-[var(--accent-muted)]',
         // Search sits on top of the mention highlight: every hit gets a quiet
         // fill, and the one being stepped to gets a ring so it reads as "here"
@@ -202,7 +211,6 @@ function TextRow({
             type="button"
             onClick={onNickClick === undefined ? undefined : () => onNickClick(nick)}
             onContextMenu={onNickMenu === undefined ? undefined : openMenu}
-            {...longPress}
             style={{ color: `var(${nickColorVar(nick, fold?.(nick))})` }}
             className="max-w-full truncate hover:underline"
           >
@@ -231,7 +239,6 @@ function TextRow({
               type="button"
               onClick={onNickClick === undefined ? undefined : () => onNickClick(nick)}
               onContextMenu={onNickMenu === undefined ? undefined : openMenu}
-              {...longPress}
               className="hover:underline"
             >
               {nick}
@@ -257,8 +264,10 @@ function TextRow({
       </span>
 
       {/* Always mounted, opacity-only: mounting on hover would reflow the row
-          under the pointer. */}
-      <span className="pointer-events-none absolute top-0 right-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          under the pointer. Hover is what reveals it under a pointer, and a
+          coarse pointer never hovers — so where there is one, the row simply
+          carries its actions. */}
+      <span className="pointer-events-none absolute top-0 right-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100">
         {onReply === undefined ? null : (
           <IconButton
             label="Reply"

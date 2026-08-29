@@ -67,8 +67,8 @@ commands — the socket, the log files, the settings file, the notification
 service. Duplicating that would mean two copies of the log stores and the
 preference parser, which are the files where a quiet divergence loses somebody
 their scrollback or their networks. What stays in each app is what only that
-platform has: window chrome and the DCC file monitor on desktop; the keystore,
-the link intent and the foreground service on Android.
+platform has: window chrome on desktop; the keystore, the link intent and the
+foreground service on Android.
 
 **The web build imports neither, and must keep importing neither.** That
 absence is what guarantees a browser tab cannot persist message content.
@@ -411,7 +411,7 @@ underlying raw command must remain available via the command bar.
 | `AWAY` | Status control: Available / Away with message, in the account menu. |
 | `NOTICE` | Distinct styling, routed to a server tab or the relevant channel, never mistakable for a normal message. |
 | `CTCP VERSION/PING/TIME` | Answered automatically, configurable; requests surfaced as a quiet notice, not a message. |
-| `DCC` / `XDCC` | **Receive-only, desktop only.** A file monitor (off by default, enabled under Settings → User options with a chosen download folder) lists files in a panel below the member list and downloads them on request. It sees files two ways: a direct `DCC SEND`, and XDCC pack advertisements — the `#N Ngx [size] name` catalogue lines serving bots post in a channel (`packages/protocol/src/xdcc.ts`). Downloading a pack sends `XDCC SEND #N` to the bot; its answering `DCC SEND` (`packages/protocol/src/dcc.ts`) is matched back to that row and fetched. The socket-to-file download is `crates/marmotter-transport/src/dcc.rs`, behind a Tauri command. Web has no file monitor — a browser tab has no folder and cannot open the direct socket. **Sending, DCC CHAT, and passive/reverse transfers remain out of scope**; their security surface is disproportionate to value, and a passive offer is shown but marked un-fetchable. |
+| `DCC` / `XDCC` | **Receive-only. Desktop and Android; never web.** A file monitor (off by default, enabled under Settings → User options) lists files in a panel and downloads them on request. It sees files two ways: a direct `DCC SEND`, and XDCC pack advertisements — the `#N Ngx [size] name` catalogue lines serving bots post in a channel (`packages/protocol/src/xdcc.ts`). Downloading a pack sends `XDCC SEND #N` to the bot; its answering `DCC SEND` (`packages/protocol/src/dcc.ts`) is matched back to that row and fetched. The socket-to-file download is `crates/marmotter-transport/src/dcc.rs`, behind a Tauri command shared by both shells (`crates/marmotter-shell/src/dcc.rs`). The two shells differ only around it: desktop picks the download folder with a dialog and can reveal a saved file in the file manager, and Android does neither — an app there writes inside its own storage or asks for a permission that would let it read the whole device, and no file manager will open that storage — so the shell names the folder itself and the reveal button is absent rather than drawn and broken. Web has no file monitor at all: a browser tab has no folder and cannot open the direct socket. **Sending, DCC CHAT, and passive/reverse transfers remain out of scope**; their security surface is disproportionate to value, and a passive offer is shown but marked un-fetchable. |
 | `INVITE` | Invite button in the channel menu with a nick picker; incoming invites become an actionable notification. |
 | `MONITOR` / `WATCH` | Notify list: a "Friends" panel showing online/offline, using MONITOR where advertised, polled WHOIS as fallback. |
 | `IGNORE` | Client-side mute list, per-network, with mask builder and expiry. |

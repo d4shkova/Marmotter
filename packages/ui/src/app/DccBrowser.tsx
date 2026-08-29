@@ -4,6 +4,7 @@ import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
 import { Table, type Column } from '../primitives/Table.js';
+import { useBreakpoint } from './AppShell.js';
 import { formatAge, formatBytes } from './dcc.js';
 import { isTrackedTransfer, isTransferInFlight, type DccOfferRecord } from './view-store.js';
 
@@ -82,8 +83,14 @@ export interface DccBrowserProps {
   readonly onDownload: (offer: DccOfferRecord) => void;
   /** Stops a download that is in flight, from the X beside its progress bar. */
   readonly onCancel: (offer: DccOfferRecord) => void;
-  /** Prompts for a download folder, for the case where none is set yet. */
-  readonly onChooseFolder: () => void;
+  /**
+   * Prompts for a download folder, for the case where none is set yet.
+   *
+   * Absent where the platform has no picker. There the folder is the shell's to
+   * name and there is nothing to prompt for, so the line says what the state is
+   * and offers no button.
+   */
+  readonly onChooseFolder?: () => void;
   /**
    * Opens the file manager on a saved file. When absent — as on web, which has
    * no file manager to open — the reveal button is not shown.
@@ -172,6 +179,12 @@ export function DccBrowser({
   // row, so the table below is usually handed exactly what it already had.
   const filtered = useStableList(matching);
 
+  // A phone is about a third the width of the window this table was laid out
+  // for, and seven columns on it is six of them off the side. The same rows,
+  // with everything that was a column of its own folded under the name — which
+  // is the one a person is reading — and the action beside it.
+  const narrow = useBreakpoint() === 'mobile';
+
   const columns: readonly Column<DccOfferRecord>[] = useMemo(
     () => [
       {
@@ -179,7 +192,19 @@ export function DccBrowser({
         header: 'Name',
         mono: true,
         compare: (a, b) => a.filename.localeCompare(b.filename),
-        render: (offer) => <span className="break-all">{offer.filename}</span>,
+        render: (offer) =>
+          narrow ? (
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="break-all">{offer.filename}</span>
+              <span className="font-sans text-caption-2 text-[var(--label-tertiary)]">
+                {formatBytes(offer.size)} · {offer.from}
+                {offer.pack === undefined ? '' : ` · #${offer.pack}`} · {offer.networkName} ·{' '}
+                {formatAge(offer.receivedAt, at)}
+              </span>
+            </span>
+          ) : (
+            <span className="break-all">{offer.filename}</span>
+          ),
       },
       {
         id: 'size',
@@ -235,7 +260,14 @@ export function DccBrowser({
         ),
       },
     ],
-    [at, downloadFolder, onCancel, onDownload, onReveal],
+    [at, downloadFolder, narrow, onCancel, onDownload, onReveal],
+  );
+
+  // Name and action on a phone; every column on anything wider.
+  const shown = useMemo(
+    () =>
+      narrow ? columns.filter((column) => column.id === 'name' || column.id === 'action') : columns,
+    [columns, narrow],
   );
 
   return (
@@ -310,13 +342,17 @@ export function DccBrowser({
 
       <div className="flex flex-col gap-3 px-4 py-4">
         {downloadFolder === undefined ? (
-          <div className="flex items-center justify-between gap-3 rounded-card bg-[var(--bg-elevated)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-[var(--bg-elevated)] px-4 py-3">
             <p className="text-footnote text-[var(--label-secondary)]">
-              Choose a download folder before you can save files.
+              {onChooseFolder === undefined
+                ? 'Marmotter has nowhere it can save files on this device yet.'
+                : 'Choose a download folder before you can save files.'}
             </p>
-            <Button size="small" variant="primary" onClick={onChooseFolder}>
-              Choose folder
-            </Button>
+            {onChooseFolder === undefined ? null : (
+              <Button size="small" variant="primary" onClick={onChooseFolder}>
+                Choose folder
+              </Button>
+            )}
           </div>
         ) : (
           <p className="truncate text-caption-1 text-[var(--label-tertiary)]">
@@ -326,7 +362,7 @@ export function DccBrowser({
 
         <Table
           caption="Files offered over DCC"
-          columns={columns}
+          columns={shown}
           rows={filtered}
           rowKey={rowKey}
           pageSize={pageSize}

@@ -104,7 +104,10 @@ class ConnectionService : Service() {
             // reading this in their shade at midnight wants to know why their
             // phone is awake.
             .setContentText("Marmotter is staying connected in the background.")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            // The app's own glyph. This used to be the platform's Bluetooth
+            // data icon, which is a thing a person reads in their shade as
+            // their phone having connected to something on its own.
+            .setSmallIcon(R.drawable.ic_stat_connected)
             .setOngoing(true)
             .setShowWhen(false)
 

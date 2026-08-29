@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The status-bar icon for the ongoing connection notice.
+
+  Android draws a small icon as a mask: only the alpha channel survives, and the
+  system tints what is left. So it is one white path on a transparent ground,
+  with no colour of its own to be wrong in a light shade or a dark one.
+
+  A speech bubble, because that is what the app is. It was previously the
+  platform's own Bluetooth-data glyph, which is the sort of thing somebody
+  scrolling their shade reads as their phone doing something they did not ask
+  for.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2Z" />
+</vector>

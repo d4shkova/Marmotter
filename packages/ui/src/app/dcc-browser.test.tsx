@@ -367,3 +367,99 @@ describe('DccBrowser with a bot-sized catalogue', () => {
     expect(screen.getByRole('progressbar')).toBeDefined();
   });
 });
+
+/**
+ * The file list on a phone.
+ *
+ * Seven columns is a window's worth of table, and the Android build put six of
+ * them off the side of the screen. The rows carry the same facts either way —
+ * folded under the name on a narrow screen, where the name is the thing being
+ * read and the action is the thing being aimed at.
+ */
+describe('the file list at a phone’s width', () => {
+  const width = window.innerWidth;
+  const at = (pixels: number): void => {
+    Object.defineProperty(window, 'innerWidth', { value: pixels, configurable: true });
+  };
+  afterEach(() => at(width));
+
+  const list = (): void => {
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'available' })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+  };
+
+  it('keeps every column on a window that has room for them', () => {
+    at(1280);
+    list();
+
+    expect(screen.getByRole('columnheader', { name: /Network/ })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /Pack/ })).toBeTruthy();
+  });
+
+  it('folds them under the name on a phone rather than off the side of it', () => {
+    at(390);
+    list();
+
+    expect(screen.queryByRole('columnheader', { name: /Network/ })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /Pack/ })).toBeNull();
+    // Nothing is lost, only moved: the row still says where the file came from
+    // and how big it is.
+    const row = screen.getByText(/Celebrity/).closest('tr');
+    expect(row?.textContent).toContain('[EWG]Totoro');
+    expect(row?.textContent).toContain('Rizon');
+    // The pack number, which is how a bot is asked for the file.
+    expect(row?.textContent).toContain('265');
+  });
+});
+
+/**
+ * A platform with no folder picker — Android, where an app writes inside its own
+ * storage or asks for a permission that would let it read the whole device.
+ * There is nothing to prompt for, so there is no button: a control that opens
+ * nothing is worse than none.
+ */
+describe('a file list on a platform that chooses the folder for you', () => {
+  it('offers no Choose folder button it could not honour', () => {
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'available' })]}
+        downloadFolder={undefined}
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Choose folder' })).toBeNull();
+    expect(screen.getByText(/nowhere it can save files/)).toBeTruthy();
+  });
+
+  it('still offers it where the platform has a picker', () => {
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'available' })]}
+        downloadFolder={undefined}
+        onDownload={noop}
+        onCancel={noop}
+        onChooseFolder={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Choose folder' })).toBeTruthy();
+  });
+});

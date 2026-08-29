@@ -200,15 +200,34 @@ export function AppShell({
                 className="absolute inset-0 z-30 bg-[var(--scrim)]"
               />
               {/* A bottom sheet with a grabber, which is the mobile shape for
-                  something you pull up and push back down. */}
-              <div className="absolute inset-x-0 bottom-0 z-40 max-h-[70%] overflow-hidden rounded-t-sheet shadow-2xl">
-                <div className="flex justify-center bg-[var(--bg-elevated)] pt-2">
+                  something you pull up and push back down.
+
+                  A flex column with a definite height, and that is load-bearing
+                  rather than tidiness: the panel inside sizes its scrolling
+                  region against this box, and while the box was a block with
+                  `max-height` and nothing else, that percentage had nothing to
+                  resolve against. The list grew to whatever its contents came
+                  to, the overflow was clipped, and a channel with more members
+                  than fit on screen simply lost the rest of them — the
+                  scrollbar was on an element that had already been told it was
+                  the size of its own content. */}
+              <div className="absolute inset-x-0 bottom-0 z-40 flex max-h-[70%] flex-col overflow-hidden rounded-t-sheet shadow-2xl">
+                {/* The grabber is the control, not decoration: it is the one
+                    thing at the top of a sheet a thumb is already on the way
+                    to, and on a phone the alternative is aiming at the strip of
+                    scrim above it. */}
+                <button
+                  type="button"
+                  aria-label="Close the member list"
+                  onClick={onCloseAside}
+                  className="flex shrink-0 justify-center bg-[var(--bg-elevated)] pt-2 pb-1"
+                >
                   <span
                     aria-hidden="true"
                     className="h-1 w-9 rounded-full bg-[var(--fill-secondary)]"
                   />
-                </div>
-                {aside}
+                </button>
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{aside}</div>
               </div>
             </>
           ) : null}

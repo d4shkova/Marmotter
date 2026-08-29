@@ -7,6 +7,7 @@ import { nickColorVar } from '../lib/nick-color.js';
 import { Badge } from '../primitives/Badge.js';
 import { ContextMenu, type MenuItem } from '../primitives/ContextMenu.js';
 import { SearchField } from '../primitives/SearchField.js';
+import { useLongPress } from '../lib/long-press.js';
 
 export interface MemberListProps {
   readonly network: NetworkState;
@@ -64,7 +65,7 @@ export function MemberList({
         className,
       )}
     >
-      <div className="flex flex-col gap-2 px-3 py-2">
+      <div className="flex shrink-0 flex-col gap-2 px-3 py-2">
         <h2 className="text-footnote font-medium tracking-wide text-[var(--label-tertiary)] uppercase">
           {members.length} {members.length === 1 ? 'person' : 'people'}
           {away > 0 ? ` · ${away} away` : ''}
@@ -72,7 +73,11 @@ export function MemberList({
         <SearchField label="Search members" value={query} onValueChange={setQuery} />
       </div>
 
-      <ul className="flex-1 overflow-y-auto pb-2">
+      {/* `min-h-0` is what lets this shrink below its content and scroll:
+          without it a flex item is floored at its content height, which on a
+          busy channel means the list runs past the bottom of whatever is
+          holding it and the names at the end cannot be reached at all. */}
+      <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2">
         {filtered.map((member) => {
           const openMenu = (x: number, y: number): void => {
             if (menuFor !== undefined) {
@@ -81,64 +86,15 @@ export function MemberList({
           };
 
           return (
-            <li key={member.nick} className="group/member relative">
-              <button
-                type="button"
-                // Double-click messages them — the convention the interface
-                // copy calls out. A single click opens their details.
-                onDoubleClick={() => onMessage?.(member.nick)}
-                onClick={() => onOpenProfile?.(member.nick)}
-                onContextMenu={(event) => {
-                  if (menuFor === undefined) {
-                    return;
-                  }
-                  event.preventDefault();
-                  openMenu(event.clientX, event.clientY);
-                }}
-                className={cn(
-                  'flex w-full items-center gap-2 px-3 py-1 text-left',
-                  'hover:bg-[var(--fill-quaternary)]',
-                  member.away && 'opacity-50',
-                )}
-              >
-                <RoleGlyph member={member} network={network} />
-                <span
-                  className="min-w-0 flex-1 truncate font-mono text-footnote"
-                  style={{
-                    color: `var(${nickColorVar(member.nick, fold(member.nick, network.support.caseMapping))})`,
-                  }}
-                >
-                  {member.nick}
-                </span>
-                {member.bot ? <Badge>Bot</Badge> : null}
-                {member.account === undefined ? null : (
-                  <span
-                    title={`Logged in as ${member.account}`}
-                    className="text-caption-2 text-[var(--label-quaternary)]"
-                  >
-                    <span aria-hidden="true">✓</span>
-                    <span className="sr-only">Logged in as {member.account}</span>
-                  </span>
-                )}
-              </button>
-
-              {/* A visible way to reach the actions, since right-click is not
-                  discoverable and touch has no right-click at all. */}
-              {menuFor === undefined ? null : (
-                <button
-                  type="button"
-                  aria-label={`Actions for ${member.nick}`}
-                  onClick={(event) => openMenu(event.clientX, event.clientY)}
-                  className={cn(
-                    'absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-full',
-                    'text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]',
-                    'opacity-0 group-hover/member:opacity-100 focus:opacity-100',
-                  )}
-                >
-                  <span aria-hidden="true">⋯</span>
-                </button>
-              )}
-            </li>
+            <MemberRow
+              key={member.nick}
+              member={member}
+              network={network}
+              openMenu={openMenu}
+              hasMenu={menuFor !== undefined}
+              {...(onMessage === undefined ? {} : { onMessage })}
+              {...(onOpenProfile === undefined ? {} : { onOpenProfile })}
+            />
           );
         })}
       </ul>
@@ -153,6 +109,105 @@ export function MemberList({
         />
       )}
     </aside>
+  );
+}
+
+/**
+ * One name in the list, with every way there is to reach its actions.
+ *
+ * Three of them, because three kinds of input reach this row: right-click for a
+ * pointer, the `⋯` button for a keyboard, and a long press for a finger. The
+ * button is drawn on hover for a pointer and always where the pointer is
+ * coarse — a control revealed by a hover that a touch screen cannot perform is
+ * a control a phone does not have.
+ */
+function MemberRow({
+  member,
+  network,
+  openMenu,
+  hasMenu,
+  onMessage,
+  onOpenProfile,
+}: {
+  member: Member;
+  network: NetworkState;
+  openMenu: (x: number, y: number) => void;
+  hasMenu: boolean;
+  onMessage?: (nick: string) => void;
+  onOpenProfile?: (nick: string) => void;
+}): ReactNode {
+  const longPress = useLongPress(hasMenu ? (at) => openMenu(at.x, at.y) : undefined);
+
+  return (
+    <li className="group/member relative">
+      <button
+        type="button"
+        // Double-click messages them — the convention the interface
+        // copy calls out. A single click opens their details.
+        onDoubleClick={() => onMessage?.(member.nick)}
+        onClick={() => onOpenProfile?.(member.nick)}
+        onContextMenu={(event) => {
+          if (!hasMenu) {
+            return;
+          }
+          event.preventDefault();
+          openMenu(event.clientX, event.clientY);
+        }}
+        {...longPress}
+        className={cn(
+          'flex w-full items-center gap-2 px-3 py-1 text-left',
+          // Roomier where a finger is doing the aiming. A 24px row is
+          // fine under a pointer and is half a touch target.
+          'pointer-coarse:min-h-11 pointer-coarse:py-2',
+          'hover:bg-[var(--fill-quaternary)] active:bg-[var(--fill-tertiary)]',
+          // Held names must not turn into a text selection or the
+          // system's own copy menu part-way through the gesture.
+          'pointer-coarse:touch-manipulation pointer-coarse:select-none',
+          member.away && 'opacity-50',
+        )}
+      >
+        <RoleGlyph member={member} network={network} />
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-footnote"
+          style={{
+            color: `var(${nickColorVar(member.nick, fold(member.nick, network.support.caseMapping))})`,
+          }}
+        >
+          {member.nick}
+        </span>
+        {member.bot ? <Badge>Bot</Badge> : null}
+        {member.account === undefined ? null : (
+          <span
+            title={`Logged in as ${member.account}`}
+            className="text-caption-2 text-[var(--label-quaternary)]"
+          >
+            <span aria-hidden="true">✓</span>
+            <span className="sr-only">Logged in as {member.account}</span>
+          </span>
+        )}
+      </button>
+
+      {/* A visible way to reach the actions, since right-click is not
+                  discoverable and touch has no right-click at all. */}
+      {!hasMenu ? null : (
+        <button
+          type="button"
+          aria-label={`Actions for ${member.nick}`}
+          onClick={(event) => openMenu(event.clientX, event.clientY)}
+          className={cn(
+            'absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-full',
+            'pointer-coarse:size-11 pointer-coarse:right-1',
+            'text-[var(--label-tertiary)] hover:bg-[var(--fill-secondary)]',
+            'opacity-0 group-hover/member:opacity-100 focus:opacity-100',
+            // Nothing hovers on a phone, so nothing would ever reveal
+            // it there.
+            'pointer-coarse:opacity-100',
+          )}
+        >
+          <span aria-hidden="true">⋯</span>
+        </button>
+      )}
+    </li>
   );
 }
 

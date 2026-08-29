@@ -311,6 +311,23 @@ export function Marmotter({
   // them on their own, below.
   const view = useView(useShallow(selectViewWithoutOffers));
   const breakpoint = useBreakpoint();
+  /**
+   * How many transfers are running, for the badge on the phone's Files tab.
+   *
+   * A count rather than the offers themselves, deliberately: the note above
+   * about not subscribing to `dccOffers` here is about re-rendering the whole
+   * client on every megabyte, and a number that only changes when a transfer
+   * starts or stops does not do that.
+   */
+  const activeTransfers = useView((state) => {
+    let count = 0;
+    for (const offer of state.dccOffers) {
+      if (isTransferInFlight(offer.status)) {
+        count += 1;
+      }
+    }
+    return count;
+  });
 
   const [adding, setAdding] = useState(false);
   /** The network whose saved settings are open for changing, if any. */
@@ -1220,16 +1237,56 @@ export function Marmotter({
   // Choosing where downloaded files go. Reading the platform's own folder
   // picker, so the path is a real one the shell can write to rather than
   // something typed by hand.
-  const chooseDownloadFolder = useCallback((): void => {
-    if (dcc === undefined) {
+  //
+  // Undefined where the platform has no picker to read. Android is that
+  // platform, and there the folder is not the user's to choose — an app writes
+  // inside its own storage or it asks for a permission to read the whole
+  // device — so the shell names it instead, below.
+  const picker = dcc?.chooseDownloadFolder;
+  const chooseDownloadFolder = useMemo(
+    () =>
+      picker === undefined
+        ? undefined
+        : (): void => {
+            void picker.call(dcc).then((folder) => {
+              if (folder !== undefined && folder !== '') {
+                useView.getState().updateUserOptions({ downloadFolder: folder });
+              }
+            });
+          },
+    [dcc, picker],
+  );
+
+  /**
+   * Filling in the download folder on a platform that picks it for us.
+   *
+   * Asked for once, and only where there is no picker: with one, an unset
+   * folder means the user has not chosen yet and choosing for them would be
+   * deciding where their files go. Without one there is nothing to decide —
+   * there is exactly one folder the app may write to — and leaving it unset
+   * would leave the file monitor switched off behind a Choose button that
+   * cannot open anything.
+   */
+  const defaultFolder = dcc?.defaultDownloadFolder;
+  useEffect(() => {
+    if (defaultFolder === undefined || picker !== undefined) {
       return;
     }
-    void dcc.chooseDownloadFolder().then((folder) => {
-      if (folder !== undefined && folder !== '') {
-        useView.getState().updateUserOptions({ downloadFolder: folder });
-      }
-    });
-  }, [dcc]);
+    if (useView.getState().userOptions.downloadFolder !== undefined) {
+      return;
+    }
+    void defaultFolder
+      .call(dcc)
+      .then((folder) => {
+        if (folder !== '' && useView.getState().userOptions.downloadFolder === undefined) {
+          useView.getState().updateUserOptions({ downloadFolder: folder });
+        }
+      })
+      .catch(() => {
+        // Downloads stay blocked and the settings screen says the folder is
+        // not set, which is the honest state. Nothing to interrupt anyone with.
+      });
+  }, [dcc, defaultFolder, picker]);
 
   /**
    * Says how a download got on, unless the file list is already saying it.
@@ -2277,7 +2334,9 @@ export function Marmotter({
                 },
               })}
           dccAvailable={dcc !== undefined}
-          onChooseDownloadFolder={chooseDownloadFolder}
+          {...(chooseDownloadFolder === undefined
+            ? {}
+            : { onChooseDownloadFolder: chooseDownloadFolder })}
           onReconnect={reconnect}
           onDisconnect={disconnect}
           onEdit={setEditingId}
@@ -2294,7 +2353,7 @@ export function Marmotter({
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
-          onChooseFolder={chooseDownloadFolder}
+          {...(chooseDownloadFolder === undefined ? {} : { onChooseFolder: chooseDownloadFolder })}
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
@@ -2514,8 +2573,10 @@ export function Marmotter({
         tabBar={
           breakpoint === 'mobile' ? (
             <TabBar
-              value={view.pane === 'chat' ? 'chats' : view.pane}
-              onChange={(value) => view.setPane(value === 'chats' ? 'chat' : 'settings')}
+              value={view.pane === 'chat' ? 'chats' : view.pane === 'dcc' ? 'dcc' : 'settings'}
+              onChange={(value) =>
+                view.setPane(value === 'chats' ? 'chat' : value === 'dcc' ? 'dcc' : 'settings')
+              }
               // The two side panels, at the ends of the row where a thumb
               // already is. Moved to the screen edges by a setting, and then
               // drawn there instead of here rather than as well.
@@ -2548,8 +2609,23 @@ export function Marmotter({
                         }
                       : {}),
                   })}
+              // Files earns a tab only once the monitor is switched on, and
+              // then it needs one: its home everywhere else is the foot of the
+              // sidebar, and on a phone the sidebar is a drawer — so a download
+              // in progress would be two gestures and a scroll away, behind
+              // something a person opened to change channel.
               items={[
                 { value: 'chats', label: 'Chats', icon: <span aria-hidden="true">◍</span> },
+                ...(showDccPanel
+                  ? [
+                      {
+                        value: 'dcc' as const,
+                        label: 'Files',
+                        icon: <span aria-hidden="true">⤓</span>,
+                        ...(activeTransfers === 0 ? {} : { badge: activeTransfers }),
+                      },
+                    ]
+                  : []),
                 { value: 'settings', label: 'Settings', icon: <span aria-hidden="true">⚙</span> },
               ]}
             />

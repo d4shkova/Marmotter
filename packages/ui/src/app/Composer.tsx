@@ -435,6 +435,12 @@ export function Composer({
           className={cn(
             'flex-1 resize-none rounded-control bg-[var(--fill-tertiary)] px-3 py-2',
             'font-mono text-footnote text-[var(--label-primary)]',
+            // Bigger under a finger. 13px is right for the message list, which
+            // is read rather than typed into, and it is small enough in a text
+            // field that a mobile browser zooms the page on focus to make it
+            // legible — leaving the composer half off the screen and the
+            // conversation the wrong size for the rest of the session.
+            'pointer-coarse:text-callout',
             'placeholder:text-[var(--label-quaternary)]',
             'border border-transparent focus:border-[var(--separator)]',
             'disabled:cursor-not-allowed disabled:opacity-60',
