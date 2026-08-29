@@ -33,8 +33,14 @@
         business with any of them.
     -->
 
+    <!--
+      No android:name on the application. There is no Tauri Application class to
+      subclass — the lifecycle wiring lives in the generated TauriActivity,
+      which registers its observer with ProcessLifecycleOwner. Naming a class
+      that does not exist here is fatal at process start, before any of this
+      app's own code runs.
+    -->
     <application
-        android:name="app.tauri.TauriApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

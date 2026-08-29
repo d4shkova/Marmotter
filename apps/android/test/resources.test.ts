@@ -12,7 +12,7 @@
  * a diff and expensive to find any other way.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -62,5 +62,47 @@ describe('the Android resource files', () => {
       }
     }
     expect(stack).toEqual([]);
+  });
+});
+
+const manifest = join(project, 'app/src/main/AndroidManifest.xml');
+const sources = join(project, 'app/src/main/java/uk/co/dashkova/marmotter');
+
+describe('the manifest', () => {
+  const text = readFileSync(manifest, 'utf8');
+
+  /**
+   * Every `android:name` outside a permission or an intent filter names a class
+   * Android instantiates by reflection. Name one that is not there and the
+   * failure is at runtime, not at build time — and for the `<application>` tag
+   * it is at process start, so the app dies before a line of its own code runs
+   * and the only clue is a ClassNotFoundException in logcat.
+   *
+   * This is the whole check: the classes we claim to own must exist.
+   */
+  it('names only classes this package actually has', () => {
+    const declared = [...text.matchAll(/android:name="(\.[\w.]+)"/g)].map(([, name]) => name);
+
+    expect(declared.length).toBeGreaterThan(0);
+    for (const name of declared) {
+      expect(existsSync(join(sources, `${name.slice(1)}.kt`))).toBe(true);
+    }
+  });
+
+  /**
+   * There is no Tauri Application class to subclass. The lifecycle wiring is in
+   * the generated TauriActivity, which registers its observer with
+   * ProcessLifecycleOwner — so an `android:name` here is a class nobody wrote,
+   * and naming one crashed every launch.
+   */
+  it('declares no custom application class', () => {
+    const application = /<application\b[^>]*>/.exec(text)?.[0] ?? '';
+    expect(application).not.toContain('android:name');
+  });
+
+  /** The service the foreground connection runs in has to be declared to start. */
+  it('declares the connection service with the type Android 14 wants stated', () => {
+    expect(text).toContain('android:name=".ConnectionService"');
+    expect(text).toContain('android:foregroundServiceType="dataSync"');
   });
 });
