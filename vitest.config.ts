@@ -5,7 +5,7 @@ export default defineConfig({
     // The Tauri shells' own tests moved to `packages/platform-tauri` with the
     // code they cover, so `apps/desktop` and `apps/android` hold only the
     // handful of files that are genuinely one platform's own.
-    projects: ['packages/*', 'apps/web'],
+    projects: ['packages/*', 'apps/web', 'apps/android'],
     // Vitest's own default is five seconds, which a shared CI runner does not
     // reliably clear: it runs about three times slower than a developer's
     // machine, and the parser fuzzing already lands at four seconds there. That

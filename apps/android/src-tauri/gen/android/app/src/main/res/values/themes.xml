@@ -12,9 +12,9 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <!-- Matches --bg-base, so there is no white flash before the webview
-             paints. The one place a colour is repeated outside tokens.css,
-             because Android needs it before any CSS has loaded. -->
+        <!-- Matches the bg-base token, so there is no white flash before the
+             webview paints. The one place a colour is repeated outside
+             tokens.css, because Android needs it before any CSS has loaded. -->
         <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>
