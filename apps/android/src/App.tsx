@@ -7,7 +7,8 @@ import {
   createTransport,
   openExternalUrl,
 } from '@marmotter/platform-tauri';
-import { type JSX, useMemo } from 'react';
+import { type JSX, useCallback, useMemo } from 'react';
+import { holdConnections } from './connection';
 
 /**
  * The Android app.
@@ -28,6 +29,10 @@ import { type JSX, useMemo } from 'react';
  *   the only place an app may write without asking for a permission that would
  *   let it read the whole device. The settings screen hides both buttons when
  *   the shell is handed no picker.
+ *
+ * And one thing only it passes: `onConnectionsChanged`, which drives the
+ * foreground service that keeps a connection alive while the app is not in
+ * front. See `connection.ts`.
  */
 export function App(): JSX.Element {
   // Android's notification is already in the system tray and tapping it brings
@@ -35,6 +40,8 @@ export function App(): JSX.Element {
   const notifier = useMemo(() => createNotifier(), []);
   const preferences = useMemo(() => createPreferences(), []);
   const secrets = useMemo(() => createSecrets(), []);
+  // Stable, or the shell would re-report the count on every render.
+  const onConnectionsChanged = useCallback(holdConnections, []);
 
   return (
     <Marmotter
@@ -48,6 +55,10 @@ export function App(): JSX.Element {
       preferences={preferences}
       secrets={secrets}
       resolveSecret={(ref) => secrets.read(ref)}
+      // A phone stops a backgrounded process holding open sockets unless the
+      // app runs a foreground service, so the shell has to say when there is a
+      // connection worth keeping alive. Desktop and web pass nothing.
+      onConnectionsChanged={onConnectionsChanged}
       persists
     />
   );

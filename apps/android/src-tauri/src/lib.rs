@@ -11,6 +11,7 @@
 //! `keyring` crate, which has no Android backend at all. There is no DCC file
 //! monitor and no folder picker, both by design; see `src/App.tsx`.
 
+pub mod connection;
 pub mod opener;
 pub mod secrets;
 
@@ -42,12 +43,16 @@ pub fn run() {
         // Passwords, in the Android Keystore. Registers the Kotlin side that
         // actually holds the key; see `secrets.rs`.
         .plugin(secrets::init())
+        // The foreground service that keeps a connection alive while the app is
+        // not in front. Registers the Kotlin side that owns it.
+        .plugin(connection::init())
         .manage(transport::Transports::default())
         .invoke_handler(tauri::generate_handler![
             transport::transport_connect,
             transport::transport_send,
             transport::transport_disconnect,
             opener::open_external_url,
+            connection::connection_hold,
             logstore::log_default_dir,
             logstore::log_append,
             logstore::log_read,

@@ -273,6 +273,17 @@ export interface MarmotterProps {
    * drawn.
    */
   readonly resizeWindow?: (edge: WindowEdge) => void;
+  /**
+   * Told how many networks are currently connected, whenever that changes.
+   *
+   * Android passes one: a phone will stop a backgrounded process holding open
+   * sockets unless the app is running a foreground service, so the shell has to
+   * say when there is a connection worth keeping alive and when there is not.
+   * Desktop and web pass nothing — neither platform kills an app for having a
+   * socket open, and a phone is the only one where staying connected has to be
+   * declared.
+   */
+  readonly onConnectionsChanged?: (connected: number) => void;
 }
 
 /** The whole client. */
@@ -290,6 +301,7 @@ export function Marmotter({
   secrets,
   windowChrome,
   resizeWindow,
+  onConnectionsChanged,
 }: MarmotterProps): ReactNode {
   const registry = useNetworks();
   // Deliberately not `useView()`: that subscribes to every field, and the list
@@ -427,6 +439,15 @@ export function Marmotter({
       }),
     [registry.profiles, registry.networks, view.networkOrder],
   );
+
+  // Registered rather than merely connected: a socket that is still negotiating
+  // has nothing to lose yet, and one that is reconnecting on its own backoff is
+  // not a reason to hold a phone awake.
+  const connectedCount = networks.filter((state) => state.phase === 'registered').length;
+
+  useEffect(() => {
+    onConnectionsChanged?.(connectedCount);
+  }, [connectedCount, onConnectionsChanged]);
 
   const editingProfile = editingId === undefined ? undefined : registry.profiles.get(editingId);
   const listingNetwork =
