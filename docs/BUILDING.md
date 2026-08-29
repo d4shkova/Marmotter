@@ -262,6 +262,12 @@ infrastructure here and never will be. See CLAUDE.md.
 - **`ANDROID_NDK_HOME is not set`** from the Gradle build is exactly what it
   says; the plugin refuses to guess, because guessing wrong produces a library
   that fails to load at runtime rather than a build error.
+- **`icons/icon.ico not found`** from `cargo check --workspace` on Windows is
+  not an Android problem. tauri-build generates a Windows resource for every
+  Tauri crate when the host is Windows, including this one, so the `.ico` is
+  kept beside the app for that reason alone. If it goes missing, copy
+  `apps/desktop/src-tauri/icons/icon.ico` back into
+  `apps/android/src-tauri/icons/`.
 
 ---
 
