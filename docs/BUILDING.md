@@ -189,14 +189,14 @@ The Android SDK, an NDK, and a JDK. Android Studio installs all three; on a
 headless machine, the command-line tools plus:
 
 ```sh
+export ANDROID_HOME="$HOME/Android/Sdk"     # wherever yours actually lives
 sdkmanager --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
-export ANDROID_HOME="$HOME/Android/Sdk"
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
 ```
 
-The NDK version is pinned rather than taken as "whatever is latest": the Gradle
-plugin in `gen/android` looks for a linker at a path inside it, and a silently
-changing NDK is a silently changing build. The CI job pins the same one.
+Setting `ANDROID_NDK_HOME` is optional: with `ANDROID_HOME` set, the Gradle
+plugin uses the highest NDK installed under it. Set it when you have several
+and want a particular one — which is what CI does, so a release is always built
+against a known NDK rather than whichever the runner happened to have.
 
 Then the Rust targets:
 
@@ -259,9 +259,10 @@ infrastructure here and never will be. See CLAUDE.md.
 
 - **A blank window** almost always means `dist/` was stale or missing when
   cargo ran. Rebuild the frontend, then Gradle.
-- **`ANDROID_NDK_HOME is not set`** from the Gradle build is exactly what it
-  says; the plugin refuses to guess, because guessing wrong produces a library
-  that fails to load at runtime rather than a build error.
+- **`No NDK is installed under …`** means exactly that; the message names the
+  `sdkmanager` line to fix it. The plugin will find an installed NDK on its own
+  but will not invent a path to one, because a wrong path produces a library
+  that fails to load on the phone rather than a build error.
 - **`icons/icon.ico not found`** from `cargo check --workspace` on Windows is
   not an Android problem. tauri-build generates a Windows resource for every
   Tauri crate when the host is Windows, including this one, so the `.ico` is

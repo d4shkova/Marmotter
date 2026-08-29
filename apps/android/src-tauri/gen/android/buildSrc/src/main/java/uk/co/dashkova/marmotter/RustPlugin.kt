@@ -19,10 +19,11 @@ import java.io.File
  * upgrade. What it does is the whole of the job: run `cargo build` once per
  * ABI, then copy the `.so` it produced into `jniLibs`.
  *
- * The NDK's linker is found through `ANDROID_NDK_HOME`, which the CI job and
- * `docs/BUILDING.md` both set. Cargo needs to be told about it per target
- * rather than through the ambient toolchain, because the linker name carries
- * the API level in it.
+ * The NDK is `ANDROID_NDK_HOME` where that is set — which is what CI does, so a
+ * release is always built against a known one — and otherwise the highest
+ * version installed under the SDK. Cargo has to be told about its linker per
+ * target rather than through the ambient toolchain, because the linker's name
+ * carries the API level in it.
  */
 class RustPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -49,6 +50,23 @@ class RustPlugin : Plugin<Project> {
     }
 }
 
+/**
+ * Orders NDK directory names like `27.2.12479018` by their numeric parts.
+ *
+ * String order gets this wrong the moment two installed NDKs differ in digit
+ * count — `9.x` would sort above `27.x` — and picking the older of two NDKs is
+ * the kind of thing that shows up much later as a link error nobody connects
+ * back to here.
+ */
+private val VERSION_ORDER = Comparator<String> { left, right ->
+    val a = left.split('.').map { it.toIntOrNull() ?: 0 }
+    val b = right.split('.').map { it.toIntOrNull() ?: 0 }
+    val ordered = (0 until maxOf(a.size, b.size)).asSequence()
+        .map { (a.getOrNull(it) ?: 0).compareTo(b.getOrNull(it) ?: 0) }
+        .firstOrNull { it != 0 }
+    ordered ?: 0
+}
+
 /** One ABI's worth of `cargo build`, plus the copy into `jniLibs`. */
 abstract class CargoBuildTask : DefaultTask() {
     @get:Input
@@ -69,12 +87,7 @@ abstract class CargoBuildTask : DefaultTask() {
 
     @TaskAction
     fun build() {
-        val ndk = System.getenv("ANDROID_NDK_HOME")
-            ?: System.getenv("NDK_HOME")
-            ?: throw GradleException(
-                "ANDROID_NDK_HOME is not set, so there is no linker to build the Rust " +
-                    "library with. See docs/BUILDING.md.",
-            )
+        val ndk = ndkRoot()
 
         // `src-tauri` is three levels above `gen/android`.
         val crate = project.rootDir.parentFile.parentFile
@@ -83,7 +96,10 @@ abstract class CargoBuildTask : DefaultTask() {
         val bin = File(ndk, "toolchains/llvm/prebuilt/$host/bin")
         val linker = File(bin, "$triple$apiLevel-clang")
         if (!linker.exists()) {
-            throw GradleException("No NDK linker at ${linker.absolutePath}.")
+            throw GradleException(
+                "No NDK linker at ${linker.absolutePath}. The NDK at ${ndk.absolutePath} is " +
+                    "either incomplete or built for a different host.",
+            )
         }
 
         // Cargo reads the linker for a target from an environment variable whose
@@ -109,6 +125,48 @@ abstract class CargoBuildTask : DefaultTask() {
         val into = File(project.projectDir, "src/main/jniLibs/$abi")
         into.mkdirs()
         built.copyTo(File(into, "libmarmotter_android_lib.so"), overwrite = true)
+    }
+
+    /**
+     * Which NDK to build against.
+     *
+     * `ANDROID_NDK_HOME` wins where it is set, which is what CI does so that a
+     * release is always built against a known one. Where it is not, the highest
+     * version installed under the SDK is used rather than nothing: a developer
+     * who has just run `sdkmanager --install "ndk;..."` has said which NDK they
+     * want by installing it, and making them repeat that as an environment
+     * variable is a step that only exists to be forgotten.
+     *
+     * Still no guessing at a path that is not there. Every way of failing to
+     * find one says which of them happened and what to do about it, because the
+     * alternative is a library that builds and then fails to load on the phone.
+     */
+    private fun ndkRoot(): File {
+        val named = System.getenv("ANDROID_NDK_HOME") ?: System.getenv("NDK_HOME")
+        if (named != null) {
+            val root = File(named)
+            if (!root.isDirectory) {
+                throw GradleException(
+                    "ANDROID_NDK_HOME points at $named, which is not a directory.",
+                )
+            }
+            return root
+        }
+
+        val sdk = System.getenv("ANDROID_HOME")
+            ?: System.getenv("ANDROID_SDK_ROOT")
+            ?: throw GradleException(
+                "Neither ANDROID_NDK_HOME nor ANDROID_HOME is set, so there is no NDK to " +
+                    "build the Rust library with. See docs/BUILDING.md.",
+            )
+
+        val installed = File(sdk, "ndk").listFiles().orEmpty().filter { it.isDirectory }
+        return installed.maxWithOrNull(compareBy(VERSION_ORDER) { it.name })
+            ?: throw GradleException(
+                "No NDK is installed under $sdk. Install one with:\n" +
+                    "  sdkmanager --install \"ndk;27.2.12479018\"\n" +
+                    "or set ANDROID_NDK_HOME to one you already have.",
+            )
     }
 
     /** What the NDK calls the machine doing the building. */
