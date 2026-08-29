@@ -25,5 +25,6 @@ export * from './dcc.js';
 export * from './notifier.js';
 export * from './opener.js';
 export * from './preferences.js';
+export * from './textfile.js';
 export * from './secrets.js';
 export * from './logging/index.js';

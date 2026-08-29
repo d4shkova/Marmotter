@@ -35,6 +35,9 @@ import type { DccOfferRecord } from './view-store.js';
 import { InviteBanner } from './Invites.js';
 import { CreateChannel } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
+import { ExportConfig, ImportConfig } from './ConfigTransfer.js';
+import { buildConfig, serializeConfig } from './config-transfer.js';
+import { DEFAULT_APPEARANCE, DEFAULT_USER_OPTIONS } from './view-store.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { PeoplePanel } from './PeoplePanel.js';
 import { Marmotter } from './Marmotter.js';
@@ -954,6 +957,8 @@ export const SettingsScreen: StoryObj = {
           onRemove={() => {}}
           onAddNetwork={() => {}}
           onResetSettings={() => {}}
+          onExportConfig={() => {}}
+          onImportConfig={() => {}}
         />
       </div>
     );
@@ -1189,6 +1194,86 @@ export const ChoosingATheme: StoryObj = {
       <div className="flex h-[28rem] items-start justify-center p-6">
         <ThemePicker value={theme} onChange={setTheme} />
       </div>
+    );
+  },
+};
+
+/**
+ * The same person's settings, moved from one device to another.
+ *
+ * Text rather than only a file, because copying is the one thing a desktop, a
+ * phone and a browser tab can all do — and this is a feature about the three of
+ * them agreeing with each other.
+ */
+export const ExportingYourSettings: StoryObj = {
+  render: function ExportingYourSettings() {
+    const [open, setOpen] = useState(true);
+    const text = serializeConfig(
+      buildConfig({
+        identity: { ...EMPTY_IDENTITY, nick: 'tamsin', altNick: 'tamsin_' },
+        networks: [
+          {
+            id: 'libera',
+            name: 'Libera.Chat',
+            servers: [
+              { host: 'irc.libera.chat', port: 6697, tls: { mode: 'tls', verifyCert: true } },
+            ],
+            identity: {
+              nick: 'tamsin',
+              altNicks: ['tamsin_'],
+              username: 'tamsin',
+              realname: 'tamsin',
+            },
+            autojoin: [{ target: '#marmotter' }],
+            connectCommands: [],
+            encoding: 'utf-8',
+            autoReconnect: true,
+          },
+        ],
+        settings: {
+          appearance: DEFAULT_APPEARANCE,
+          ctcp: DEFAULT_CTCP_POLICY,
+          userOptions: DEFAULT_USER_OPTIONS,
+          logging: defaultLoggingPolicy,
+        },
+        now: new Date('2026-08-29T12:00:00Z'),
+      }),
+    );
+
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Export your settings
+        </button>
+        <ExportConfig
+          open={open}
+          onClose={() => setOpen(false)}
+          text={text}
+          onSaveFile={async () => '/home/tamsin/marmotter-settings.json'}
+          onReport={() => {}}
+        />
+      </>
+    );
+  },
+};
+
+/** The other end: what the file contains, before any of it is applied. */
+export const ImportingSettings: StoryObj = {
+  render: function ImportingSettings() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className="text-[var(--accent)]">
+          Import settings
+        </button>
+        <ImportConfig
+          open={open}
+          onClose={() => setOpen(false)}
+          onApply={() => setOpen(false)}
+          paths={{}}
+          onReport={() => {}}
+        />
+      </>
     );
   },
 };

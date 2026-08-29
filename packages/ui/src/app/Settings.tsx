@@ -68,6 +68,16 @@ export interface SettingsProps {
    * a button that took those under this label would be a nasty surprise.
    */
   readonly onResetSettings: () => void;
+  /**
+   * Shows this device's settings as text to take to another one.
+   *
+   * Offered on every platform, including web, where it is the only way settings
+   * outlive the tab. What travels is the configuration, never a password and
+   * never a message — the sheet itself says so.
+   */
+  readonly onExportConfig: () => void;
+  /** Takes settings exported from another Marmotter. */
+  readonly onImportConfig: () => void;
   readonly className?: string;
 }
 
@@ -101,6 +111,8 @@ export function Settings({
   onRemove,
   onAddNetwork,
   onResetSettings,
+  onExportConfig,
+  onImportConfig,
   className,
 }: SettingsProps): ReactNode {
   // Two steps, like deleting the logs: it undoes every choice on this screen at
@@ -479,6 +491,32 @@ export function Settings({
                     </div>
                   </>
                 )}
+              </ListGroup>
+            )}
+
+            {!shown('advanced') ? null : (
+              <ListGroup
+                header="Move your settings"
+                footer="Marmotter runs on a desktop, a phone and in a browser, and this is how one of them catches up with another. Passwords and channel keys stay on the device that holds them — every network remembers how it signs in, so you type the password once on the other side."
+              >
+                <ListRow
+                  title="Export your settings"
+                  subtitle="Your networks, your name and everything on this screen, as text to copy or save."
+                  trailing={
+                    <Button size="small" onClick={onExportConfig}>
+                      Export
+                    </Button>
+                  }
+                />
+                <ListRow
+                  title="Import settings"
+                  subtitle="Paste settings exported from another Marmotter. You see what is in them before anything changes."
+                  trailing={
+                    <Button size="small" onClick={onImportConfig}>
+                      Import
+                    </Button>
+                  }
+                />
               </ListGroup>
             )}
 

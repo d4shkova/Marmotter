@@ -224,6 +224,49 @@ Secrets (`SecretRef`) go to the OS keychain via `tauri-plugin-stronghold` or
 platform keyring on desktop. On web, secrets live in memory for the session only
 and are never persisted.
 
+## Settings export and import
+
+The same person runs this on a desktop, a phone and in a browser, and setting up
+the second one must not mean typing the first one's networks in again. Settings
+travels as one JSON document, built and read in
+`packages/ui/src/app/config-transfer.ts` — pure functions, no I/O, testable on
+their own — and shown by the two sheets in `ConfigTransfer.tsx`.
+
+Three rules, all of them load-bearing:
+
+- **No secret is ever in it.** A profile carries a `SecretRef` and never a
+  password, and the document carries the reference for the same reason the
+  settings file does: it keeps "this network signs in with SASL as tamsin"
+  intact while the value stays in the platform's keychain. The password is typed
+  once on the receiving device; re-importing on the device that wrote the file
+  finds its own keychain entries under those references and needs nothing typed.
+  The sheets say so in as many words rather than letting somebody assume a
+  backup includes their passwords.
+- **No path that belongs to one device.** The download folder and the log folder
+  are stripped on the way out and filled in from the receiving device on the way
+  in — a phone has neither of a desktop's, and on Android neither is the user's
+  to choose at all.
+- **No message content, on any platform.** Logs are not settings.
+
+Reading is deliberately forgiving, because the two ends will be on different
+releases more often than not: every field falls back to its own default, so a
+document from a build that did not have a setting yet is not a document that
+fails to load. What is refused is only what cannot be understood — text that is
+not JSON, or JSON that does not say it is one of these. The document's own
+`version` is separate from the app's, and a newer one is read rather than
+refused.
+
+**Copying the text is the feature; the file is the extra.** Every platform can
+put text on a clipboard, and only some have file dialogs — so the export is a
+text box with a Copy button everywhere, and desktop additionally gets Save and
+Load through `ConfigFileAccess` (`crates/marmotter-shell/src/textfile.rs`,
+registered on desktop alone). A feature that needed a file would have been a
+desktop feature with a phone footnote, which is the opposite of the point.
+
+Importing replaces the networks and every setting on the screen, registers each
+profile **without connecting it** — the same reasoning as a restart — and says
+what it is about to do before it does it.
+
 ## Logging and retention
 
 Model this on mIRC and HexChat: the user owns their logs, stored locally, in

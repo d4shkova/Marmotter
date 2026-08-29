@@ -17,4 +17,5 @@ pub mod dcc;
 pub mod links;
 pub mod logstore;
 pub mod prefs;
+pub mod textfile;
 pub mod transport;
