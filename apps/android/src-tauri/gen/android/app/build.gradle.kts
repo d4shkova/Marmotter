@@ -55,6 +55,19 @@ android {
         jniLibs.srcDir("src/main/jniLibs")
     }
 
+    lint {
+        // Lint crashes rather than reports here: the lifecycle checks that
+        // arrive with `lifecycle-process` are built against a newer Kotlin
+        // analysis API than the one AGP 8.7.3's lint bundles, and the mismatch
+        // surfaces as `Found class KaCallableMemberCall, but interface was
+        // expected` while it walks our own Kotlin.
+        //
+        // Disabled by name rather than by turning lint off for release builds,
+        // so everything else it checks still runs. Nothing is being suppressed:
+        // this app has no LiveData for the detector to have an opinion about.
+        disable += "NullSafeMutableLiveData"
+    }
+
     buildFeatures {
         // The Logger that wry generates into this package reads
         // `BuildConfig.DEBUG` to decide whether to log at all. AGP 8 stopped
