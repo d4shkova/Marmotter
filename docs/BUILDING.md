@@ -245,9 +245,10 @@ adb reverse tcp:1421 tcp:1421                   # the phone's :1421 is now yours
 ```
 
 then add `"devUrl": "http://localhost:1421"` to `build` in
-`apps/android/src-tauri/tauri.conf.json` and rebuild once. Take it out again
-before building an APK for anyone else — there is a test that fails if you
-forget.
+`apps/android/src-tauri/tauri.conf.json`, and build the library with
+`--no-default-features` so it looks for that server instead of serving what it
+embedded. Put both back before building an APK for anyone else — there is a
+test that fails if you forget the first.
 
 ### Debug, not release, until there is a keystore
 
@@ -311,6 +312,10 @@ infrastructure here and never will be. See CLAUDE.md.
   If that line never appears, the Rust entry point was not reached and the
   problem is on the Kotlin or JNI side rather than in the app.
 
+- **`frontendDist` … doesn't exist** from cargo means `dist/` was not built
+  before the Rust was. That is the intended failure: the alternative is a
+  library that embeds nothing and asks a dev server for the interface at
+  runtime.
 - **A black screen and no error** usually means the page loaded and rendered
   nothing, because `--bg-base` is black. Open `chrome://inspect/#devices` in
   Chrome on the desktop with the app running: a debug build has webview

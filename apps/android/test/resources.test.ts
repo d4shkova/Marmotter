@@ -147,3 +147,23 @@ describe('the Tauri configuration', () => {
     expect(config.build?.devUrl).toBeUndefined();
   });
 });
+
+describe('the Android crate', () => {
+  const manifest = readFileSync(
+    fileURLToPath(new URL('../src-tauri/Cargo.toml', import.meta.url)),
+    'utf8',
+  );
+
+  /**
+   * Tauri serves its embedded frontend only when `custom-protocol` is on:
+   * internally `dev` is `!custom-protocol`, regardless of the cargo profile.
+   * The Tauri CLI passes the feature on production builds, but the APK is built
+   * by Gradle rather than the CLI, so it has to be a default here — without it
+   * every build asks a dev server for the interface, and a phone's localhost is
+   * the phone.
+   */
+  it('serves its embedded frontend by default', () => {
+    expect(manifest).toContain('default = ["custom-protocol"]');
+    expect(manifest).toContain('custom-protocol = ["tauri/custom-protocol"]');
+  });
+});
