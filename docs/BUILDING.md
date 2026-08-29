@@ -211,7 +211,7 @@ pnpm -r --filter=./packages/* build
 pnpm --filter @marmotter/android build      # the frontend, into apps/android/dist
 cd apps/android/src-tauri/gen/android
 gradle wrapper                              # once; the wrapper jar is not committed
-./gradlew assembleRelease
+./gradlew assembleDebug
 ```
 
 **`pnpm --filter @marmotter/android build` has to run before Gradle does.**
@@ -221,15 +221,25 @@ build that succeeds and ships a blank window.
 
 ### Out
 
-`apps/android/src-tauri/gen/android/app/build/outputs/apk/release/`, one APK per
-ABI plus a universal one. Install with `adb install -r <file>.apk`.
+`apps/android/src-tauri/gen/android/app/build/outputs/apk/debug/`, one APK per
+ABI plus a universal one. Install with:
 
-### Unsigned, for now
+```sh
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+```
 
-The APKs are **unsigned**. A device will refuse to install one without
-`adb install`, and they cannot be distributed. Wiring a keystore into the
-release job is a follow-up; it is deliberately not half-done, because a build
-that looks signed and is not is worse than one that plainly is not.
+### Debug, not release, until there is a keystore
+
+**`assembleRelease` produces APKs nothing can install.** Android has no "allow
+unsigned" setting: an APK with no signature is refused by the package installer
+and by `adb install` alike, and the refusal is silent in a file manager. A debug
+build is signed, with a keystore Gradle generates for you, which is why it is
+the one to put on a phone.
+
+Release is still worth building — it is what runs R8 and the resource shrinker —
+it just cannot leave your machine. Wiring a real keystore is a follow-up; it is
+deliberately not half-done, because a build that looks signed and is not is
+worse than one that plainly is not.
 
 ### What the app does and does not do in the background
 

@@ -28,10 +28,12 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // No signing config. The release job produces an unsigned APK for
-            // now; adding a keystore is a follow-up and deliberately not
-            // half-wired here, because a build that looks signed and is not is
-            // worse than one that plainly is not. See docs/BUILDING.md.
+            // No signing config, and so nothing installable. Android has no
+            // "allow unsigned" setting: an APK without a signature is refused
+            // by the package installer and by `adb install` alike. This variant
+            // exists to keep R8 and the shrinker honest; the one you put on a
+            // phone is `assembleDebug`, which is signed with the debug keystore
+            // Gradle generates. Adding a real keystore is a follow-up.
         }
     }
 
