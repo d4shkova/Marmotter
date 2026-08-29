@@ -38,3 +38,10 @@ serde = { version = "1", features = ["derive"] }
 # Warnings from the connection service go to logcat, which is where an
 # Android problem is actually looked for.
 log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# What puts `log` output into logcat. Without it every `log::` call in this
+# crate and in Tauri goes nowhere, which is exactly as useful as it sounds when
+# an app starts and draws nothing: there is no way to tell a shell that never
+# ran from one that ran and failed. Installed first thing in `run`.
+android_logger = "0.14"

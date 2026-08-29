@@ -280,6 +280,16 @@ infrastructure here and never will be. See CLAUDE.md.
 
   The `Align` column should read `0x4000`, not `0x1000`.
 
+- **Nothing in logcat from the app itself.** The shell logs to logcat under
+  the tag `Marmotter`, starting with a line as `run` is entered:
+
+  ```sh
+  adb logcat -s Marmotter
+  ```
+
+  If that line never appears, the Rust entry point was not reached and the
+  problem is on the Kotlin or JNI side rather than in the app.
+
 - **A black screen and no error** usually means the page loaded and rendered
   nothing, because `--bg-base` is black. Open `chrome://inspect/#devices` in
   Chrome on the desktop with the app running: a debug build has webview

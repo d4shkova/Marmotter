@@ -30,6 +30,23 @@ use marmotter_shell::{logstore, prefs, transport};
 /// Panics if the webview or the application context fails to initialise.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Logcat, before anything that could fail.
+    //
+    // Nothing else in this process writes anywhere a person can read: `println!`
+    // goes to a stdout Android discards, and a panic in a release build aborts
+    // without a word. So an app that starts and draws nothing looks identical to
+    // one whose entry point was never called, and that ambiguity costs a build
+    // cycle every time. This is the line that distinguishes them.
+    #[cfg(target_os = "android")]
+    {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Info)
+                .with_tag("Marmotter"),
+        );
+        log::info!("starting the shell");
+    }
+
     tauri::Builder::default()
         // An Android WebView has no web Notification API, so this is the only
         // way a mention reaches somebody who is not looking at the app.
