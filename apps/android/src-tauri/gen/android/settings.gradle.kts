@@ -56,6 +56,18 @@ fun generateTauriGradleFiles() {
     builder.environment().apply {
         // What tells tauri-build to write the list, and where to write it.
         put("TAURI_ANDROID_PROJECT_PATH", rootDir.absolutePath)
+        // And what makes it actually run.
+        //
+        // tauri-build declares the two files it writes as build-script inputs,
+        // so once cargo knows about them it rewrites them whenever they go
+        // missing. This very first build is the one case that cannot work:
+        // earlier builds ran without TAURI_ANDROID_PROJECT_PATH, so their
+        // fingerprint mentions no such files, nothing looks stale, and the
+        // build script is skipped — leaving cargo to exit successfully having
+        // written nothing. TAURI_CONFIG is a declared input too, and going from
+        // unset to a value that patches nothing invalidates the fingerprint
+        // without changing the configuration.
+        put("TAURI_CONFIG", "{}")
         put("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", linker.absolutePath)
         put("CC_aarch64-linux-android", linker.absolutePath)
         put("AR_aarch64-linux-android", File(bin, "llvm-ar").absolutePath)
@@ -65,6 +77,15 @@ fun generateTauriGradleFiles() {
     require(builder.start().waitFor() == 0) {
         "cargo could not build the Android library, so there is no list of Tauri projects " +
             "to include. The cargo output above says why."
+    }
+
+    // A cargo that exits successfully having written nothing is the failure
+    // worth naming: it means the build script was skipped, and what happens
+    // next is Gradle failing on a missing file with nothing to say about why it
+    // never appeared.
+    require(file("tauri.settings.gradle").exists()) {
+        "cargo succeeded but tauri-build wrote no tauri.settings.gradle. Try " +
+            "`cargo clean -p marmotter-android` and build again."
     }
 }
 
