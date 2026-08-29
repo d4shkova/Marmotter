@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { cn } from '../lib/cn.js';
+import { useEdgeSwipe } from '../lib/edge-swipe.js';
 import { useKeyboardInset } from '../lib/keyboard.js';
 
 export type Breakpoint = 'mobile' | 'tablet' | 'desktop';
@@ -54,6 +55,14 @@ export interface AppShellProps {
   /** Shown on mobile when the channel list is slid over. */
   readonly sidebarOpen?: boolean;
   readonly onCloseSidebar?: () => void;
+  /**
+   * Opens the slide-over channel list. Passed on mobile, where dragging in from
+   * the left edge is how it is reached; the control that does the same thing is
+   * hidden until focused.
+   */
+  readonly onOpenSidebar?: () => void;
+  /** Opens the member list, by dragging in from the right edge. */
+  readonly onOpenAside?: () => void;
   readonly className?: string;
 }
 
@@ -76,10 +85,25 @@ export function AppShell({
   titleBar,
   sidebarOpen = false,
   onCloseSidebar,
+  onOpenSidebar,
+  onOpenAside,
   className,
 }: AppShellProps): ReactNode {
   const breakpoint = useBreakpoint();
   const keyboard = useKeyboardInset();
+
+  // The panels either side of the conversation, reached by dragging in from the
+  // edge they live on. Only the single-column layout: at every wider size both
+  // are already on screen or one tap away, and a drag would be competing with
+  // text selection rather than replacing a control.
+  const edgeSwipe = useEdgeSwipe({
+    leadingOpen: sidebarOpen,
+    trailingOpen: asideOpen && aside !== undefined,
+    ...(onOpenSidebar === undefined ? {} : { onOpenLeading: onOpenSidebar }),
+    ...(onCloseSidebar === undefined ? {} : { onCloseLeading: onCloseSidebar }),
+    ...(onOpenAside === undefined ? {} : { onOpenTrailing: onOpenAside }),
+    ...(onCloseAside === undefined ? {} : { onCloseTrailing: onCloseAside }),
+  });
   // The frame owns the viewport height now, so the columns fill what is left of
   // it — under a title bar where there is one, and under nothing where there
   // is not.
@@ -116,7 +140,7 @@ export function AppShell({
   if (breakpoint === 'mobile') {
     return framed(
       <div className={cn('flex flex-col overflow-hidden bg-[var(--bg-base)]', frame, className)}>
-        <div className="relative flex flex-1 overflow-hidden">
+        <div className="relative flex flex-1 overflow-hidden" {...edgeSwipe}>
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{main}</main>
 
           {sidebarOpen ? (

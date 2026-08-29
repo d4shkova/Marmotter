@@ -2162,11 +2162,18 @@ export function Marmotter({
           : {})}
         leading={
           breakpoint === 'mobile' ? (
-            <IconButton
-              label="Show channels"
-              icon={<span aria-hidden="true">☰</span>}
-              onClick={() => setDrawerOpen(true)}
-            />
+            // Drawn only when focused. The channel list is reached by dragging
+            // in from the left edge, which is the mobile shape for a panel that
+            // lives off-screen — but a gesture nobody can see must never be the
+            // only way to reach something, so the control stays in the page for
+            // a keyboard or a screen reader to find.
+            <span className="sr-only focus-within:not-sr-only">
+              <IconButton
+                label="Show channels"
+                icon={<span aria-hidden="true">☰</span>}
+                onClick={() => setDrawerOpen(true)}
+              />
+            </span>
           ) : (
             <IconButton
               label={view.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
@@ -2225,12 +2232,20 @@ export function Marmotter({
                   />
                 ) : null}
                 {isChannel(selection.target, network.support) ? (
-                  <IconButton
-                    label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
-                    icon={<span aria-hidden="true">≡</span>}
-                    pressed={view.memberListOpen}
-                    onClick={() => view.setMemberListOpen(!view.memberListOpen)}
-                  />
+                  // Hidden until focused on mobile, where the member list comes
+                  // in from the right edge instead; see the channel-list button
+                  // above. Every wider layout keeps the button, because there is
+                  // no edge to drag from when the panel is a column.
+                  <span
+                    className={breakpoint === 'mobile' ? 'sr-only focus-within:not-sr-only' : ''}
+                  >
+                    <IconButton
+                      label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
+                      icon={<span aria-hidden="true">≡</span>}
+                      pressed={view.memberListOpen}
+                      onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                    />
+                  </span>
                 ) : null}
               </>
             ) : null}
@@ -2470,6 +2485,8 @@ export function Marmotter({
         sidebarCollapsed={view.sidebarCollapsed}
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
+        onOpenSidebar={() => setDrawerOpen(true)}
+        onOpenAside={() => view.setMemberListOpen(true)}
         asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
