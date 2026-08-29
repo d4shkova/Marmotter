@@ -7,6 +7,9 @@ rootProject.name = "Marmotter"
 
 include(":app")
 
+/** Where wry and tauri write the activity classes, inside the app's package. */
+val kotlinOutDir = File(rootDir, "app/src/main/java/uk/co/dashkova/marmotter")
+
 /**
  * Builds the Rust library once, for one ABI, to produce that list.
  *
@@ -49,6 +52,20 @@ fun generateTauriGradleFiles() {
     val linker = File(bin, "aarch64-linux-android24-clang")
     require(linker.exists()) { "No NDK linker at ${linker.absolutePath}." }
 
+    // `wry` declares the three WRY_ANDROID_* variables as build-script inputs,
+    // so setting them is enough to make it regenerate. `tauri` declares no
+    // environment inputs at all, so once it has been built for Android its
+    // build script is cached and skipped, and `TauriActivity.kt` is never
+    // written however many times the variables change. Cleaning that one
+    // package for this one target is what forces it, and only when the file it
+    // owes us is actually missing.
+    if (!File(kotlinOutDir, "TauriActivity.kt").exists()) {
+        ProcessBuilder(
+            "cargo", "clean", "-p", "tauri", "--release",
+            "--target", "aarch64-linux-android",
+        ).directory(crate).inheritIO().start().waitFor()
+    }
+
     val builder = ProcessBuilder(
         "cargo", "build", "--lib", "--release", "--target", "aarch64-linux-android",
     ).directory(crate).inheritIO()
@@ -76,9 +93,7 @@ fun generateTauriGradleFiles() {
         put("WRY_ANDROID_LIBRARY", "marmotter_android_lib")
         put(
             "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
-            File(rootDir, "app/src/main/java/uk/co/dashkova/marmotter")
-                .also { it.mkdirs() }
-                .absolutePath,
+            kotlinOutDir.also { it.mkdirs() }.absolutePath,
         )
         put("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", linker.absolutePath)
         put("CC_aarch64-linux-android", linker.absolutePath)
@@ -99,6 +114,10 @@ fun generateTauriGradleFiles() {
         "cargo succeeded but tauri-build wrote no tauri.settings.gradle. Try " +
             "`cargo clean -p marmotter-android` and build again."
     }
+    require(File(kotlinOutDir, "TauriActivity.kt").exists()) {
+        "cargo succeeded but tauri wrote no TauriActivity.kt, which MainActivity extends. " +
+            "Try `cargo clean -p tauri` and build again."
+    }
 }
 
 /**
@@ -115,7 +134,11 @@ fun generateTauriGradleFiles() {
  * include yet and one cargo build has to happen first, right here.
  */
 val generated = file("tauri.settings.gradle")
-if (!generated.exists() || !generated.readText().contains("include")) {
+if (
+    !generated.exists() ||
+    !generated.readText().contains("include") ||
+    !File(kotlinOutDir, "TauriActivity.kt").exists()
+) {
     generateTauriGradleFiles()
 }
 apply(from = generated)

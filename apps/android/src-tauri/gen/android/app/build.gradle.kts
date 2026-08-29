@@ -55,6 +55,14 @@ android {
         jniLibs.srcDir("src/main/jniLibs")
     }
 
+    buildFeatures {
+        // The Logger that wry generates into this package reads
+        // `BuildConfig.DEBUG` to decide whether to log at all. AGP 8 stopped
+        // generating BuildConfig unless asked, so without this the generated
+        // code does not compile.
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
