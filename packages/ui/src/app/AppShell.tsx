@@ -56,12 +56,14 @@ export interface AppShellProps {
   readonly sidebarOpen?: boolean;
   readonly onCloseSidebar?: () => void;
   /**
-   * Opens the slide-over channel list. Passed on mobile, where dragging in from
-   * the left edge is how it is reached; the control that does the same thing is
-   * hidden until focused.
+   * Opens the slide-over channel list, from the handle against the left edge.
    */
   readonly onOpenSidebar?: () => void;
-  /** Opens the member list, by dragging in from the right edge. */
+  /**
+   * Opens the member list. Passed only where there is one to open — the shell
+   * is given no `aside` until it is already open, so this is what says the
+   * conversation has members at all.
+   */
   readonly onOpenAside?: () => void;
   readonly className?: string;
 }
@@ -169,7 +171,11 @@ export function AppShell({
             ? null
             : handle('left', 'Show channels', onOpenSidebar)}
 
-          {asideOpen || aside === undefined || onOpenAside === undefined
+          {/* Offered whenever the panel is not actually on screen. Not simply
+              `!asideOpen`: that defaults to true, and the shell is handed no
+              member list until one is open — so the state this button exists
+              for is "open, with nothing in it", which is not open at all. */}
+          {(asideOpen && aside !== undefined) || onOpenAside === undefined
             ? null
             : handle('right', 'Show the member list', onOpenAside)}
 

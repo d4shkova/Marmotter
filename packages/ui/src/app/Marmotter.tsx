@@ -2066,12 +2066,15 @@ export function Marmotter({
   // The right-hand column carries the member list, for a channel. The DCC file
   // monitor used to sit under it here; it now lives at the foot of the sidebar
   // instead, so it has a home whether or not a channel is open.
-  const showMembers =
-    view.memberListOpen &&
+  // Whether this conversation has a member list at all, which is a different
+  // question from whether it is open — and the one the control that opens it
+  // has to be able to ask.
+  const membersAvailable =
     conversation !== undefined &&
     selection?.target !== undefined &&
     network !== undefined &&
     isChannel(selection.target, network.support);
+  const showMembers = view.memberListOpen && membersAvailable;
   const showDccPanel = view.userOptions.dccMonitorEnabled && dcc !== undefined;
   // While searching, the right-hand column shows the hits instead of the member
   // list — that is where CLAUDE-md-style the user asked to see every instance,
@@ -2473,7 +2476,7 @@ export function Marmotter({
         sidebarOpen={drawerOpen}
         onCloseSidebar={() => setDrawerOpen(false)}
         onOpenSidebar={() => setDrawerOpen(true)}
-        onOpenAside={() => view.setMemberListOpen(true)}
+        {...(membersAvailable ? { onOpenAside: () => view.setMemberListOpen(true) } : {})}
         asideOpen={asideOpen}
         onCloseAside={() => view.setMemberListOpen(false)}
         sidebar={
@@ -2506,6 +2509,32 @@ export function Marmotter({
             <TabBar
               value={view.pane === 'chat' ? 'chats' : view.pane}
               onChange={(value) => view.setPane(value === 'chats' ? 'chat' : 'settings')}
+              // The same two panels the handles against the screen edges open,
+              // repeated where a thumb already is. Both are shortcuts to one
+              // thing rather than two ways of doing different things.
+              leading={
+                <IconButton
+                  label="Show channels"
+                  size="small"
+                  icon={<span aria-hidden="true">›</span>}
+                  onClick={() => setDrawerOpen(true)}
+                />
+              }
+              {...(membersAvailable
+                ? {
+                    trailing: (
+                      <IconButton
+                        label={
+                          view.memberListOpen ? 'Hide the member list' : 'Show the member list'
+                        }
+                        size="small"
+                        pressed={view.memberListOpen}
+                        icon={<span aria-hidden="true">‹</span>}
+                        onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                      />
+                    ),
+                  }
+                : {})}
               items={[
                 { value: 'chats', label: 'Chats', icon: <span aria-hidden="true">◍</span> },
                 { value: 'settings', label: 'Settings', icon: <span aria-hidden="true">⚙</span> },

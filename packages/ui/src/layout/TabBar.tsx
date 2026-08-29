@@ -17,6 +17,15 @@ export interface TabBarProps<T extends string> {
   readonly onChange: (value: T) => void;
   readonly items: readonly TabBarItem<T>[];
   readonly label?: string;
+  /**
+   * Controls pinned to either end of the row, outside the tabs.
+   *
+   * For the two side panels, which are not places to go but things to pull
+   * open — so they sit beside the tabs rather than among them, where being
+   * `aria-current` would mean something they can never be.
+   */
+  readonly leading?: ReactNode;
+  readonly trailing?: ReactNode;
   readonly className?: string;
 }
 
@@ -33,6 +42,8 @@ export function TabBar<T extends string>({
   onChange,
   items,
   label = 'Sections',
+  leading,
+  trailing,
   className,
 }: TabBarProps<T>): ReactNode {
   return (
@@ -45,6 +56,10 @@ export function TabBar<T extends string>({
         className,
       )}
     >
+      {leading === undefined ? null : (
+        <span className="flex shrink-0 items-center pl-1">{leading}</span>
+      )}
+
       {items.map((item) => {
         const current = item.value === value;
         const count = item.badge ?? 0;
@@ -79,6 +94,10 @@ export function TabBar<T extends string>({
           </button>
         );
       })}
+
+      {trailing === undefined ? null : (
+        <span className="flex shrink-0 items-center pr-1">{trailing}</span>
+      )}
     </nav>
   );
 }

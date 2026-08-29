@@ -91,15 +91,19 @@ describe('the handles that open the side panels', () => {
     expect(screen.getByRole('button', { name: 'Show the member list' })).toBeTruthy();
   });
 
+  /**
+   * The shell is handed no `aside` until the member list is open, so the handle
+   * cannot wait for one — it would be waiting on the thing it exists to open.
+   * What says a conversation has members is being given a way to open them.
+   */
+  it('offers the member list before there is one to show', () => {
+    render(<AppShell sidebar={<nav />} main={<p>Messages</p>} onOpenAside={() => {}} />);
+
+    expect(screen.getByRole('button', { name: 'Show the member list' })).toBeTruthy();
+  });
+
   it('offers no member list where the conversation has none', () => {
-    render(
-      <AppShell
-        sidebar={<nav />}
-        main={<p>Messages</p>}
-        onOpenSidebar={() => {}}
-        onOpenAside={() => {}}
-      />,
-    );
+    render(<AppShell sidebar={<nav />} main={<p>Messages</p>} onOpenSidebar={() => {}} />);
 
     expect(screen.queryByRole('button', { name: 'Show the member list' })).toBeNull();
   });
