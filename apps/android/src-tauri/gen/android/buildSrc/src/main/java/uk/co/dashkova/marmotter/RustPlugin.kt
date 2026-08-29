@@ -48,8 +48,36 @@ private val ABIS = listOf(
  * target rather than through the ambient toolchain, because the linker's name
  * carries the API level in it.
  */
+/**
+ * Which cargo profile to build, for a Gradle build that is itself debug or
+ * release.
+ *
+ * This matters for more than binary size. `debug_assertions` is what Tauri keys
+ * webview DevTools off, so a release library in a debug APK is one you cannot
+ * inspect from `chrome://inspect` — the single most useful tool for finding out
+ * why a page did not render. The workspace release profile also sets
+ * `panic = "abort"`, which turns a panic in the app's startup into a dead
+ * process rather than a message.
+ *
+ * Read from the tasks Gradle was asked to run, because the cargo build has to
+ * be decided once for the whole build rather than per variant: these tasks hang
+ * off `preBuild`, which both variants share. `-Pmarmotter.cargoProfile=` says
+ * so explicitly when that guess is wrong.
+ */
+private fun cargoProfile(project: Project): String {
+    val explicit = project.findProperty("marmotter.cargoProfile")?.toString()
+    if (explicit != null) {
+        return explicit
+    }
+    val requested = project.gradle.startParameter.taskNames.joinToString(" ").lowercase()
+    val debug = requested.contains("debug")
+    val release = requested.contains("release")
+    return if (debug && !release) "debug" else "release"
+}
+
 class RustPlugin : Plugin<Project> {
     override fun apply(project: Project) {
+        val profile = cargoProfile(project)
         val tasks = ABIS.map { abi ->
             project.tasks.register(
                 "cargoBuild${abi.name.replaceFirstChar { it.uppercase() }.replace("-", "")}",
@@ -58,6 +86,7 @@ class RustPlugin : Plugin<Project> {
                 this.abi = abi.name
                 this.triple = abi.triple
                 this.clangPrefix = abi.clangPrefix
+                this.profile = profile
             }
         }
 
@@ -97,6 +126,10 @@ abstract class CargoBuildTask : DefaultTask() {
     @get:Input
     lateinit var clangPrefix: String
 
+    /** `debug` or `release`. See [cargoProfile]. */
+    @get:Input
+    lateinit var profile: String
+
     /**
      * The API level the linker targets.
      *
@@ -130,7 +163,14 @@ abstract class CargoBuildTask : DefaultTask() {
 
         project.exec {
             workingDir = crate
-            commandLine("cargo", "build", "--lib", "--release", "--target", triple)
+            commandLine(
+                buildList {
+                    addAll(listOf("cargo", "build", "--lib", "--target", triple))
+                    if (profile == "release") {
+                        add("--release")
+                    }
+                },
+            )
             // Tells tauri-build to keep `tauri.settings.gradle` and
             // `app/tauri.build.gradle.kts` current — the list of Tauri projects
             // this build depends on. settings.gradle.kts creates them on a
@@ -155,14 +195,14 @@ abstract class CargoBuildTask : DefaultTask() {
             environment("PATH", "${bin.absolutePath}${File.pathSeparator}${System.getenv("PATH")}")
         }
 
-        val built = File(workspace, "target/$triple/release/libmarmotter_android_lib.so")
+        val built = File(workspace, "target/$triple/$profile/lib$LIBRARY.so")
         if (!built.exists()) {
             throw GradleException("cargo produced no library at ${built.absolutePath}.")
         }
 
         val into = File(project.projectDir, "src/main/jniLibs/$abi")
         into.mkdirs()
-        built.copyTo(File(into, "libmarmotter_android_lib.so"), overwrite = true)
+        built.copyTo(File(into, "lib$LIBRARY.so"), overwrite = true)
     }
 
     /**

@@ -269,6 +269,13 @@ infrastructure here and never will be. See CLAUDE.md.
 
 - **A blank window** almost always means `dist/` was stale or missing when
   cargo ran. Rebuild the frontend, then Gradle.
+- **A black screen and no error** usually means the page loaded and rendered
+  nothing, because `--bg-base` is black. Open `chrome://inspect/#devices` in
+  Chrome on the desktop with the app running: a debug build has webview
+  DevTools, so the console is right there. The Rust profile follows the Gradle
+  variant, so `assembleDebug` is what makes that possible —
+  `-Pmarmotter.cargoProfile=debug` forces it if you are building some other
+  task.
 - **`No NDK is installed under …`** means exactly that; the message names the
   `sdkmanager` line to fix it. The plugin will find an installed NDK on its own
   but will not invent a path to one, because a wrong path produces a library

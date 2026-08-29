@@ -52,6 +52,11 @@ fun generateTauriGradleFiles() {
     val linker = File(bin, "aarch64-linux-android24-clang")
     require(linker.exists()) { "No NDK linker at ${linker.absolutePath}." }
 
+    // Same profile RustPlugin will use, or its per-ABI tasks rebuild from
+    // scratch straight after this one. See `cargoProfile` there.
+    val requested = gradle.startParameter.taskNames.joinToString(" ").lowercase()
+    val debug = requested.contains("debug") && !requested.contains("release")
+
     // `wry` declares the three WRY_ANDROID_* variables as build-script inputs,
     // so setting them is enough to make it regenerate. `tauri` declares no
     // environment inputs at all, so once it has been built for Android its
@@ -61,13 +66,23 @@ fun generateTauriGradleFiles() {
     // owes us is actually missing.
     if (!File(kotlinOutDir, "TauriActivity.kt").exists()) {
         ProcessBuilder(
-            "cargo", "clean", "-p", "tauri", "--release",
-            "--target", "aarch64-linux-android",
+            buildList {
+                addAll(listOf("cargo", "clean", "-p", "tauri"))
+                if (!debug) {
+                    add("--release")
+                }
+                addAll(listOf("--target", "aarch64-linux-android"))
+            },
         ).directory(crate).inheritIO().start().waitFor()
     }
 
     val builder = ProcessBuilder(
-        "cargo", "build", "--lib", "--release", "--target", "aarch64-linux-android",
+        buildList {
+            addAll(listOf("cargo", "build", "--lib", "--target", "aarch64-linux-android"))
+            if (!debug) {
+                add("--release")
+            }
+        },
     ).directory(crate).inheritIO()
 
     builder.environment().apply {
