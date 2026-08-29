@@ -38,6 +38,7 @@ export * from './primitives/Select.js';
 export * from './primitives/Sheet.js';
 export * from './primitives/Spinner.js';
 export * from './primitives/Stepper.js';
+export * from './primitives/SwipeRow.js';
 export * from './primitives/Table.js';
 export * from './primitives/Tabs.js';
 export * from './primitives/TextField.js';
