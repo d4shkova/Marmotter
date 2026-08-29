@@ -104,6 +104,14 @@ fun generateTauriGradleFiles() {
         // as well as in RustPlugin, because this build is a real one and would
         // otherwise skip the generation and leave the first Kotlin compile
         // failing on an unresolved reference.
+        // 16 KB page alignment, as in RustPlugin — the same reason, and the
+        // same appending so a machine with RUSTFLAGS set does not lose it.
+        put(
+            "RUSTFLAGS",
+            listOfNotNull(System.getenv("RUSTFLAGS"), "-C link-arg=-Wl,-z,max-page-size=16384")
+                .filter { it.isNotBlank() }
+                .joinToString(" "),
+        )
         put("WRY_ANDROID_PACKAGE", "uk.co.dashkova.marmotter")
         put("WRY_ANDROID_LIBRARY", "marmotter_android_lib")
         put(

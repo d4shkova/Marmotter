@@ -25,6 +25,9 @@ const val PACKAGE = "uk.co.dashkova.marmotter"
 /** The `cdylib` cargo produces. Matches `[lib] name` in the crate's Cargo.toml. */
 const val LIBRARY = "marmotter_android_lib"
 
+/** What Android 15 and later need every LOAD segment aligned to. */
+const val PAGE_ALIGNMENT = "-C link-arg=-Wl,-z,max-page-size=16384"
+
 private val ABIS = listOf(
     Abi("arm64-v8a", "aarch64-linux-android", "aarch64-linux-android"),
     Abi("armeabi-v7a", "armv7-linux-androideabi", "armv7a-linux-androideabi"),
@@ -184,6 +187,20 @@ abstract class CargoBuildTask : DefaultTask() {
             // app's own package during this build. MainActivity extends the
             // result. Without these three the generation is skipped silently
             // and Kotlin fails with an unresolved reference.
+            // 16 KB page alignment.
+            //
+            // Android 15 devices run with 16 KB memory pages rather than 4 KB,
+            // and a library whose LOAD segments are aligned to the old size
+            // cannot be mapped on them — Samsung shows a compatibility notice
+            // about it, and Play has required it since November 2025. The NDK
+            // linker does not do this by default at every version, so it is
+            // asked for explicitly rather than assumed.
+            //
+            // Appended to whatever RUSTFLAGS the environment already carries,
+            // rather than set through `CARGO_TARGET_*_RUSTFLAGS`: cargo ignores
+            // the per-target config entirely when RUSTFLAGS is set, so on a
+            // machine that sets it the alignment would silently go missing.
+            environment("RUSTFLAGS", rustFlags())
             environment("WRY_ANDROID_PACKAGE", PACKAGE)
             environment("WRY_ANDROID_LIBRARY", LIBRARY)
             environment("WRY_ANDROID_KOTLIN_FILES_OUT_DIR", kotlinOutDir(project).absolutePath)
@@ -258,6 +275,12 @@ abstract class CargoBuildTask : DefaultTask() {
         dir.mkdirs()
         return dir
     }
+
+    /** The environment's own RUSTFLAGS, plus the 16 KB page alignment. */
+    private fun rustFlags(): String =
+        listOfNotNull(System.getenv("RUSTFLAGS"), PAGE_ALIGNMENT)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
 
     /** What the NDK calls the machine doing the building. */
     private fun hostTag(): String {

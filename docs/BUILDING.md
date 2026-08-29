@@ -269,6 +269,17 @@ infrastructure here and never will be. See CLAUDE.md.
 
 - **A blank window** almost always means `dist/` was stale or missing when
   cargo ran. Rebuild the frontend, then Gradle.
+- **"This app isn't 16 KB compatible"** means the native library was linked
+  with the old 4 KB page alignment. The build asks for 16 KB explicitly; if you
+  see this, check whether `RUSTFLAGS` is set in your shell in a way that
+  displaced it, and confirm with:
+
+  ```sh
+  llvm-readelf -l lib/arm64-v8a/libmarmotter_android_lib.so | grep LOAD
+  ```
+
+  The `Align` column should read `0x4000`, not `0x1000`.
+
 - **A black screen and no error** usually means the page loaded and rendered
   nothing, because `--bg-base` is black. Open `chrome://inspect/#devices` in
   Chrome on the desktop with the app running: a debug build has webview
