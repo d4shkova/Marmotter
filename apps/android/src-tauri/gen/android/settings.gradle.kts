@@ -68,6 +68,18 @@ fun generateTauriGradleFiles() {
         // unset to a value that patches nothing invalidates the fingerprint
         // without changing the configuration.
         put("TAURI_CONFIG", "{}")
+        // Where wry and tauri write the activity MainActivity extends. Set here
+        // as well as in RustPlugin, because this build is a real one and would
+        // otherwise skip the generation and leave the first Kotlin compile
+        // failing on an unresolved reference.
+        put("WRY_ANDROID_PACKAGE", "uk.co.dashkova.marmotter")
+        put("WRY_ANDROID_LIBRARY", "marmotter_android_lib")
+        put(
+            "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
+            File(rootDir, "app/src/main/java/uk/co/dashkova/marmotter")
+                .also { it.mkdirs() }
+                .absolutePath,
+        )
         put("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", linker.absolutePath)
         put("CC_aarch64-linux-android", linker.absolutePath)
         put("AR_aarch64-linux-android", File(bin, "llvm-ar").absolutePath)

@@ -19,6 +19,12 @@ import java.io.File
  */
 private data class Abi(val name: String, val triple: String, val clangPrefix: String)
 
+/** The app's Java package. Matches `applicationId` in `app/build.gradle.kts`. */
+const val PACKAGE = "uk.co.dashkova.marmotter"
+
+/** The `cdylib` cargo produces. Matches `[lib] name` in the crate's Cargo.toml. */
+const val LIBRARY = "marmotter_android_lib"
+
 private val ABIS = listOf(
     Abi("arm64-v8a", "aarch64-linux-android", "aarch64-linux-android"),
     Abi("armeabi-v7a", "armv7-linux-androideabi", "armv7a-linux-androideabi"),
@@ -131,6 +137,16 @@ abstract class CargoBuildTask : DefaultTask() {
             // clean checkout; this is what keeps them right afterwards, when a
             // plugin is added or the Tauri version moves.
             environment("TAURI_ANDROID_PROJECT_PATH", project.rootDir.absolutePath)
+            // Where wry and tauri write the activity this app subclasses.
+            //
+            // `WryActivity` and `TauriActivity` are templates inside those two
+            // crates, not classes in a library, so they are generated into the
+            // app's own package during this build. MainActivity extends the
+            // result. Without these three the generation is skipped silently
+            // and Kotlin fails with an unresolved reference.
+            environment("WRY_ANDROID_PACKAGE", PACKAGE)
+            environment("WRY_ANDROID_LIBRARY", LIBRARY)
+            environment("WRY_ANDROID_KOTLIN_FILES_OUT_DIR", kotlinOutDir(project).absolutePath)
             environment("CARGO_TARGET_${key}_LINKER", linker.absolutePath)
             environment("CC_$triple", linker.absolutePath)
             environment("AR_$triple", File(bin, "llvm-ar").absolutePath)
@@ -189,6 +205,18 @@ abstract class CargoBuildTask : DefaultTask() {
                     "  sdkmanager --install \"ndk;27.2.12479018\"\n" +
                     "or set ANDROID_NDK_HOME to one you already have.",
             )
+    }
+
+    /**
+     * The app's package directory, which the generated Kotlin is written into.
+     *
+     * It has to exist before cargo runs: both build scripts canonicalize this
+     * path and panic if it is not there.
+     */
+    private fun kotlinOutDir(project: org.gradle.api.Project): File {
+        val dir = File(project.rootDir, "app/src/main/java/${PACKAGE.replace('.', '/')}")
+        dir.mkdirs()
+        return dir
     }
 
     /** What the NDK calls the machine doing the building. */
