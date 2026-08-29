@@ -106,3 +106,28 @@ describe('the manifest', () => {
     expect(text).toContain('android:foregroundServiceType="dataSync"');
   });
 });
+
+describe('the Tauri configuration', () => {
+  const config = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../src-tauri/tauri.conf.json', import.meta.url)), 'utf8'),
+  ) as { app?: { windows?: unknown[] }; build?: { frontendDist?: string } };
+
+  /**
+   * On Android the window is the webview. Tauri creates its windows from this
+   * list, so an empty one is an app that starts, registers its plugins, enters
+   * the event loop, and shows the activity's own background forever — no error,
+   * no crash, nothing in logcat. It looks exactly like a failure to launch.
+   */
+  it('declares a window for the webview to be', () => {
+    expect(config.app?.windows?.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * `generate_context!` embeds whatever this points at into the Rust library at
+   * compile time. Pointing it somewhere that does not exist is not a build
+   * error — it is an app that ships a blank page.
+   */
+  it('points at the frontend the Android build produces', () => {
+    expect(config.build?.frontendDist).toBe('../dist');
+  });
+});
