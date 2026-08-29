@@ -41,7 +41,7 @@ pub fn run() {
     {
         android_logger::init_once(
             android_logger::Config::default()
-                .with_max_level(log::LevelFilter::Info)
+                .with_max_level(log::LevelFilter::Debug)
                 .with_tag("Marmotter"),
         );
         log::info!("starting the shell");
@@ -63,6 +63,14 @@ pub fn run() {
         // The foreground service that keeps a connection alive while the app is
         // not in front. Registers the Kotlin side that owns it.
         .plugin(connection::init())
+        .setup(|_app| {
+            // Reached only once every plugin's own setup has run, which is
+            // where the Android ones ask Kotlin for their class. Between the
+            // "starting" line and this one is where a plugin that cannot find
+            // its class, or that blocks waiting on the main thread, will stop.
+            log::info!("plugins registered, building the window");
+            Ok(())
+        })
         .manage(transport::Transports::default())
         .invoke_handler(tauri::generate_handler![
             transport::transport_connect,
@@ -88,5 +96,11 @@ pub fn run() {
             secrets::secret_available,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Marmotter");
+        // Logged rather than unwrapped. A panic here unwinds into tao's
+        // catch_unwind, which prints to a stdout Android discards and then
+        // aborts — so the one thing worth knowing goes missing at exactly the
+        // moment it is needed.
+        .unwrap_or_else(|error| log::error!("the shell stopped: {error}"));
+
+    log::info!("the shell has exited");
 }
