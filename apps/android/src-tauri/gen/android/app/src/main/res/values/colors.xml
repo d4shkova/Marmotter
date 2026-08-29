@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Midnight's --bg-base, which resolves to --ink-000. Duplicated from
+      packages/ui/src/tokens.css because the window is painted before any
+      stylesheet exists; if that token moves, this moves with it or a launch
+      flashes the old colour. The desktop shell keeps the same value in
+      tauri.conf.json for the same reason.
+    -->
+    <color name="window_background">#000000</color>
+</resources>

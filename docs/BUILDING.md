@@ -1,8 +1,9 @@
 # Building Marmotter — cheat sheet
 
-One codebase, two desktop builds. There is no cross-compiling: **build Linux on
-Linux and Windows on Windows.** For both without installing anything, push a tag
-and let CI do it.
+One codebase, two desktop builds and an APK. There is no cross-compiling
+between the desktops: **build Linux on Linux and Windows on Windows.** Android
+does cross-compile, from either. For all of them without installing anything,
+push a tag and let CI do it.
 
 Everything below is run from the repository root.
 
@@ -20,7 +21,7 @@ checkout, `git pull` before building.
 
 ---
 
-## Common to both
+## Common to all of them
 
 | Tool | Version | Get it                                                   |
 | ---- | ------- | -------------------------------------------------------- |
@@ -30,11 +31,13 @@ checkout, `git pull` before building.
 
 ```sh
 pnpm install          # once, and after any dependency change
-pnpm tauri build      # the whole thing: frontend, Rust, bundles
+pnpm tauri build      # the desktop app: frontend, Rust, bundles
 ```
 
 The workspace packages do **not** need building first — Vite resolves them to
-source. `pnpm install && pnpm tauri build` works from a clean checkout.
+source. `pnpm install && pnpm tauri build` works from a clean checkout. Android
+is the exception and is spelled out below: its Gradle build does not run Vite,
+so the frontend has to be built first.
 
 ---
 
@@ -178,6 +181,90 @@ were measured from a real build, the Windows ones were not.
 
 ---
 
+## Android
+
+### Prerequisites
+
+The Android SDK, an NDK, and a JDK. Android Studio installs all three; on a
+headless machine, the command-line tools plus:
+
+```sh
+sdkmanager --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+```
+
+The NDK version is pinned rather than taken as "whatever is latest": the Gradle
+plugin in `gen/android` looks for a linker at a path inside it, and a silently
+changing NDK is a silently changing build. The CI job pins the same one.
+
+Then the Rust targets:
+
+```sh
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+```
+
+### Build
+
+```sh
+pnpm -r --filter=./packages/* build
+pnpm --filter @marmotter/android build      # the frontend, into apps/android/dist
+cd apps/android/src-tauri/gen/android
+gradle wrapper                              # once; the wrapper jar is not committed
+./gradlew assembleRelease
+```
+
+**`pnpm --filter @marmotter/android build` has to run before Gradle does.**
+`tauri::generate_context!` embeds whatever `frontendDist` points at into the
+Rust library at compile time, so a missing `dist/` is not an error — it is a
+build that succeeds and ships a blank window.
+
+### Out
+
+`apps/android/src-tauri/gen/android/app/build/outputs/apk/release/`, one APK per
+ABI plus a universal one. Install with `adb install -r <file>.apk`.
+
+### Unsigned, for now
+
+The APKs are **unsigned**. A device will refuse to install one without
+`adb install`, and they cannot be distributed. Wiring a keystore into the
+release job is a follow-up; it is deliberately not half-done, because a build
+that looks signed and is not is worse than one that plainly is not.
+
+### What the app does and does not do in the background
+
+Marmotter runs a foreground service while any network is connected, which is
+the only way Android will let a backgrounded app keep a socket open. The
+ongoing notification it puts in the shade is not decoration — it is how you see
+that the app is holding connections open, and how you stop it.
+
+It still is not reliable presence, and the app does not pretend otherwise.
+Android may stop the service under memory pressure or a battery saver, and a
+doze window suspends the network long before the process goes. **If you want to
+be sure you are still in the channel an hour later, point Marmotter at a
+bouncer** — your own [ZNC](https://znc.in) or [soju](https://soju.im) — and add
+it as an ordinary network profile:
+
+- Host and port: your bouncer's, with TLS on.
+- Password: for ZNC, `username/network:password`; for soju,
+  `username/network` with your password. Either goes in the profile's
+  server-password field, or SASL PLAIN where your bouncer supports it.
+
+The bouncer stays connected, holds the backlog, and replays it when the phone
+comes back. That is what it is for, and it is a better answer than any amount
+of fighting the platform's power management — which is why there is no push
+infrastructure here and never will be. See CLAUDE.md.
+
+### Two things that catch people out
+
+- **A blank window** almost always means `dist/` was stale or missing when
+  cargo ran. Rebuild the frontend, then Gradle.
+- **`ANDROID_NDK_HOME is not set`** from the Gradle build is exactly what it
+  says; the plugin refuses to guess, because guessing wrong produces a library
+  that fails to load at runtime rather than a build error.
+
+---
+
 ## Let CI build both
 
 ```sh
@@ -186,7 +273,9 @@ git tag v0.1.0 && git push origin v0.1.0
 
 `.github/workflows/release.yml` builds Linux (deb, AppImage) and Windows (MSI,
 NSIS) and attaches the installers to a **draft** release — so nothing is public
-until you publish it.
+until you publish it. It also builds the Android APKs and uploads them as a
+workflow artifact rather than attaching them to the release, because they are
+unsigned.
 
 ---
 
@@ -195,6 +284,7 @@ until you publish it.
 ```sh
 pnpm tauri dev     # desktop shell, frontend hot-reloads, no bundle step
 pnpm dev:web       # browser build on http://localhost:5173
+pnpm --filter @marmotter/android dev   # the Android frontend, on :1421
 ```
 
 ## Before pushing
