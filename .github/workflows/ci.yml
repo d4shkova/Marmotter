@@ -132,6 +132,27 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the Android frontend
+        # `marmotter-android` enables Tauri's `custom-protocol`, so
+        # `generate_context!` embeds `apps/android/dist` at compile time and
+        # refuses to build without it. That is the behaviour we want — a missing
+        # frontend should stop the build rather than ship an app that asks a dev
+        # server for its interface — and it means anything that compiles this
+        # crate has to build the frontend first, cargo check included.
+        #
+        # Vite resolves the workspace packages to source, so this needs no
+        # `dist/` of its own beyond the app's.
+        run: pnpm --filter @marmotter/android build
+
       - name: Install ergo
         # The transport integration tests connect to a real IRC server rather
         # than a mock, so one has to exist.
