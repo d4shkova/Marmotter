@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { cn } from '../lib/cn.js';
-import { useEdgeSwipe } from '../lib/edge-swipe.js';
+import { IconButton } from '../primitives/IconButton.js';
 import { useKeyboardInset } from '../lib/keyboard.js';
 
 export type Breakpoint = 'mobile' | 'tablet' | 'desktop';
@@ -91,19 +91,6 @@ export function AppShell({
 }: AppShellProps): ReactNode {
   const breakpoint = useBreakpoint();
   const keyboard = useKeyboardInset();
-
-  // The panels either side of the conversation, reached by dragging in from the
-  // edge they live on. Only the single-column layout: at every wider size both
-  // are already on screen or one tap away, and a drag would be competing with
-  // text selection rather than replacing a control.
-  const edgeSwipe = useEdgeSwipe({
-    leadingOpen: sidebarOpen,
-    trailingOpen: asideOpen && aside !== undefined,
-    ...(onOpenSidebar === undefined ? {} : { onOpenLeading: onOpenSidebar }),
-    ...(onCloseSidebar === undefined ? {} : { onCloseLeading: onCloseSidebar }),
-    ...(onOpenAside === undefined ? {} : { onOpenTrailing: onOpenAside }),
-    ...(onCloseAside === undefined ? {} : { onCloseTrailing: onCloseAside }),
-  });
   // The frame owns the viewport height now, so the columns fill what is left of
   // it — under a title bar where there is one, and under nothing where there
   // is not.
@@ -126,6 +113,41 @@ export function AppShell({
   const insets = 'pt-[var(--safe-top)] pl-[var(--safe-left)] pr-[var(--safe-right)]';
   const style = keyboard === 0 ? undefined : { paddingBottom: `${keyboard}px` };
 
+  /**
+   * The handle that pulls a side panel out, against the edge it lives on.
+   *
+   * A tab against the edge rather than a control in the bar: it points at where
+   * the panel comes from, and its being there at all is what says a panel is
+   * there to open — which is the thing an edge gesture, however natural, can
+   * never say to somebody who has not been told.
+   *
+   * A real button, so it is reachable by keyboard and announced by a screen
+   * reader like any other. It steps aside while its panel is open, where the
+   * scrim is what closes it.
+   */
+  const handle = (side: 'left' | 'right', label: string, open: () => void): ReactNode => (
+    <div
+      className={cn(
+        'absolute top-1/2 z-20 -translate-y-1/2',
+        side === 'left' ? 'left-0' : 'right-0',
+      )}
+    >
+      <IconButton
+        label={label}
+        onClick={open}
+        icon={<span aria-hidden="true">{side === 'left' ? '›' : '‹'}</span>}
+        className={cn(
+          'bg-[var(--bg-elevated)]/80 [backdrop-filter:var(--blur-vibrancy)]',
+          'border border-[var(--separator)] text-[var(--label-tertiary)]',
+          // Squared off against the screen edge and rounded on the side it
+          // opens towards, so it reads as something to pull rather than a
+          // button that happens to be near the edge.
+          side === 'left' ? 'rounded-l-none border-l-0' : 'rounded-r-none border-r-0',
+        )}
+      />
+    </div>
+  );
+
   /** Wraps the columns in the window frame, once the breakpoint has built them. */
   const framed = (columns: ReactNode): ReactNode => (
     <div
@@ -140,8 +162,16 @@ export function AppShell({
   if (breakpoint === 'mobile') {
     return framed(
       <div className={cn('flex flex-col overflow-hidden bg-[var(--bg-base)]', frame, className)}>
-        <div className="relative flex flex-1 overflow-hidden" {...edgeSwipe}>
+        <div className="relative flex flex-1 overflow-hidden">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{main}</main>
+
+          {sidebarOpen || onOpenSidebar === undefined
+            ? null
+            : handle('left', 'Show channels', onOpenSidebar)}
+
+          {asideOpen || aside === undefined || onOpenAside === undefined
+            ? null
+            : handle('right', 'Show the member list', onOpenAside)}
 
           {sidebarOpen ? (
             <>

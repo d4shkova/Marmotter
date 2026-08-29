@@ -2160,28 +2160,20 @@ export function Marmotter({
               titleHint: 'Double-click to open channel settings',
             }
           : {})}
-        leading={
-          breakpoint === 'mobile' ? (
-            // Drawn only when focused. The channel list is reached by dragging
-            // in from the left edge, which is the mobile shape for a panel that
-            // lives off-screen — but a gesture nobody can see must never be the
-            // only way to reach something, so the control stays in the page for
-            // a keyboard or a screen reader to find.
-            <span className="sr-only focus-within:not-sr-only">
-              <IconButton
-                label="Show channels"
-                icon={<span aria-hidden="true">☰</span>}
-                onClick={() => setDrawerOpen(true)}
-              />
-            </span>
-          ) : (
-            <IconButton
-              label={view.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
-              icon={<span aria-hidden="true">◧</span>}
-              onClick={() => view.setSidebarCollapsed(!view.sidebarCollapsed)}
-            />
-          )
-        }
+        {...(breakpoint === 'mobile'
+          ? // No leading control on a phone. The channel list is opened by the
+            // handle against the left edge of the conversation, which points at
+            // where the panel comes from rather than sitting in a bar.
+            {}
+          : {
+              leading: (
+                <IconButton
+                  label={view.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+                  icon={<span aria-hidden="true">◧</span>}
+                  onClick={() => view.setSidebarCollapsed(!view.sidebarCollapsed)}
+                />
+              ),
+            })}
         trailing={
           <>
             {network === undefined || session === undefined ? null : (
@@ -2231,21 +2223,16 @@ export function Marmotter({
                     }
                   />
                 ) : null}
-                {isChannel(selection.target, network.support) ? (
-                  // Hidden until focused on mobile, where the member list comes
-                  // in from the right edge instead; see the channel-list button
-                  // above. Every wider layout keeps the button, because there is
-                  // no edge to drag from when the panel is a column.
-                  <span
-                    className={breakpoint === 'mobile' ? 'sr-only focus-within:not-sr-only' : ''}
-                  >
-                    <IconButton
-                      label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
-                      icon={<span aria-hidden="true">≡</span>}
-                      pressed={view.memberListOpen}
-                      onClick={() => view.setMemberListOpen(!view.memberListOpen)}
-                    />
-                  </span>
+                {/* On a phone the member list has its own handle against the
+                    right edge, so the bar keeps only what a wider layout needs:
+                    there, the panel is a column and has no edge to come from. */}
+                {breakpoint !== 'mobile' && isChannel(selection.target, network.support) ? (
+                  <IconButton
+                    label={view.memberListOpen ? 'Hide the member list' : 'Show the member list'}
+                    icon={<span aria-hidden="true">≡</span>}
+                    pressed={view.memberListOpen}
+                    onClick={() => view.setMemberListOpen(!view.memberListOpen)}
+                  />
                 ) : null}
               </>
             ) : null}

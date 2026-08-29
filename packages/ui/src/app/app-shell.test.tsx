@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppShell } from './AppShell.js';
 
 afterEach(cleanup);
@@ -44,5 +44,63 @@ describe('the window frame', () => {
     expect(frame?.className).toContain('pt-[var(--safe-top)]');
     expect(frame?.className).toContain('pl-[var(--safe-left)]');
     expect(frame?.className).toContain('pr-[var(--safe-right)]');
+  });
+});
+
+/**
+ * The two panels live off the sides of a phone screen, and the handle against
+ * each edge is both the way in and the thing that says there is a way in. A
+ * gesture cannot say that, which is why these are buttons rather than a swipe.
+ */
+describe('the handles that open the side panels', () => {
+  // jsdom reports a 1024px window, which is the three-column layout. These
+  // handles are the single-column one, so the width has to say so.
+  const width = window.innerWidth;
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true });
+  });
+  afterAll(() => {
+    Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+  });
+
+  const mobile = {
+    sidebar: <nav />,
+    main: <p>Messages</p>,
+    aside: <aside />,
+    asideOpen: false,
+  };
+
+  it('offers one for each panel that has somewhere to open from', () => {
+    render(<AppShell {...mobile} onOpenSidebar={() => {}} onOpenAside={() => {}} />);
+
+    expect(screen.getByRole('button', { name: 'Show channels' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show the member list' })).toBeTruthy();
+  });
+
+  it('draws none the shell was given no way to open', () => {
+    render(<AppShell {...mobile} />);
+
+    expect(screen.queryByRole('button', { name: 'Show channels' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show the member list' })).toBeNull();
+  });
+
+  it('steps out of the way while its own panel is open', () => {
+    render(<AppShell {...mobile} sidebarOpen onOpenSidebar={() => {}} onOpenAside={() => {}} />);
+
+    expect(screen.queryByRole('button', { name: 'Show channels' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show the member list' })).toBeTruthy();
+  });
+
+  it('offers no member list where the conversation has none', () => {
+    render(
+      <AppShell
+        sidebar={<nav />}
+        main={<p>Messages</p>}
+        onOpenSidebar={() => {}}
+        onOpenAside={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Show the member list' })).toBeNull();
   });
 });
