@@ -231,10 +231,19 @@ jobs:
         # rather than one that quietly ships a blank page.
         run: pnpm --filter @marmotter/android build
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # The standalone Gradle that generates the wrapper below. Pinned to
+          # the version the wrapper itself names, because generating it runs a
+          # Gradle command in that directory, which configures the build and
+          # compiles buildSrc — under the runner's own Gradle 9 otherwise, which
+          # neither AGP 8.7.3 nor this project supports.
+          gradle-version: '8.11.1'
+
       - name: Generate the Gradle wrapper
-        # The wrapper jar is a binary and is not committed. The version is named
-        # rather than left to the runner's own Gradle, which is a 9.x that AGP
-        # 8.7.3 does not support. Keep in step with gradle-wrapper.properties.
+        # The wrapper jar is a binary and is not committed. Keep the version in
+        # step with gen/android/gradle/wrapper/gradle-wrapper.properties and
+        # with the setup-gradle step above.
         working-directory: apps/android/src-tauri/gen/android
         run: gradle wrapper --gradle-version 8.11.1
 
