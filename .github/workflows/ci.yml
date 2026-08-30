@@ -11,6 +11,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned, and shared by the cache key and the install. The Gradle plugin looks
+  # for a linker at a path inside this NDK.
+  NDK_VERSION: 27.2.12479018
   # Named once so the two jobs that install ergo cannot drift apart.
   ERGO_VERSION: 2.15.0
 
@@ -168,6 +171,86 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Cache the NDK
+        # About a gigabyte, and it never changes for a pinned version. Without
+        # this every push pays for the download again.
+        id: ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+
+      - name: Install the SDK and NDK
+        # Named explicitly rather than taken as "latest": the Gradle plugin
+        # looks for a linker at a path inside the NDK, and a silently changing
+        # one is a silently changing build.
+        run: |
+          if [ "${{ steps.ndk.outputs.cache-hit }}" != "true" ]; then
+            sdkmanager --install "ndk;$NDK_VERSION"
+          fi
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          # Its own cache: three Android targets share nothing with the host
+          # build the `rust` job populates.
+          key: android
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the Android frontend
+        # Before cargo, not after: `generate_context!` embeds this into the Rust
+        # library at compile time, so a missing `dist/` is a build that fails
+        # rather than one that quietly ships a blank page.
+        run: pnpm --filter @marmotter/android build
+
+      - name: Generate the Gradle wrapper
+        # The wrapper jar is a binary and is not committed. The version is named
+        # rather than left to the runner's own Gradle, which is a 9.x that AGP
+        # 8.7.3 does not support. Keep in step with gradle-wrapper.properties.
+        working-directory: apps/android/src-tauri/gen/android
+        run: gradle wrapper --gradle-version 8.11.1
+
+      - name: Build the APK
+        # Debug, which needs no keystore: Gradle generates one, and the result
+        # installs on a device. Building it on every push is what stops the
+        # Gradle project, the Kotlin, and the three Rust cross-builds from being
+        # the only part of this repository nothing checks.
+        working-directory: apps/android/src-tauri/gen/android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marmotter-android-apk
+          path: apps/android/src-tauri/gen/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
 
   relay:
     name: Relay
