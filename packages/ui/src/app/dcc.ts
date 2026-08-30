@@ -3,10 +3,17 @@
  *
  * Opening a socket to a stranger's address and writing bytes to disk is I/O the
  * browser cannot do and the shell must, so — like the transport and the
- * notifier — it is injected rather than imported. Desktop supplies a Tauri
+ * notifier — it is injected rather than imported. Both Tauri shells supply a
  * backed implementation; web supplies nothing, and the whole feature is absent
  * there, which is correct: a browser tab has no folder to write to and no way
  * to open an arbitrary TCP connection.
+ *
+ * Three of the four members are optional, and each absence is a platform saying
+ * it cannot do that rather than a caller forgetting to pass it. A shell with no
+ * folder picker names the folder itself; a shell with no file manager has no
+ * reveal. The interface hides what was not passed, which is the same rule the
+ * logging settings follow — a control that quietly does nothing is worse than
+ * no control.
  */
 
 /** What the shell needs to fetch one advertised file. */
@@ -43,8 +50,23 @@ export interface DccCapability {
   /**
    * Opens a folder picker, resolving to the chosen path, or undefined if the
    * user cancelled.
+   *
+   * Optional: Android has no folder picker worth offering, because an app may
+   * write inside its own storage without a permission and anywhere else costs
+   * one that would let it read the whole device. A platform that leaves this
+   * out supplies {@link defaultDownloadFolder} instead, and the settings screen
+   * shows the path rather than a button.
    */
-  chooseDownloadFolder(): Promise<string | undefined>;
+  chooseDownloadFolder?(): Promise<string | undefined>;
+  /**
+   * Where files go when the platform picks the folder rather than the user.
+   *
+   * Resolved once, the first time the monitor needs somewhere to write, and
+   * kept in settings from then on like any chosen folder. Rejects where the
+   * shell has nowhere it may write, which leaves downloads blocked and says so
+   * rather than failing per file.
+   */
+  defaultDownloadFolder?(): Promise<string>;
   /**
    * Starts downloading an advertised file, returning a handle to it.
    *

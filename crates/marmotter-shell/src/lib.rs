@@ -8,13 +8,14 @@
 //!
 //! What is genuinely per-platform stays in each app's own `src-tauri`: the
 //! keychain, because a Windows credential store and an Android keystore share
-//! nothing but the command name; the thing that actually opens a link; and the
-//! DCC file monitor, which is desktop-only by design. See CLAUDE.md.
+//! nothing but the command name, and the thing that actually opens a link.
 //!
 //! No module here parses IRC. All protocol logic is TypeScript, in
 //! `packages/protocol`.
 
+pub mod dcc;
 pub mod links;
 pub mod logstore;
 pub mod prefs;
+pub mod textfile;
 pub mod transport;

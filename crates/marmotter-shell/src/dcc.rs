@@ -1,4 +1,4 @@
-//! The Tauri command behind the DCC file monitor's Download button.
+//! The Tauri commands behind the DCC file monitor's Download button.
 //!
 //! Thin, like the transport commands beside it: it converts the shape the front
 //! end sends into the crate's [`DccDownloadOptions`] and returns the path the
@@ -9,11 +9,25 @@
 //! The one thing added here is progress: the crate calls back as bytes arrive,
 //! and each call is forwarded to the front end as an event tagged with the
 //! transfer's id, so the row that started the download can show a bar.
+//!
+//! Shared by both Tauri shells. Opening a socket and writing what comes out of
+//! it to a file is the same job on a desktop and on a phone, and the reasons
+//! the monitor was desktop-only were the two things around it rather than this:
+//! a folder to write into, and a file manager to open afterwards. Android has
+//! the first — its own storage, which it may write to without asking for a
+//! permission that would let it read the whole device — and does not have the
+//! second, so `dcc_default_dir` answers the first and `dcc_reveal_file` is
+//! simply not compiled there. What stays out of scope on every platform is
+//! unchanged: sending, DCC CHAT, and passive transfers.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+
+#[cfg(not(target_os = "android"))]
+use std::path::Path;
+#[cfg(not(target_os = "android"))]
+use std::process::Command;
 
 use marmotter_transport::{
     dcc_cancel_channel, dcc_download, DccCancelHandle, DccDownloadOptions, DEFAULT_DCC_TIMEOUT,
@@ -141,9 +155,14 @@ pub fn dcc_cancel_download(transfer_id: String) {
 /// Opens the platform's file manager on a downloaded file, selecting it where
 /// the platform can, and otherwise opening the folder that holds it.
 ///
+/// Desktop only, and not registered on Android: there is no file manager there
+/// that will open an app's own storage, and the front end hides the button when
+/// the shell offers no way to do it rather than drawing one that fails.
+///
 /// Returns a plain-English reason on failure, which the front end shows as a
 /// toast. Refuses a path that does not exist, so a stale row cannot ask the
 /// shell to open something that is no longer there.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn dcc_reveal_file(path: String) -> Result<(), String> {
     let target = PathBuf::from(&path);
@@ -155,10 +174,12 @@ pub fn dcc_reveal_file(path: String) -> Result<(), String> {
 
 /// Reveals a file in the platform's file manager.
 ///
+///
 /// Each platform has its own way to open a manager with the file selected;
 /// where none is reliable — desktop Linux, where the manager is not known
 /// ahead of time — it falls back through the freedesktop D-Bus interface to
 /// simply opening the containing folder.
+#[cfg(not(target_os = "android"))]
 fn reveal(target: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -205,4 +226,31 @@ fn reveal(target: &Path) -> std::io::Result<()> {
 
     #[allow(unreachable_code)]
     Ok(())
+}
+
+/// Where downloaded files go when the platform picks the folder rather than the
+/// user.
+///
+/// Android has no folder picker worth offering: an app may write inside its own
+/// storage without a permission, and everywhere else costs a grant that lets it
+/// read the whole device — which is a great deal to ask in order to save a file
+/// somebody was sent. So the shell answers with a folder it is allowed to write
+/// to and the settings screen shows the path rather than a Choose button.
+///
+/// `download_dir` first, because on Android that is the app's own Downloads
+/// folder and is the closest thing to where a person would look for a file they
+/// downloaded. The app data directory is the fallback for a platform that has
+/// no such notion; both are inside the app's own storage, and uninstalling the
+/// app takes them with it, which is the platform's rule and not ours.
+#[tauri::command]
+pub fn dcc_default_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let path = app.path();
+    let dir = path
+        .download_dir()
+        .or_else(|_| path.app_data_dir().map(|data| data.join("downloads")))
+        .map_err(|error| format!("Could not find where to save files: {error}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create the download folder: {error}"))?;
+    Ok(dir.to_string_lossy().into_owned())
 }

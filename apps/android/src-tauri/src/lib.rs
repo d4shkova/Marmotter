@@ -8,8 +8,9 @@
 //! What differs from desktop is the short list this crate implements itself:
 //! opening a link is an intent rather than a `ShellExecuteW`, and the keychain
 //! is the Android Keystore reached through a Kotlin plugin rather than the
-//! `keyring` crate, which has no Android backend at all. There is no DCC file
-//! monitor and no folder picker, both by design; see `src/App.tsx`.
+//! `keyring` crate, which has no Android backend at all. There is no folder
+//! picker and no file manager to reveal a download in, so the shell answers
+//! with a folder of its own instead; see `src/App.tsx`.
 
 pub mod connection;
 pub mod opener;
@@ -17,7 +18,7 @@ pub mod secrets;
 
 // The socket, the log files and the settings file are the same job on every
 // Tauri shell, so they come from `marmotter-shell` and are shared with desktop.
-use marmotter_shell::{logstore, prefs, transport};
+use marmotter_shell::{dcc, logstore, prefs, transport};
 
 /// Builds and runs the app.
 ///
@@ -76,6 +77,16 @@ pub fn run() {
             transport::transport_connect,
             transport::transport_send,
             transport::transport_disconnect,
+            // The DCC file monitor, shared with desktop. `dcc_reveal_file` is
+            // not among them and is not compiled on Android: there is no file
+            // manager here that will open an app's own storage, and the front
+            // end hides the button where the shell offers no way to do it.
+            // `dcc_default_dir` takes the folder picker's place — an app may
+            // write inside its own storage without a permission, and every
+            // other folder costs one that would let it read the whole device.
+            dcc::dcc_download_file,
+            dcc::dcc_cancel_download,
+            dcc::dcc_default_dir,
             opener::open_external_url,
             connection::connection_hold,
             logstore::log_default_dir,

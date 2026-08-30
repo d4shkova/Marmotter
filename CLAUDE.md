@@ -67,8 +67,8 @@ commands — the socket, the log files, the settings file, the notification
 service. Duplicating that would mean two copies of the log stores and the
 preference parser, which are the files where a quiet divergence loses somebody
 their scrollback or their networks. What stays in each app is what only that
-platform has: window chrome and the DCC file monitor on desktop; the keystore,
-the link intent and the foreground service on Android.
+platform has: window chrome on desktop; the keystore, the link intent and the
+foreground service on Android.
 
 **The web build imports neither, and must keep importing neither.** That
 absence is what guarantees a browser tab cannot persist message content.
@@ -223,6 +223,49 @@ fingerprint pinning; never silently accept an unverified certificate.
 Secrets (`SecretRef`) go to the OS keychain via `tauri-plugin-stronghold` or
 platform keyring on desktop. On web, secrets live in memory for the session only
 and are never persisted.
+
+## Settings export and import
+
+The same person runs this on a desktop, a phone and in a browser, and setting up
+the second one must not mean typing the first one's networks in again. Settings
+travels as one JSON document, built and read in
+`packages/ui/src/app/config-transfer.ts` — pure functions, no I/O, testable on
+their own — and shown by the two sheets in `ConfigTransfer.tsx`.
+
+Three rules, all of them load-bearing:
+
+- **No secret is ever in it.** A profile carries a `SecretRef` and never a
+  password, and the document carries the reference for the same reason the
+  settings file does: it keeps "this network signs in with SASL as tamsin"
+  intact while the value stays in the platform's keychain. The password is typed
+  once on the receiving device; re-importing on the device that wrote the file
+  finds its own keychain entries under those references and needs nothing typed.
+  The sheets say so in as many words rather than letting somebody assume a
+  backup includes their passwords.
+- **No path that belongs to one device.** The download folder and the log folder
+  are stripped on the way out and filled in from the receiving device on the way
+  in — a phone has neither of a desktop's, and on Android neither is the user's
+  to choose at all.
+- **No message content, on any platform.** Logs are not settings.
+
+Reading is deliberately forgiving, because the two ends will be on different
+releases more often than not: every field falls back to its own default, so a
+document from a build that did not have a setting yet is not a document that
+fails to load. What is refused is only what cannot be understood — text that is
+not JSON, or JSON that does not say it is one of these. The document's own
+`version` is separate from the app's, and a newer one is read rather than
+refused.
+
+**Copying the text is the feature; the file is the extra.** Every platform can
+put text on a clipboard, and only some have file dialogs — so the export is a
+text box with a Copy button everywhere, and desktop additionally gets Save and
+Load through `ConfigFileAccess` (`crates/marmotter-shell/src/textfile.rs`,
+registered on desktop alone). A feature that needed a file would have been a
+desktop feature with a phone footnote, which is the opposite of the point.
+
+Importing replaces the networks and every setting on the screen, registers each
+profile **without connecting it** — the same reasoning as a restart — and says
+what it is about to do before it does it.
 
 ## Logging and retention
 
@@ -411,7 +454,7 @@ underlying raw command must remain available via the command bar.
 | `AWAY` | Status control: Available / Away with message, in the account menu. |
 | `NOTICE` | Distinct styling, routed to a server tab or the relevant channel, never mistakable for a normal message. |
 | `CTCP VERSION/PING/TIME` | Answered automatically, configurable; requests surfaced as a quiet notice, not a message. |
-| `DCC` / `XDCC` | **Receive-only, desktop only.** A file monitor (off by default, enabled under Settings → User options with a chosen download folder) lists files in a panel below the member list and downloads them on request. It sees files two ways: a direct `DCC SEND`, and XDCC pack advertisements — the `#N Ngx [size] name` catalogue lines serving bots post in a channel (`packages/protocol/src/xdcc.ts`). Downloading a pack sends `XDCC SEND #N` to the bot; its answering `DCC SEND` (`packages/protocol/src/dcc.ts`) is matched back to that row and fetched. The socket-to-file download is `crates/marmotter-transport/src/dcc.rs`, behind a Tauri command. Web has no file monitor — a browser tab has no folder and cannot open the direct socket. **Sending, DCC CHAT, and passive/reverse transfers remain out of scope**; their security surface is disproportionate to value, and a passive offer is shown but marked un-fetchable. |
+| `DCC` / `XDCC` | **Receive-only. Desktop and Android; never web.** A file monitor (off by default, enabled under Settings → User options) lists files in a panel and downloads them on request. It sees files two ways: a direct `DCC SEND`, and XDCC pack advertisements — the `#N Ngx [size] name` catalogue lines serving bots post in a channel (`packages/protocol/src/xdcc.ts`). Downloading a pack sends `XDCC SEND #N` to the bot; its answering `DCC SEND` (`packages/protocol/src/dcc.ts`) is matched back to that row and fetched. The socket-to-file download is `crates/marmotter-transport/src/dcc.rs`, behind a Tauri command shared by both shells (`crates/marmotter-shell/src/dcc.rs`). The two shells differ only around it: desktop picks the download folder with a dialog and can reveal a saved file in the file manager, and Android does neither — an app there writes inside its own storage or asks for a permission that would let it read the whole device, and no file manager will open that storage — so the shell names the folder itself and the reveal button is absent rather than drawn and broken. Web has no file monitor at all: a browser tab has no folder and cannot open the direct socket. **Sending, DCC CHAT, and passive/reverse transfers remain out of scope**; their security surface is disproportionate to value, and a passive offer is shown but marked un-fetchable. |
 | `INVITE` | Invite button in the channel menu with a nick picker; incoming invites become an actionable notification. |
 | `MONITOR` / `WATCH` | Notify list: a "Friends" panel showing online/offline, using MONITOR where advertised, polled WHOIS as fallback. |
 | `IGNORE` | Client-side mute list, per-network, with mask builder and expiry. |

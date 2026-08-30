@@ -46,7 +46,12 @@ export interface SettingsProps {
    */
   readonly dccAvailable: boolean;
   /** Opens the platform folder picker for where downloads are saved. */
-  readonly onChooseDownloadFolder: () => void;
+  /**
+   * Opens the folder picker. Absent where the platform has none, and then the
+   * row shows the folder the shell chose rather than a button that cannot open
+   * anything.
+   */
+  readonly onChooseDownloadFolder?: () => void;
   /** Reconnects a network whose connection dropped or failed. */
   readonly onReconnect: (networkId: string) => void;
   readonly onDisconnect: (networkId: string) => void;
@@ -63,6 +68,16 @@ export interface SettingsProps {
    * a button that took those under this label would be a nasty surprise.
    */
   readonly onResetSettings: () => void;
+  /**
+   * Shows this device's settings as text to take to another one.
+   *
+   * Offered on every platform, including web, where it is the only way settings
+   * outlive the tab. What travels is the configuration, never a password and
+   * never a message — the sheet itself says so.
+   */
+  readonly onExportConfig: () => void;
+  /** Takes settings exported from another Marmotter. */
+  readonly onImportConfig: () => void;
   readonly className?: string;
 }
 
@@ -96,6 +111,8 @@ export function Settings({
   onRemove,
   onAddNetwork,
   onResetSettings,
+  onExportConfig,
+  onImportConfig,
   className,
 }: SettingsProps): ReactNode {
   // Two steps, like deleting the logs: it undoes every choice on this screen at
@@ -434,21 +451,38 @@ export function Settings({
                 {!dccAvailable ? null : (
                   <>
                     <ListRow
-                      title="Download folder"
-                      subtitle={userOptions.downloadFolder ?? 'Not set'}
-                      trailing={
-                        <Button size="small" onClick={onChooseDownloadFolder}>
-                          {userOptions.downloadFolder === undefined ? 'Choose' : 'Change'}
-                        </Button>
+                      title={
+                        onChooseDownloadFolder === undefined
+                          ? 'Files are saved to'
+                          : 'Download folder'
                       }
+                      subtitle={
+                        userOptions.downloadFolder ??
+                        (onChooseDownloadFolder === undefined
+                          ? 'Working out where files can be saved'
+                          : 'Not set')
+                      }
+                      {...(onChooseDownloadFolder === undefined
+                        ? {}
+                        : {
+                            trailing: (
+                              <Button size="small" onClick={onChooseDownloadFolder}>
+                                {userOptions.downloadFolder === undefined ? 'Choose' : 'Change'}
+                              </Button>
+                            ),
+                          })}
                     />
                     <div className="px-4 py-2.5">
                       <Toggle
                         label="Watch for files offered over DCC"
                         hint={
                           userOptions.downloadFolder === undefined
-                            ? 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
-                            : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
+                            ? onChooseDownloadFolder === undefined
+                              ? 'Marmotter has nowhere it can save files on this device yet.'
+                              : 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
+                            : onChooseDownloadFolder === undefined
+                              ? 'Shows a file monitor you can open from the channel list. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you tap Download. Files are saved inside the app, and uninstalling it takes them with it.'
+                              : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
                         }
                         checked={userOptions.dccMonitorEnabled}
                         disabled={userOptions.downloadFolder === undefined}
@@ -457,6 +491,32 @@ export function Settings({
                     </div>
                   </>
                 )}
+              </ListGroup>
+            )}
+
+            {!shown('advanced') ? null : (
+              <ListGroup
+                header="Move your settings"
+                footer="Marmotter runs on a desktop, a phone and in a browser, and this is how one of them catches up with another. Passwords and channel keys stay on the device that holds them — every network remembers how it signs in, so you type the password once on the other side."
+              >
+                <ListRow
+                  title="Export your settings"
+                  subtitle="Your networks, your name and everything on this screen, as text to copy or save."
+                  trailing={
+                    <Button size="small" onClick={onExportConfig}>
+                      Export
+                    </Button>
+                  }
+                />
+                <ListRow
+                  title="Import settings"
+                  subtitle="Paste settings exported from another Marmotter. You see what is in them before anything changes."
+                  trailing={
+                    <Button size="small" onClick={onImportConfig}>
+                      Import
+                    </Button>
+                  }
+                />
               </ListGroup>
             )}
 

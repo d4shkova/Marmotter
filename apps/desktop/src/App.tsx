@@ -10,6 +10,7 @@ import {
 import { open as openDialog, save } from '@tauri-apps/plugin-dialog';
 import { UserAttentionType, getCurrentWindow } from '@tauri-apps/api/window';
 import { type JSX, useMemo } from 'react';
+import { createConfigFile } from './config-file';
 import { createDesktopDcc } from './dcc';
 import { DRAG_PROPS, startResize, useWindowChrome, windowControls } from './window';
 
@@ -39,6 +40,9 @@ export function App(): JSX.Element {
   );
   const dcc = useMemo(() => createDesktopDcc(), []);
   const preferences = useMemo(() => createPreferences(), []);
+  // Saving and opening a settings file. Android and web pass nothing here and
+  // move settings by copying their text, which every platform can do.
+  const configFile = useMemo(() => createConfigFile(), []);
   const secrets = useMemo(() => createSecrets(), []);
   const controls = useMemo(() => windowControls(), []);
   const chrome = useWindowChrome();
@@ -80,6 +84,7 @@ export function App(): JSX.Element {
       // asks again next launch.
       secrets={secrets}
       resolveSecret={(ref) => secrets.read(ref)}
+      configFile={configFile}
       chooseLogFolder={async () => {
         const chosen = await openDialog({
           directory: true,

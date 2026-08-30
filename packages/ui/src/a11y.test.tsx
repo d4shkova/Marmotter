@@ -518,6 +518,8 @@ describe('every component passes axe', () => {
         onRemove={noop}
         onAddNetwork={noop}
         onResetSettings={noop}
+        onExportConfig={noop}
+        onImportConfig={noop}
       />,
     ],
     ['AddNetwork', <AddNetwork key="an" open onClose={noop} onAdd={noop} />],
@@ -721,6 +723,8 @@ describe('the settings sections', () => {
       onRemove={noop}
       onAddNetwork={noop}
       onResetSettings={noop}
+      onExportConfig={noop}
+      onImportConfig={noop}
     />
   );
 

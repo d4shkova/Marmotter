@@ -74,6 +74,14 @@ import { PeoplePanel } from './PeoplePanel.js';
 import { Settings } from './Settings.js';
 import { LogSearch } from './LogSearch.js';
 import { readStoredSettings, writeStoredSettings } from './stored-settings.js';
+import { ExportConfig, ImportConfig } from './ConfigTransfer.js';
+import { APP_VERSION } from './version.js';
+import {
+  buildConfig,
+  serializeConfig,
+  type ConfigImport,
+  type DevicePaths,
+} from './config-transfer.js';
 import { FirstRun } from './FirstRun.js';
 import { useMessageLogging, usePurge } from './logging.js';
 import {
@@ -174,6 +182,20 @@ export function shouldAskForIdentity(identity: DefaultIdentity, canRemember: boo
   return identity.nick === '' && canRemember;
 }
 
+/**
+ * Saving and opening one settings file, through the platform's file dialogs.
+ *
+ * Injected like every other capability, and optional like the ones a platform
+ * may not have. `save` and `open` both resolve to undefined when the user
+ * cancels, which is not an error and must not be reported as one.
+ */
+export interface ConfigFileAccess {
+  /** Writes the text where the user chooses, resolving to the path written. */
+  save(suggestedName: string, text: string): Promise<string | undefined>;
+  /** Reads a file the user chooses, resolving to its text. */
+  open(): Promise<string | undefined>;
+}
+
 export interface MarmotterProps {
   /**
    * Builds a transport for a profile.
@@ -238,6 +260,14 @@ export interface MarmotterProps {
   /** Opens the platform save dialog for an export, returning the chosen path. */
   readonly chooseExportFile?: () => Promise<string | undefined>;
   /**
+   * Saving and opening a settings file, where the platform has file dialogs.
+   *
+   * Desktop passes one. Android and web pass nothing, and there the settings
+   * move as text on the clipboard — which every platform can do, and which is
+   * why the file is the extra rather than the feature.
+   */
+  readonly configFile?: ConfigFileAccess;
+  /**
    * Where settings are kept between launches.
    *
    * Desktop passes a file-backed one. Web passes nothing and the identity given
@@ -297,6 +327,7 @@ export function Marmotter({
   createLogStore,
   chooseLogFolder,
   chooseExportFile,
+  configFile,
   preferences,
   secrets,
   windowChrome,
@@ -311,8 +342,27 @@ export function Marmotter({
   // them on their own, below.
   const view = useView(useShallow(selectViewWithoutOffers));
   const breakpoint = useBreakpoint();
+  /**
+   * How many transfers are running, for the badge on the phone's Files tab.
+   *
+   * A count rather than the offers themselves, deliberately: the note above
+   * about not subscribing to `dccOffers` here is about re-rendering the whole
+   * client on every megabyte, and a number that only changes when a transfer
+   * starts or stops does not do that.
+   */
+  const activeTransfers = useView((state) => {
+    let count = 0;
+    for (const offer of state.dccOffers) {
+      if (isTransferInFlight(offer.status)) {
+        count += 1;
+      }
+    }
+    return count;
+  });
 
   const [adding, setAdding] = useState(false);
+  const [exportingConfig, setExportingConfig] = useState(false);
+  const [importingConfig, setImportingConfig] = useState(false);
   /** The network whose saved settings are open for changing, if any. */
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   /** The network a channel is being created on, if the form is open. */
@@ -1217,19 +1267,167 @@ export function Marmotter({
     registry.sessionOf(networkId)?.disconnect();
   };
 
+  /**
+   * This device's folders, which an exported document deliberately carries none
+   * of and an imported one is given from here.
+   *
+   * A download folder and a log folder are facts about one machine — and on
+   * Android they are not even the user's to choose. Carrying the desktop's
+   * across would point a phone at a path it has no such thing as; leaving them
+   * out and filling them in here keeps the settings that were about the folder
+   * rather than about the device.
+   */
+  const devicePaths: DevicePaths = useMemo(
+    () => ({
+      ...(view.userOptions.downloadFolder === undefined
+        ? {}
+        : { downloadFolder: view.userOptions.downloadFolder }),
+      ...(view.logging.path === undefined ? {} : { logPath: view.logging.path }),
+    }),
+    [view.userOptions.downloadFolder, view.logging.path],
+  );
+
+  /**
+   * The document for what is configured right now.
+   *
+   * Built when the sheet opens rather than held in state: it is a view of the
+   * live configuration, and a copy of it taken at mount would quietly export
+   * whatever was set up ten minutes ago.
+   */
+  const configText = useMemo(
+    () =>
+      !exportingConfig
+        ? ''
+        : serializeConfig(
+            buildConfig({
+              identity: identity ?? EMPTY_IDENTITY,
+              networks: [...registry.profiles.values()],
+              settings: {
+                appearance: view.appearance,
+                ctcp: view.ctcp,
+                userOptions: view.userOptions,
+                logging: view.logging,
+              },
+              ...(APP_VERSION === undefined ? {} : { app: APP_VERSION }),
+            }),
+          ),
+    [
+      exportingConfig,
+      identity,
+      registry.profiles,
+      view.appearance,
+      view.ctcp,
+      view.userOptions,
+      view.logging,
+    ],
+  );
+
+  /**
+   * Replacing this device's configuration with another's.
+   *
+   * The order matters. Networks that are not in the document go first, so their
+   * rows and their unread counts are gone rather than left pointing at a
+   * session that has been released; then the settings, so nothing renders
+   * against the old layout on the way; then the profiles, registered but *not
+   * connected*, for the same reason a restart does not dial out — somebody who
+   * imported their settings has not thereby asked to be signed in to five
+   * networks.
+   *
+   * Secrets are the careful part. A network being dropped has its passwords
+   * forgotten, as removing one by hand does — except where the incoming
+   * document references the same one, which is what re-importing on the device
+   * that wrote it does. Forgetting those would take away the passwords the
+   * import is about to need.
+   */
+  const applyConfig = (config: ConfigImport): void => {
+    const arriving = new Set(config.networks.map((profile) => profile.id));
+    const stillNeeded = new Set(
+      config.networks.flatMap((profile) => secretRefsOf(profile).map((ref) => ref.id)),
+    );
+
+    for (const [networkId, profile] of [...registry.profiles]) {
+      if (arriving.has(networkId)) {
+        continue;
+      }
+      registry.removeProfile(networkId);
+      view.forgetNetwork(networkId);
+      if (secrets !== undefined) {
+        for (const ref of secretRefsOf(profile)) {
+          if (!stillNeeded.has(ref.id)) {
+            void secrets.forget(ref).catch(() => {});
+          }
+        }
+      }
+    }
+
+    useView.getState().applySettings(config.settings);
+    setIdentity(config.identity);
+    for (const profile of config.networks) {
+      startSession(profile, { connect: false });
+    }
+    persist({ identity: config.identity, networks: config.networks });
+
+    setImportingConfig(false);
+    toast(
+      config.networks.length === 0
+        ? 'Settings imported. There were no networks in that file.'
+        : `Settings imported. ${config.networks.length === 1 ? '1 network is' : `${config.networks.length} networks are`} ready to connect.`,
+    );
+  };
+
   // Choosing where downloaded files go. Reading the platform's own folder
   // picker, so the path is a real one the shell can write to rather than
   // something typed by hand.
-  const chooseDownloadFolder = useCallback((): void => {
-    if (dcc === undefined) {
+  //
+  // Undefined where the platform has no picker to read. Android is that
+  // platform, and there the folder is not the user's to choose — an app writes
+  // inside its own storage or it asks for a permission to read the whole
+  // device — so the shell names it instead, below.
+  const picker = dcc?.chooseDownloadFolder;
+  const chooseDownloadFolder = useMemo(
+    () =>
+      picker === undefined
+        ? undefined
+        : (): void => {
+            void picker.call(dcc).then((folder) => {
+              if (folder !== undefined && folder !== '') {
+                useView.getState().updateUserOptions({ downloadFolder: folder });
+              }
+            });
+          },
+    [dcc, picker],
+  );
+
+  /**
+   * Filling in the download folder on a platform that picks it for us.
+   *
+   * Asked for once, and only where there is no picker: with one, an unset
+   * folder means the user has not chosen yet and choosing for them would be
+   * deciding where their files go. Without one there is nothing to decide —
+   * there is exactly one folder the app may write to — and leaving it unset
+   * would leave the file monitor switched off behind a Choose button that
+   * cannot open anything.
+   */
+  const defaultFolder = dcc?.defaultDownloadFolder;
+  useEffect(() => {
+    if (defaultFolder === undefined || picker !== undefined) {
       return;
     }
-    void dcc.chooseDownloadFolder().then((folder) => {
-      if (folder !== undefined && folder !== '') {
-        useView.getState().updateUserOptions({ downloadFolder: folder });
-      }
-    });
-  }, [dcc]);
+    if (useView.getState().userOptions.downloadFolder !== undefined) {
+      return;
+    }
+    void defaultFolder
+      .call(dcc)
+      .then((folder) => {
+        if (folder !== '' && useView.getState().userOptions.downloadFolder === undefined) {
+          useView.getState().updateUserOptions({ downloadFolder: folder });
+        }
+      })
+      .catch(() => {
+        // Downloads stay blocked and the settings screen says the folder is
+        // not set, which is the honest state. Nothing to interrupt anyone with.
+      });
+  }, [dcc, defaultFolder, picker]);
 
   /**
    * Says how a download got on, unless the file list is already saying it.
@@ -2277,12 +2475,16 @@ export function Marmotter({
                 },
               })}
           dccAvailable={dcc !== undefined}
-          onChooseDownloadFolder={chooseDownloadFolder}
+          {...(chooseDownloadFolder === undefined
+            ? {}
+            : { onChooseDownloadFolder: chooseDownloadFolder })}
           onReconnect={reconnect}
           onDisconnect={disconnect}
           onEdit={setEditingId}
           onRemove={removeNetwork}
           onAddNetwork={() => setAdding(true)}
+          onExportConfig={() => setExportingConfig(true)}
+          onImportConfig={() => setImportingConfig(true)}
           onResetSettings={() => {
             view.resetSettings();
             toast('Settings are back to their defaults. Your networks are untouched.');
@@ -2294,7 +2496,7 @@ export function Marmotter({
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
-          onChooseFolder={chooseDownloadFolder}
+          {...(chooseDownloadFolder === undefined ? {} : { onChooseFolder: chooseDownloadFolder })}
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
@@ -2514,8 +2716,10 @@ export function Marmotter({
         tabBar={
           breakpoint === 'mobile' ? (
             <TabBar
-              value={view.pane === 'chat' ? 'chats' : view.pane}
-              onChange={(value) => view.setPane(value === 'chats' ? 'chat' : 'settings')}
+              value={view.pane === 'chat' ? 'chats' : view.pane === 'dcc' ? 'dcc' : 'settings'}
+              onChange={(value) =>
+                view.setPane(value === 'chats' ? 'chat' : value === 'dcc' ? 'dcc' : 'settings')
+              }
               // The two side panels, at the ends of the row where a thumb
               // already is. Moved to the screen edges by a setting, and then
               // drawn there instead of here rather than as well.
@@ -2548,14 +2752,46 @@ export function Marmotter({
                         }
                       : {}),
                   })}
+              // Files earns a tab only once the monitor is switched on, and
+              // then it needs one: its home everywhere else is the foot of the
+              // sidebar, and on a phone the sidebar is a drawer — so a download
+              // in progress would be two gestures and a scroll away, behind
+              // something a person opened to change channel.
               items={[
                 { value: 'chats', label: 'Chats', icon: <span aria-hidden="true">◍</span> },
+                ...(showDccPanel
+                  ? [
+                      {
+                        value: 'dcc' as const,
+                        label: 'Files',
+                        icon: <span aria-hidden="true">⤓</span>,
+                        ...(activeTransfers === 0 ? {} : { badge: activeTransfers }),
+                      },
+                    ]
+                  : []),
                 { value: 'settings', label: 'Settings', icon: <span aria-hidden="true">⚙</span> },
               ]}
             />
           ) : undefined
         }
         main={main}
+      />
+
+      <ExportConfig
+        open={exportingConfig}
+        onClose={() => setExportingConfig(false)}
+        text={configText}
+        {...(configFile === undefined ? {} : { onSaveFile: configFile.save })}
+        onReport={toast}
+      />
+
+      <ImportConfig
+        open={importingConfig}
+        onClose={() => setImportingConfig(false)}
+        onApply={applyConfig}
+        {...(configFile === undefined ? {} : { onOpenFile: configFile.open })}
+        paths={devicePaths}
+        onReport={toast}
       />
 
       <AddNetwork

@@ -18,6 +18,8 @@ export * from './channel-settings.js';
 export * from './ChannelPanel.js';
 export * from './commands.js';
 export * from './completion.js';
+export * from './config-transfer.js';
+export * from './ConfigTransfer.js';
 export * from './Composer.js';
 export * from './dcc.js';
 export * from './DccBrowser.js';

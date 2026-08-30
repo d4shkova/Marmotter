@@ -3,14 +3,13 @@
 //! Registers the transport commands and runs the window. All IRC protocol
 //! logic lives in `packages/protocol`, in TypeScript.
 
-pub mod dcc;
 pub mod opener;
 pub mod secrets;
 
-// The socket, the log files and the settings file are the same job on every
-// Tauri shell, so they come from `marmotter-shell` and are shared with Android.
-// What is left in this crate is what only a desktop has.
-use marmotter_shell::{logstore, prefs, transport};
+// The socket, the log files, the settings file and the DCC download are the
+// same job on every Tauri shell, so they come from `marmotter-shell` and are
+// shared with Android. What is left in this crate is what only a desktop has.
+use marmotter_shell::{dcc, logstore, prefs, textfile, transport};
 
 /// Builds and runs the Tauri application.
 ///
@@ -39,6 +38,7 @@ pub fn run() {
             dcc::dcc_download_file,
             dcc::dcc_cancel_download,
             dcc::dcc_reveal_file,
+            dcc::dcc_default_dir,
             opener::open_external_url,
             logstore::log_default_dir,
             logstore::log_append,
@@ -49,6 +49,11 @@ pub fn run() {
             opener::log_reveal,
             prefs::prefs_read,
             prefs::prefs_write,
+            // Saving and opening a settings export, at a path the platform's
+            // own file dialog returned. Not registered on Android, which has
+            // no such dialog — there the settings move by copying the text.
+            textfile::text_file_read,
+            textfile::text_file_write,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,
