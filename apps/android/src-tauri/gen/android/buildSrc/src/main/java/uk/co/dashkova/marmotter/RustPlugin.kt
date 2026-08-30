@@ -164,35 +164,31 @@ abstract class CargoBuildTask : DefaultTask() {
         // name is the target triple, uppercased with dashes as underscores.
         val key = triple.uppercase().replace('-', '_')
 
-        project.exec {
-            workingDir = crate
-            commandLine(
-                buildList {
-                    addAll(listOf("cargo", "build", "--lib", "--target", triple))
-                    // Serves the frontend this library embeds instead of
-                    // asking a dev server for it. Not a default feature: it
-                    // would reach the desktop crate through cargo's
-                    // workspace-wide feature unification. See the crate's
-                    // Cargo.toml.
-                    addAll(listOf("--features", "custom-protocol"))
-                    if (profile == "release") {
-                        add("--release")
-                    }
-                },
-            )
+        // `ProcessBuilder` rather than `project.exec`, which Gradle 9 removed.
+        // The same call as in settings.gradle.kts, for the same reason: this
+        // plugin has to compile under whichever Gradle configures the build,
+        // and that is not always the one the wrapper pins.
+        val builder = ProcessBuilder(
+            buildList {
+                addAll(listOf("cargo", "build", "--lib", "--target", triple))
+                // Serves the frontend this library embeds instead of asking a
+                // dev server for it. Not a default feature: it would reach the
+                // desktop crate through cargo's workspace-wide feature
+                // unification. See the crate's Cargo.toml.
+                addAll(listOf("--features", "custom-protocol"))
+                if (profile == "release") {
+                    add("--release")
+                }
+            },
+        ).directory(crate).inheritIO()
+
+        builder.environment().apply {
             // Tells tauri-build to keep `tauri.settings.gradle` and
             // `app/tauri.build.gradle.kts` current — the list of Tauri projects
             // this build depends on. settings.gradle.kts creates them on a
             // clean checkout; this is what keeps them right afterwards, when a
             // plugin is added or the Tauri version moves.
-            environment("TAURI_ANDROID_PROJECT_PATH", project.rootDir.absolutePath)
-            // Where wry and tauri write the activity this app subclasses.
-            //
-            // `WryActivity` and `TauriActivity` are templates inside those two
-            // crates, not classes in a library, so they are generated into the
-            // app's own package during this build. MainActivity extends the
-            // result. Without these three the generation is skipped silently
-            // and Kotlin fails with an unresolved reference.
+            put("TAURI_ANDROID_PROJECT_PATH", project.rootDir.absolutePath)
             // 16 KB page alignment.
             //
             // Android 15 devices run with 16 KB memory pages rather than 4 KB,
@@ -206,16 +202,27 @@ abstract class CargoBuildTask : DefaultTask() {
             // rather than set through `CARGO_TARGET_*_RUSTFLAGS`: cargo ignores
             // the per-target config entirely when RUSTFLAGS is set, so on a
             // machine that sets it the alignment would silently go missing.
-            environment("RUSTFLAGS", rustFlags())
-            environment("WRY_ANDROID_PACKAGE", PACKAGE)
-            environment("WRY_ANDROID_LIBRARY", LIBRARY)
-            environment("WRY_ANDROID_KOTLIN_FILES_OUT_DIR", kotlinOutDir(project).absolutePath)
-            environment("CARGO_TARGET_${key}_LINKER", linker.absolutePath)
-            environment("CC_$triple", linker.absolutePath)
-            environment("AR_$triple", File(bin, "llvm-ar").absolutePath)
+            put("RUSTFLAGS", rustFlags())
+            // Where wry and tauri write the activity this app subclasses.
+            //
+            // `WryActivity` and `TauriActivity` are templates inside those two
+            // crates, not classes in a library, so they are generated into the
+            // app's own package during this build. MainActivity extends the
+            // result. Without these three the generation is skipped silently
+            // and Kotlin fails with an unresolved reference.
+            put("WRY_ANDROID_PACKAGE", PACKAGE)
+            put("WRY_ANDROID_LIBRARY", LIBRARY)
+            put("WRY_ANDROID_KOTLIN_FILES_OUT_DIR", kotlinOutDir(project).absolutePath)
+            put("CARGO_TARGET_${key}_LINKER", linker.absolutePath)
+            put("CC_$triple", linker.absolutePath)
+            put("AR_$triple", File(bin, "llvm-ar").absolutePath)
             // `ring`, reached through rustls, compiles C and needs the NDK's
             // sysroot rather than the host's headers.
-            environment("PATH", "${bin.absolutePath}${File.pathSeparator}${System.getenv("PATH")}")
+            put("PATH", "${bin.absolutePath}${File.pathSeparator}${System.getenv("PATH")}")
+        }
+
+        if (builder.start().waitFor() != 0) {
+            throw GradleException("cargo could not build the library for $abi.")
         }
 
         val built = File(workspace, "target/$triple/$profile/lib$LIBRARY.so")
