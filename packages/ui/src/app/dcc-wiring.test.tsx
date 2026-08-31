@@ -21,6 +21,11 @@ import { DEFAULT_USER_OPTIONS, useView } from './view-store.js';
 
 const DELIM = '\x01';
 
+// This file drives React from outside a component, which needs saying: without
+// it every `act` warns that the environment does not support it, and the noise
+// buries anything the run has to say.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 /** A socket that goes nowhere, and a handle to push lines in from the server. */
 class FakeTransport implements Transport {
   private lines: ((line: string) => void)[] = [];
