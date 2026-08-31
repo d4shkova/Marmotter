@@ -251,10 +251,18 @@ describe('classifying a serving bot re-offer', () => {
     expect(classifyDccReoffer({ status: 'requested' }, { passive: true })).toBe('refuse');
   });
 
-  it('ignores a re-offer of a row that is mid-transfer, saved, or untouched', () => {
+  it('ignores a re-offer of a row that is mid-transfer or already saved', () => {
     expect(classifyDccReoffer({ status: 'downloading' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
-    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
+  });
+
+  it('announces an offer of a listed row nothing here started', () => {
+    // The bot is sending a file that is on the list and that no button here
+    // asked for — a request typed at the bot rather than clicked, most often.
+    // Not fetched, because a stranger must not be able to put a file on the
+    // disk by naming one already listed; not dropped either, because a file
+    // somebody is waiting for would then never arrive and never be mentioned.
+    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('announce');
   });
 });
 

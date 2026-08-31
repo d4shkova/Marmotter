@@ -152,12 +152,20 @@ export function matchPendingRequest(
  * the row is failed with a reason rather than left waiting on a transfer that
  * will never start.
  *
- * `ignore` — a duplicate of a row that is mid-transfer, already saved, or
- * sitting there waiting for the user to start it; nothing to do.
+ * `ignore` — a duplicate of a row already downloading or downloaded; nothing to
+ * do, and nothing worth saying about it either.
+ *
+ * `announce` — the row is listed and nobody here started it, so the bot is
+ * offering a file we did not ask for through the interface. Not fetched, which
+ * is the whole of the safety rule — a stranger must not be able to put a file
+ * on the disk by naming one already on the list — but never dropped in silence
+ * either, because a request made any other way (typed at the bot, or from
+ * another client on the same account) lands here and a file the person is
+ * waiting for would simply never appear.
  *
  * `record` — no such row: a genuinely new, unsolicited offer to list.
  */
-export type DccReofferAction = 'retry' | 'refuse' | 'ignore' | 'record';
+export type DccReofferAction = 'retry' | 'refuse' | 'ignore' | 'announce' | 'record';
 
 /**
  * Decides how an incoming `DCC SEND` relates to the file monitor's rows.
@@ -176,6 +184,9 @@ export function classifyDccReoffer(
   }
   if (existing.status === 'failed' || existing.status === 'requested') {
     return send.passive ? 'refuse' : 'retry';
+  }
+  if (existing.status === 'available') {
+    return 'announce';
   }
   return 'ignore';
 }

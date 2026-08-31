@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseHumanSize, parseXdccAnnounce, parseXdccRequest, parseXdccResponse } from './xdcc.js';
+import {
+  parseHumanSize,
+  parsePackRequest,
+  parseXdccAnnounce,
+  parseXdccRequest,
+  parseXdccResponse,
+} from './xdcc.js';
 
 describe('parseXdccAnnounce', () => {
   it('parses a standard advertisement', () => {
@@ -213,5 +219,19 @@ describe('a transfer the bot is waiting on', () => {
     expect(
       parseXdccResponse('** The Bot Owner has requested that no new connections are made'),
     ).toMatchObject({ reason: 'closed' });
+  });
+});
+
+describe('parsePackRequest', () => {
+  it('reads a request typed straight at a bot', () => {
+    expect(parsePackRequest('xdcc send #26')).toBe(26);
+    expect(parsePackRequest('XDCC SEND 26')).toBe(26);
+    expect(parsePackRequest('  cdcc send #7 ')).toBe(7);
+  });
+
+  it('is undefined for anything else said to a bot', () => {
+    expect(parsePackRequest('xdcc list')).toBeUndefined();
+    expect(parsePackRequest('thanks, xdcc send #26 worked')).toBeUndefined();
+    expect(parsePackRequest('send #26')).toBeUndefined();
   });
 });

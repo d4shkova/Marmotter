@@ -18,6 +18,7 @@ import {
   type XdccPack,
   type XdccResponse,
   type DccAccept,
+  parsePackRequest,
   buildDccResume,
   buildPassiveAccept,
   encodeCtcp,
@@ -2280,6 +2281,20 @@ export function Marmotter({
           refuse(existing.id);
         }
         return;
+      case 'announce':
+        // The bot is sending a file that is on the list and that nothing here
+        // started — a request typed at it rather than clicked, most often. It
+        // is not fetched on its own say-so, but it is said out loud, because a
+        // transfer nobody knows about is a transfer that times out.
+        if (existing !== undefined) {
+          notify({
+            key: `dcc-offered-${existing.id}`,
+            text: () =>
+              `${from} is ready to send ${existing.filename}. Open the file monitor to accept it.`,
+            action: { label: 'Open', onSelect: () => useView.getState().setPane('dcc') },
+          });
+        }
+        return;
       case 'ignore':
         return;
       case 'record':
@@ -2364,6 +2379,72 @@ export function Marmotter({
       });
     },
     [announceDownload, beginTransfer, dcc, registry, toast, pendingKey],
+  );
+
+  /**
+   * Recording that a pack has been asked for, however the asking happened.
+   *
+   * The Download button is not the only way, and on the evidence it is not even
+   * the usual one: every XDCC index on the web prints the message to send, so
+   * people type `/msg bot xdcc send #26`, or type `xdcc send #26` into the
+   * bot's own conversation. Those went out as ordinary text and nothing here
+   * knew a transfer was coming, so when the bot answered, the offer matched a
+   * row already on the list and was treated as a duplicate — dropped in
+   * silence, while the bot sat waiting to be connected to until it timed out.
+   *
+   * Registering the request here makes all three ways the same thing: the row
+   * moves to requested, and the answering `DCC SEND` is matched back to it.
+   */
+  const notePackRequest = useCallback(
+    (networkId: string, nick: string, pack: number): void => {
+      const profile = registry.profiles.get(networkId);
+      if (profile === undefined) {
+        return;
+      }
+      const id = useView.getState().recordXdccRequest({
+        networkId,
+        networkName: profile.name,
+        from: nick,
+        pack,
+        at: Date.now(),
+      });
+      if (id === undefined) {
+        return;
+      }
+      const key = pendingKey(networkId, nick);
+      pendingXdcc.current.set(key, [...(pendingXdcc.current.get(key) ?? []), id]);
+      useView.getState().setDccOfferStatus(id, { status: 'requested' });
+    },
+    [pendingKey, registry],
+  );
+
+  /**
+   * Reads a pack request out of something about to be sent, and notes it.
+   *
+   * Given the line as it will go on the wire, so it catches the request however
+   * it was typed — a `/msg`, a `/quote PRIVMSG`, or a message into the bot's
+   * conversation — rather than trying to guess from what was typed.
+   */
+  const notePackRequestInLine = useCallback(
+    (networkId: string, line: string): void => {
+      const match = /^PRIVMSG\s+([^\s,]+)\s+:(.*)$/is.exec(line);
+      const nick = match?.[1];
+      const body = match?.[2];
+      const support = registry.networks.get(networkId)?.support;
+      if (nick === undefined || body === undefined || support === undefined) {
+        return;
+      }
+      // A pack is asked for from a bot, never from a room. A channel target
+      // here would be somebody talking about a pack, not requesting one.
+      if (isChannel(nick, support)) {
+        return;
+      }
+      const pack = parsePackRequest(body);
+      if (pack !== undefined) {
+        notePackRequest(networkId, nick, pack);
+      }
+    },
+    [notePackRequest, registry],
   );
 
   /**
@@ -2756,13 +2837,17 @@ export function Marmotter({
     const parsed = parseInput(text, { target: selection.target, nick: network.nick });
 
     switch (parsed.kind) {
-      case 'message':
+      case 'message': {
         if (selection.target === undefined) {
           toast('Pick a conversation first, or use a command.', 'error');
           return;
         }
+        // A pack asked for by typing it at the bot, which is how the indexes
+        // tell people to do it, is the same request as the button's.
+        notePackRequestInLine(network.id, `PRIVMSG ${selection.target} :${parsed.text}`);
         session.sendMessage(selection.target, parsed.text);
         return;
+      }
       case 'line':
         // `/list` is the one command whose answer has nowhere to go in the
         // message list — a numeric per channel is exactly what CLAUDE.md says
@@ -2773,6 +2858,7 @@ export function Marmotter({
           askForList(network.id, parsed.line.slice('LIST'.length).trim());
           return;
         }
+        notePackRequestInLine(network.id, parsed.line);
         session.send(parsed.line);
         return;
       case 'handled':

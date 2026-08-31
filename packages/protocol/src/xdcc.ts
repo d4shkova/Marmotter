@@ -399,3 +399,25 @@ export function parseXdccRequest(text: string): XdccRequest | undefined {
 function addChannelPrefix(name: string): string {
   return /^[#&!+]/.test(name) ? name : `#${name}`;
 }
+
+// `xdcc send #123`, on its own, with the pack number optionally unmarked. The
+// `cdcc` spelling is what a few older serving bots answer to.
+const BARE_SEND = /^\s*[xc]dcc\s+send\s+#?(\d+)\s*$/i;
+
+/**
+ * The pack number in a request sent straight to a bot, or undefined.
+ *
+ * The nick is missing from this form because it is the conversation the message
+ * was typed into, so the caller already knows it. It exists because typing the
+ * request is how most people ask for a pack — every index on the web prints the
+ * message to send, not a button to press — and a client that only recognises
+ * its own button treats those answers as unsolicited and does nothing with them.
+ */
+export function parsePackRequest(text: string): number | undefined {
+  const match = BARE_SEND.exec(stripFormatting(text));
+  if (match === null) {
+    return undefined;
+  }
+  const pack = Number(match[1]);
+  return Number.isSafeInteger(pack) ? pack : undefined;
+}

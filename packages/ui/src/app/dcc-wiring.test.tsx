@@ -10,7 +10,7 @@
  * other, and asserts the one thing all of it exists to do.
  */
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { CloseReason, NetworkProfile, Transport } from '@marmotter/shared';
 import { useNetworks } from '@marmotter/client';
 import { act } from 'react';
@@ -165,6 +165,16 @@ async function connected(shell: ReturnType<typeof fakeShell>) {
   });
 
   return transport;
+}
+
+/** Types into the composer and sends it, the way a person does. */
+function typeCommand(text: string): void {
+  const composer = screen.getAllByRole('textbox').find((box) => box.tagName === 'TEXTAREA');
+  if (composer === undefined) {
+    throw new Error('no composer on screen');
+  }
+  fireEvent.change(composer, { target: { value: text } });
+  fireEvent.keyDown(composer, { key: 'Enter' });
 }
 
 beforeEach(() => {
@@ -402,5 +412,122 @@ describe('continuing a file the last attempt left behind', () => {
     expect(shell.download).not.toHaveBeenCalled();
     expect(useView.getState().dccOffers).toHaveLength(0);
     vi.useRealTimers();
+  });
+});
+
+describe('a pack asked for by typing the command', () => {
+  /**
+   * The way every XDCC index on the web tells somebody to do it, and the way
+   * anybody who has used IRC before does it: type the message, do not go
+   * looking for a button. The bot answers the same way either way, so the
+   * client has to.
+   */
+  it('dials the transfer when the request was typed as a command', async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+
+    // The pack is listed, because the monitor saw the bot advertise it.
+    await act(async () => {
+      transport.deliver(':[EWG]-[DELiSH!bot@host PRIVMSG #packs :#26 0x [1.8G] test.tar');
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+
+    // Asked for from the composer rather than from the row's own button.
+    await act(async () => {
+      useView.getState().setPane('chat');
+    });
+    await act(async () => {
+      typeCommand('/msg [EWG]-[DELiSH xdcc send #26');
+    });
+    await waitFor(() =>
+      expect(transport.sent.some((line) => line.includes('xdcc send #26'))).toBe(true),
+    );
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[DELiSH!bot@host PRIVMSG marmot :${DELIM}DCC SEND test.tar 3232235777 4000 1932735283${DELIM}`,
+      );
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
+    expect(shell.download.mock.calls[0]?.[0]).toMatchObject({
+      host: '192.168.1.1',
+      port: 4000,
+      filename: 'test.tar',
+    });
+  });
+
+  it("dials it when the request was typed into the bot's own conversation", async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+
+    await act(async () => {
+      transport.deliver(':[EWG]-[DELiSH!bot@host PRIVMSG #packs :#26 0x [1.8G] test.tar');
+      // A private message from the bot opens its conversation to type into.
+      transport.deliver(':[EWG]-[DELiSH!bot@host PRIVMSG marmot :Hello');
+    });
+    await act(async () => {
+      useView.getState().setPane('chat');
+      useView.getState().select({ networkId: 'testnet', target: '[EWG]-[DELiSH' });
+    });
+    await act(async () => {
+      typeCommand('xdcc send #26');
+    });
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[DELiSH!bot@host PRIVMSG marmot :${DELIM}DCC SEND test.tar 3232235777 4000 1932735283${DELIM}`,
+      );
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('an offer nothing here asked for', () => {
+  it("is announced rather than dropped, and never fetched on the sender's say-so", async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+
+    // Listed from the channel, and never requested through this client.
+    await act(async () => {
+      transport.deliver(':[EWG]-[DELiSH!bot@host PRIVMSG #packs :#26 0x [1.8G] test.tar');
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[DELiSH!bot@host PRIVMSG marmot :${DELIM}DCC SEND test.tar 3232235777 4000 1932735283${DELIM}`,
+      );
+    });
+
+    // A stranger must not be able to put a file on the disk by naming one
+    // already on the list — but the transfer waiting to be accepted is said out
+    // loud rather than passing in silence.
+    expect(shell.download).not.toHaveBeenCalled();
+    expect(await screen.findByText(/ready to send test\.tar/)).toBeTruthy();
+  });
+
+  it('takes a request sent as a raw line too', async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+    await act(async () => {
+      transport.deliver(':[EWG]-[DELiSH!bot@host PRIVMSG #packs :#26 0x [1.8G] test.tar');
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+
+    await act(async () => {
+      useView.getState().setPane('chat');
+    });
+    await act(async () => {
+      typeCommand('/quote PRIVMSG [EWG]-[DELiSH :XDCC SEND #26');
+    });
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[DELiSH!bot@host PRIVMSG marmot :${DELIM}DCC SEND test.tar 3232235777 4000 1932735283${DELIM}`,
+      );
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
   });
 });
