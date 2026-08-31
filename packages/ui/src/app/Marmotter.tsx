@@ -1142,6 +1142,15 @@ export function Marmotter({
           handleXdccResponse.current(profile.id, sessionEvent.from, sessionEvent.response);
         } else if (sessionEvent.kind === 'dcc-accept') {
           handleDccAccept.current(profile.id, sessionEvent.from, sessionEvent.accept);
+        } else if (sessionEvent.kind === 'dcc-unreadable') {
+          useView.getState().recordUnreadableOffer({
+            networkId: profile.id,
+            networkName: profile.name,
+            from: sessionEvent.from,
+            target: sessionEvent.target,
+            params: sessionEvent.params,
+            at: Date.now(),
+          });
         }
       });
 
@@ -1684,8 +1693,31 @@ export function Marmotter({
    * name, each with the timer that gives up on the answer.
    */
   const pendingResumes = useRef(
-    new Map<string, { readonly start: (position?: number) => void; readonly timer: number }>(),
+    new Map<
+      string,
+      {
+        readonly offerId: string;
+        readonly start: (position?: number) => void;
+        readonly timer: number;
+      }
+    >(),
   );
+
+  /**
+   * Drops a resume nobody is waiting on any more.
+   *
+   * A row taken off the list while its resume is still out would otherwise be
+   * started by the timer that gives up on the answer — a file arriving with
+   * nothing on screen that shows it, or stops it.
+   */
+  const forgetPendingResume = useCallback((offerId: string): void => {
+    for (const [key, entry] of pendingResumes.current) {
+      if (entry.offerId === offerId) {
+        window.clearTimeout(entry.timer);
+        pendingResumes.current.delete(key);
+      }
+    }
+  }, []);
 
   /** How long a sender is given to answer a resume before the file starts over. */
   const RESUME_ANSWER_MS = 8_000;
@@ -1778,13 +1810,22 @@ export function Marmotter({
             return;
           }
 
+          // Visibly waiting, and stoppable: the handshake takes a few seconds
+          // and a row still offering a Download button through it is one a
+          // person clicks again, starting a second negotiation for the file
+          // they are already waiting on.
+          useView.getState().setDccOfferStatus(offerId, {
+            status: 'requested',
+            note: 'Asking to continue where it left off.',
+          });
+
           const key = resumeKey(plan.networkId, plan.from, plan.filename);
           window.clearTimeout(pendingResumes.current.get(key)?.timer);
           const timer = window.setTimeout(() => {
             pendingResumes.current.delete(key);
             start();
           }, RESUME_ANSWER_MS);
-          pendingResumes.current.set(key, { start, timer });
+          pendingResumes.current.set(key, { offerId, start, timer });
 
           session.send(
             `PRIVMSG ${plan.from} :${encodeCtcp(
@@ -1817,9 +1858,12 @@ export function Marmotter({
     // The name in the answer is the one we sent, but senders are not careful
     // about it, so a bot answering with a name near enough is taken as an
     // answer to the one transfer waiting on this bot.
-    const entry =
-      pendingResumes.current.get(key) ??
-      (pendingResumes.current.size === 1 ? [...pendingResumes.current.values()][0] : undefined);
+    // The fallback is scoped to this bot on this network: a sender being
+    // careless with the name it echoes back is ordinary, and a sender speaking
+    // for somebody else's transfer is not something to accommodate.
+    const prefix = `${pendingKey(networkId, from)} `;
+    const mine = [...pendingResumes.current.entries()].filter(([held]) => held.startsWith(prefix));
+    const entry = pendingResumes.current.get(key) ?? (mine.length === 1 ? mine[0]?.[1] : undefined);
     if (entry === undefined) {
       return;
     }
@@ -1843,6 +1887,7 @@ export function Marmotter({
       }
       cancelledOffers.current.add(offer.id);
       transfer.cancel();
+      forgetPendingResume(offer.id);
       useView.getState().setDccOfferStatus(offer.id, { status: 'available' });
       announceDownload({
         key: 'dcc-stopped',
@@ -1852,7 +1897,7 @@ export function Marmotter({
             : `Stopped ${stopped} downloads.`,
       });
     },
-    [announceDownload],
+    [announceDownload, forgetPendingResume],
   );
 
   /**
@@ -1934,9 +1979,10 @@ export function Marmotter({
       }
       cancelPackRequest(offer);
       forgetPendingRequest(offer.id);
+      forgetPendingResume(offer.id);
       useView.getState().removeDccOffer(offer.id);
     },
-    [cancelPackRequest, forgetPendingRequest],
+    [cancelPackRequest, forgetPendingRequest, forgetPendingResume],
   );
 
   /** Clearing the list, and leaving the queues the dropped rows were waiting in. */
@@ -1945,10 +1991,11 @@ export function Marmotter({
       if (!isTransferInFlight(offer.status)) {
         cancelPackRequest(offer);
         forgetPendingRequest(offer.id);
+        forgetPendingResume(offer.id);
       }
     }
     useView.getState().clearDccOffers();
-  }, [cancelPackRequest, forgetPendingRequest]);
+  }, [cancelPackRequest, forgetPendingRequest, forgetPendingResume]);
 
   // Opening the file manager on a saved download. Only wired where the platform
   // can do it — desktop — and only ever on a path the shell itself returned.

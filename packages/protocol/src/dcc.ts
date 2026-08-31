@@ -77,6 +77,25 @@ const SEND_SUBCOMMANDS: ReadonlyMap<string, { secure: boolean; turbo: boolean }>
   ['STSEND', { secure: true, turbo: true }],
 ]);
 
+/**
+ * Whether a `DCC` CTCP claims to be a file offer, whatever else is wrong with it.
+ *
+ * Separate from {@link parseDccSend} because the two answer different
+ * questions. That one asks "can this be acted on"; this one asks "was this
+ * meant to be a file", which is what makes the difference between an offer
+ * Marmotter quietly ignored and one it could not read. The second is worth
+ * saying out loud: it is a file the person was waiting for, and silence about
+ * it is the hardest kind of fault to report.
+ */
+export function isDccSendOffer(ctcp: CtcpMessage): boolean {
+  if (ctcp.command !== 'DCC') {
+    return false;
+  }
+  const space = ctcp.params.indexOf(' ');
+  const subcommand = (space === -1 ? ctcp.params : ctcp.params.slice(0, space)).toUpperCase();
+  return SEND_SUBCOMMANDS.has(subcommand);
+}
+
 /** The largest value the integer address form can hold: an unsigned 32-bit int. */
 const MAX_IPV4_INTEGER = 0xffffffff;
 
@@ -118,6 +137,18 @@ function parseAddress(raw: string): string | undefined {
 
   // A dotted quad passes through unchanged.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+    return raw;
+  }
+
+  // A hostname. The convention is an integer and most senders follow it, but a
+  // bot told to advertise itself by name sends the name, and rejecting the
+  // whole offer over it means a file that never arrives for a reason nothing
+  // in the interface can explain. It is resolved where the socket is opened —
+  // the same place the address form would have been dialled — so nothing here
+  // has to do a lookup to decide whether an offer is readable.
+  if (
+    /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(raw)
+  ) {
     return raw;
   }
 

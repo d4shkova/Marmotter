@@ -165,6 +165,17 @@ export type SessionEvent =
       readonly kind: 'dcc-accept';
       readonly from: string;
       readonly accept: DccAccept;
+    }
+  /**
+   * A file offer arrived in a shape this client could not read. Raised so the
+   * monitor can show what came in, rather than the person waiting for a file
+   * being left with silence and nothing to report.
+   */
+  | {
+      readonly kind: 'dcc-unreadable';
+      readonly from: string;
+      readonly target: string;
+      readonly params: string;
     };
 
 export interface Session {
@@ -407,6 +418,14 @@ export function createSession(options: SessionOptions): Session {
           break;
         case 'dcc-accept':
           events.emit({ kind: 'dcc-accept', from: effect.from, accept: effect.accept });
+          break;
+        case 'dcc-unreadable':
+          events.emit({
+            kind: 'dcc-unreadable',
+            from: effect.from,
+            target: effect.target,
+            params: effect.params,
+          });
           break;
       }
     }

@@ -663,6 +663,22 @@ export interface ViewState {
     readonly pack: number;
     readonly at: number;
   }): string | undefined;
+  /**
+   * Lists an offer that arrived in a shape Marmotter could not read.
+   *
+   * Shown as a failed row carrying the raw line, because the alternative is
+   * silence: somebody who asked a bot for a file and got nothing cannot
+   * otherwise tell a bot that never answered from an answer this client did not
+   * understand, and the second is the one worth reporting.
+   */
+  recordUnreadableOffer(offer: {
+    readonly networkId: string;
+    readonly networkName: string;
+    readonly from: string;
+    readonly target: string;
+    readonly params: string;
+    readonly at: number;
+  }): void;
   setDccOfferStatus(
     id: string,
     patch: {
@@ -940,6 +956,36 @@ export const useView = create<ViewState>((set, get) => ({
     };
     set((current) => ({ dccOffers: [...current.dccOffers, record] }));
     return id;
+  },
+
+  recordUnreadableOffer(offer) {
+    const { userOptions, dccActive } = get();
+    if (!userOptions.dccMonitorEnabled || !dccActive) {
+      return;
+    }
+    const id = `${offer.networkId} unreadable ${offer.from} ${offer.params}`;
+    set((current) => {
+      if (current.dccOffers.some((entry) => entry.id === id)) {
+        return {};
+      }
+      const record: DccOfferRecord = {
+        id,
+        kind: 'dcc',
+        networkId: offer.networkId,
+        networkName: offer.networkName,
+        from: offer.from,
+        target: offer.target,
+        // The raw parameters stand in for a name, since reading one out of them
+        // is the very thing that failed. It is also exactly what a bug report
+        // needs, sitting where the person is already looking.
+        filename: offer.params,
+        passive: false,
+        receivedAt: offer.at,
+        status: 'failed',
+        error: "Marmotter couldn't read this offer. The raw line is in the network's raw log.",
+      };
+      return { dccOffers: [...current.dccOffers, record] };
+    });
   },
 
   setDccOfferStatus(id, patch) {

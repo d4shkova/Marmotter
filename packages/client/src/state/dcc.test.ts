@@ -85,21 +85,17 @@ describe('a DCC offer', () => {
     });
   });
 
-  it('leaves a malformed DCC line as an ordinary unhandled CTCP', () => {
-    const { state } = feed(
-      registeredSession(),
-      [`:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`],
-      context(),
-    );
-    expect(
-      feed(
-        registeredSession(),
-        [`:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`],
-        context(),
-      ).effects.filter((effect) => effect.kind === 'dcc-offer'),
-    ).toEqual([]);
-    // Falls through to the generic CTCP notice rather than the DCC one.
-    expect(state.serverNotices.at(-1)?.text).toContain('an automated request');
+  it('says so when a line that claims to be a file cannot be read as one', () => {
+    // Not dropped and not filed away as an anonymous CTCP: somebody who asked a
+    // bot for a file and got nothing has no way to tell an unanswered request
+    // from an answer this client did not understand, and the raw line is what
+    // makes the difference reportable.
+    const line = `:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`;
+    const { effects } = feed(registeredSession(), [line], context());
+    expect(effects.filter((effect) => effect.kind === 'dcc-offer')).toEqual([]);
+    expect(effects.filter((effect) => effect.kind === 'dcc-unreadable')).toEqual([
+      { kind: 'dcc-unreadable', from: 'tamsin', target: 'tamsin', params: 'SEND broken' },
+    ]);
   });
 });
 

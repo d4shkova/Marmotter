@@ -252,3 +252,16 @@ describe('resuming a transfer', () => {
     expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT f x y' })).toBeUndefined();
   });
 });
+
+describe('the address field', () => {
+  it('accepts a hostname, which some senders advertise instead of an address', () => {
+    const send = offer(`${CTCP}DCC SEND f.bin dcc.example.net 5000 1${CTCP}`);
+    expect(send?.host).toBe('dcc.example.net');
+  });
+
+  it('still refuses something that is no kind of address at all', () => {
+    expect(offer(`${CTCP}DCC SEND f.bin -- 5000 1${CTCP}`)).toBeUndefined();
+    expect(offer(`${CTCP}DCC SEND f.bin ../etc 5000 1${CTCP}`)).toBeUndefined();
+    expect(offer(`${CTCP}DCC SEND f.bin localhost 5000 1${CTCP}`)).toBeUndefined();
+  });
+});

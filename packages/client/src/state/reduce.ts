@@ -39,6 +39,7 @@ import {
   isChannel,
   parseChannelModes,
   isCtcp,
+  isDccSendOffer,
   parseDccAccept,
   parseDccSend,
   type DccAccept,
@@ -150,6 +151,23 @@ export type Effect =
       readonly kind: 'dcc-accept';
       readonly from: string;
       readonly accept: DccAccept;
+    }
+  /**
+   * Somebody offered a file in a shape this client could not read.
+   *
+   * Raised rather than dropped, because the silence is the problem: a person
+   * who asked for a file and got nothing has no way to tell a bot that never
+   * answered from an answer that arrived and was not understood. The raw
+   * parameters travel with it so the file monitor can show exactly what came
+   * in — which is the thing worth reporting, and the thing nobody can produce
+   * from a client that says nothing.
+   */
+  | {
+      readonly kind: 'dcc-unreadable';
+      readonly from: string;
+      readonly target: string;
+      /** The CTCP parameters exactly as they arrived. */
+      readonly params: string;
     };
 
 export interface ReduceResult {
@@ -982,6 +1000,25 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
               { ...state, serverNotices: [...state.serverNotices, notice] },
               [],
               [{ kind: 'dcc-offer', from: sender, target: conversation, send }],
+            );
+          }
+
+          // It said it was a file and could not be read as one. Raised so the
+          // monitor can show it: an offer that fell through to the generic CTCP
+          // notice below would land in the server tab, which is not where
+          // somebody waiting for a file is looking.
+          if (isDccSendOffer(ctcp)) {
+            return result(
+              state,
+              [],
+              [
+                {
+                  kind: 'dcc-unreadable',
+                  from: sender,
+                  target: conversation,
+                  params: ctcp.params,
+                },
+              ],
             );
           }
         }
