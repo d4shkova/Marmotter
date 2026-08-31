@@ -39,7 +39,9 @@ import {
   isChannel,
   parseChannelModes,
   isCtcp,
+  parseDccAccept,
   parseDccSend,
+  type DccAccept,
   type DccSend,
   parseXdccAnnounce,
   parseXdccResponse,
@@ -139,6 +141,15 @@ export type Effect =
       readonly from: string;
       readonly target: string;
       readonly response: XdccResponse;
+    }
+  /**
+   * A sender agreed to continue a file rather than start it again. Raised so
+   * the transfer waiting on that answer can open its socket and append.
+   */
+  | {
+      readonly kind: 'dcc-accept';
+      readonly from: string;
+      readonly accept: DccAccept;
     };
 
 export interface ReduceResult {
@@ -945,6 +956,14 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         // notice in the conversation. It is never auto-answered, and nothing is
         // fetched without the user clicking Download.
         if (msg.command === 'PRIVMSG' && ctcp.command === 'DCC') {
+          // The answer to a resume we asked for. It carries no text worth
+          // showing — the row it belongs to says what is happening — so it is
+          // raised and nothing is written into the conversation.
+          const accept = parseDccAccept(ctcp);
+          if (accept !== undefined) {
+            return result(state, [], [{ kind: 'dcc-accept', from: sender, accept }]);
+          }
+
           const send = parseDccSend(ctcp);
           if (send !== undefined) {
             const notice = buildMessage(

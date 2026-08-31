@@ -17,6 +17,8 @@ import {
   type SuggestedAction,
   type XdccPack,
   type XdccResponse,
+  type DccAccept,
+  buildDccResume,
   buildPassiveAccept,
   encodeCtcp,
   parseXdccRequest,
@@ -1138,6 +1140,8 @@ export function Marmotter({
           );
         } else if (sessionEvent.kind === 'xdcc-response') {
           handleXdccResponse.current(profile.id, sessionEvent.from, sessionEvent.response);
+        } else if (sessionEvent.kind === 'dcc-accept') {
+          handleDccAccept.current(profile.id, sessionEvent.from, sessionEvent.accept);
         }
       });
 
@@ -1515,6 +1519,15 @@ export function Marmotter({
     [announceDownload, notify],
   );
 
+  // The folded-nick key a pending request lives under.
+  const pendingKey = useCallback(
+    (networkId: string, nick: string): string => {
+      const mapping = registry.networks.get(networkId)?.support.caseMapping;
+      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
+    },
+    [registry],
+  );
+
   // Fetching one direct DCC transfer into the chosen folder, updating a given
   // row as it goes. The optimistic status flips to downloading at once and
   // settles to saved or failed when the shell reports back, so a slow transfer
@@ -1531,6 +1544,7 @@ export function Marmotter({
         size?: number;
         secure?: boolean;
         turbo?: boolean;
+        resumeFrom?: number;
       },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
@@ -1559,6 +1573,7 @@ export function Marmotter({
           ...(source.size === undefined ? {} : { size: source.size }),
           ...(source.secure === undefined ? {} : { secure: source.secure }),
           ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+          ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
@@ -1592,6 +1607,7 @@ export function Marmotter({
         token: string;
         size?: number;
         turbo?: boolean;
+        resumeFrom?: number;
       },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
@@ -1628,6 +1644,7 @@ export function Marmotter({
           folder,
           ...(source.size === undefined ? {} : { size: source.size }),
           ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+          ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
         },
         (address, port) => {
           const advertised = useView.getState().userOptions.dccAddress ?? address;
@@ -1661,6 +1678,159 @@ export function Marmotter({
     },
     [dcc, registry, trackTransfer],
   );
+
+  /**
+   * Transfers waiting on a sender's agreement to continue a file, by bot and
+   * name, each with the timer that gives up on the answer.
+   */
+  const pendingResumes = useRef(
+    new Map<string, { readonly start: (position?: number) => void; readonly timer: number }>(),
+  );
+
+  /** How long a sender is given to answer a resume before the file starts over. */
+  const RESUME_ANSWER_MS = 8_000;
+
+  const resumeKey = useCallback(
+    (networkId: string, from: string, filename: string): string =>
+      `${pendingKey(networkId, from)} ${filename.toLowerCase()}`,
+    [pendingKey],
+  );
+
+  /**
+   * Starting a transfer, continuing the file where there is something to
+   * continue.
+   *
+   * A dropped connection near the end of a multi-gigabyte file used to mean
+   * fetching the whole thing again, which on the sort of link these bots are
+   * reached over is the difference between a file arriving and a file never
+   * arriving. What is already on disk decides whether anything is asked for at
+   * all; the sender decides the position, since it is free to agree to less
+   * than was asked; and a sender that does not answer at all is not a sender
+   * that has refused — the file simply starts again, which is where we were.
+   */
+  const beginTransfer = useCallback(
+    (
+      offerId: string,
+      plan:
+        | {
+            readonly kind: 'active';
+            readonly networkId: string;
+            readonly from: string;
+            readonly host: string;
+            readonly port: number;
+            readonly filename: string;
+            readonly size?: number;
+            readonly secure?: boolean;
+            readonly turbo?: boolean;
+          }
+        | {
+            readonly kind: 'passive';
+            readonly networkId: string;
+            readonly from: string;
+            readonly host: string;
+            readonly filename: string;
+            readonly token: string;
+            readonly size?: number;
+            readonly turbo?: boolean;
+          },
+    ): void => {
+      const start = (resumeFrom?: number): void => {
+        if (plan.kind === 'active') {
+          fetchIntoFolder(offerId, {
+            host: plan.host,
+            port: plan.port,
+            filename: plan.filename,
+            ...(plan.size === undefined ? {} : { size: plan.size }),
+            ...(plan.secure === undefined ? {} : { secure: plan.secure }),
+            ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+            ...(resumeFrom === undefined ? {} : { resumeFrom }),
+          });
+          return;
+        }
+        fetchPassively(offerId, {
+          networkId: plan.networkId,
+          from: plan.from,
+          host: plan.host,
+          filename: plan.filename,
+          token: plan.token,
+          ...(plan.size === undefined ? {} : { size: plan.size }),
+          ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+          ...(resumeFrom === undefined ? {} : { resumeFrom }),
+        });
+      };
+
+      const folder = useView.getState().userOptions.downloadFolder;
+      const ask = dcc?.resumableBytes;
+      const session = registry.sessionOf(plan.networkId);
+      if (dcc === undefined || ask === undefined || folder === undefined || session === undefined) {
+        start();
+        return;
+      }
+
+      void ask
+        .call(dcc, folder, plan.filename)
+        .then((already) => {
+          // Nothing to continue, or a part-file already as long as the whole
+          // thing — which is not a resume, it is a file to start again and let
+          // the size check catch.
+          if (already <= 0 || (plan.size !== undefined && already >= plan.size)) {
+            start();
+            return;
+          }
+
+          const key = resumeKey(plan.networkId, plan.from, plan.filename);
+          window.clearTimeout(pendingResumes.current.get(key)?.timer);
+          const timer = window.setTimeout(() => {
+            pendingResumes.current.delete(key);
+            start();
+          }, RESUME_ANSWER_MS);
+          pendingResumes.current.set(key, { start, timer });
+
+          session.send(
+            `PRIVMSG ${plan.from} :${encodeCtcp(
+              'DCC',
+              buildDccResume({
+                filename: plan.filename,
+                port: plan.kind === 'active' ? plan.port : 0,
+                position: already,
+                ...(plan.kind === 'passive' ? { token: plan.token } : {}),
+              }),
+            )}`,
+          );
+        })
+        .catch(() => {
+          start();
+        });
+    },
+    [dcc, fetchIntoFolder, fetchPassively, registry, resumeKey],
+  );
+
+  /**
+   * A sender agreeing to continue a file. Held in a ref so the long-lived
+   * session listener always runs the current version.
+   */
+  const handleDccAccept = useRef<(networkId: string, from: string, accept: DccAccept) => void>(
+    () => {},
+  );
+  handleDccAccept.current = (networkId, from, accept) => {
+    const key = resumeKey(networkId, from, accept.filename);
+    // The name in the answer is the one we sent, but senders are not careful
+    // about it, so a bot answering with a name near enough is taken as an
+    // answer to the one transfer waiting on this bot.
+    const entry =
+      pendingResumes.current.get(key) ??
+      (pendingResumes.current.size === 1 ? [...pendingResumes.current.values()][0] : undefined);
+    if (entry === undefined) {
+      return;
+    }
+    for (const [held, value] of pendingResumes.current) {
+      if (value === entry) {
+        pendingResumes.current.delete(held);
+      }
+    }
+    window.clearTimeout(entry.timer);
+    entry.start(accept.position);
+  };
 
   // Stopping a download that is under way. The row goes straight back to
   // available so it can be started again, and the shell is asked to abort the
@@ -1923,15 +2093,6 @@ export function Marmotter({
       .recordXdccOffer({ networkId, networkName, from, target, pack, at: Date.now() });
   };
 
-  // The folded-nick key a pending request lives under.
-  const pendingKey = useCallback(
-    (networkId: string, nick: string): string => {
-      const mapping = registry.networks.get(networkId)?.support.caseMapping;
-      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
-    },
-    [registry],
-  );
-
   /**
    * A serving bot's answer to a pack we asked for.
    *
@@ -1999,7 +2160,8 @@ export function Marmotter({
     const refuse = (offerId: string): void => {
       const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
       if (dcc?.receivePassive !== undefined && send.token !== undefined) {
-        fetchPassively(offerId, {
+        beginTransfer(offerId, {
+          kind: 'passive',
           networkId,
           from,
           host: send.host,
@@ -2019,7 +2181,10 @@ export function Marmotter({
       });
     };
     const fetchInto = (offerId: string): void => {
-      fetchIntoFolder(offerId, {
+      beginTransfer(offerId, {
+        kind: 'active',
+        networkId,
+        from,
         host: send.host,
         port: send.port,
         filename: send.filename,
@@ -2123,7 +2288,8 @@ export function Marmotter({
           toast("Marmotter can't accept that reverse transfer.", 'error');
           return;
         }
-        fetchPassively(offer.id, {
+        beginTransfer(offer.id, {
+          kind: 'passive',
           networkId: offer.networkId,
           from: offer.from,
           host: offer.host,
@@ -2138,7 +2304,10 @@ export function Marmotter({
         toast(`That offer has no address to connect to.`, 'error');
         return;
       }
-      fetchIntoFolder(offer.id, {
+      beginTransfer(offer.id, {
+        kind: 'active',
+        networkId: offer.networkId,
+        from: offer.from,
         host: offer.host,
         port: offer.port,
         filename: offer.filename,
@@ -2147,7 +2316,7 @@ export function Marmotter({
         ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
-    [announceDownload, dcc, fetchPassively, registry, toast, fetchIntoFolder, pendingKey],
+    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey],
   );
 
   /**

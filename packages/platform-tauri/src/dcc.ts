@@ -73,6 +73,10 @@ export function createDcc(options: DccOptions = {}): DccCapability {
       return await invoke<string>('dcc_default_dir');
     },
 
+    async resumableBytes(folder: string, filename: string): Promise<number> {
+      return await invoke<number>('dcc_resumable_bytes', { folder, filename });
+    },
+
     download(request: DccDownloadRequest, onProgress?: DccProgress): DccTransfer {
       // A per-transfer id ties the Rust side's progress events back to this
       // call, so two downloads at once do not drive each other's bars, and lets
@@ -99,6 +103,7 @@ export function createDcc(options: DccOptions = {}): DccCapability {
               folder: request.folder,
               secure: request.secure ?? false,
               turbo: request.turbo ?? false,
+              resumeFrom: request.resumeFrom ?? null,
               transferId,
             },
           });
@@ -155,6 +160,7 @@ export function createDcc(options: DccOptions = {}): DccCapability {
               filename: request.filename,
               folder: request.folder,
               turbo: request.turbo ?? false,
+              resumeFrom: request.resumeFrom ?? null,
               transferId,
             },
           });

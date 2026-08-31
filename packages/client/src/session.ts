@@ -15,6 +15,7 @@
 import {
   AuthenticateReassembler,
   type CryptoProvider,
+  type DccAccept,
   type DccSend,
   type XdccPack,
   type XdccResponse,
@@ -155,6 +156,15 @@ export type SessionEvent =
       readonly from: string;
       readonly target: string;
       readonly response: XdccResponse;
+    }
+  /**
+   * A sender agreed to continue a file from a position rather than start it
+   * again, answering a resume we asked for.
+   */
+  | {
+      readonly kind: 'dcc-accept';
+      readonly from: string;
+      readonly accept: DccAccept;
     };
 
 export interface Session {
@@ -394,6 +404,9 @@ export function createSession(options: SessionOptions): Session {
             target: effect.target,
             response: effect.response,
           });
+          break;
+        case 'dcc-accept':
+          events.emit({ kind: 'dcc-accept', from: effect.from, accept: effect.accept });
           break;
       }
     }

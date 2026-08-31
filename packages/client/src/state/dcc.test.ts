@@ -102,3 +102,27 @@ describe('a DCC offer', () => {
     expect(state.serverNotices.at(-1)?.text).toContain('an automated request');
   });
 });
+
+describe('a sender agreeing to continue a file', () => {
+  const dccAccept = (params: string): string =>
+    `:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC ACCEPT ${params}${DELIM}`;
+
+  it('raises the accepted position, and writes nothing into the conversation', () => {
+    const { state, effects } = feed(
+      registeredSession(),
+      [dccAccept('big.bin 5000 1024')],
+      context(),
+    );
+    expect(effects.filter((effect) => effect.kind === 'dcc-accept')).toEqual([
+      {
+        kind: 'dcc-accept',
+        from: 'tamsin',
+        accept: { filename: 'big.bin', port: 5000, position: 1024 },
+      },
+    ]);
+    // The row it belongs to says what is happening. A CTCP handshake line in
+    // the conversation would be exactly the protocol leakage this client exists
+    // to remove.
+    expect(state.serverNotices).toHaveLength(0);
+  });
+});

@@ -30,7 +30,7 @@ use std::path::Path;
 use std::process::Command;
 
 use marmotter_transport::{
-    dcc_cancel_channel, dcc_download, dcc_local_address_towards,
+    dcc_cancel_channel, dcc_download, dcc_local_address_towards, dcc_plan_target,
     dcc_receive_passive as receive_passive_transfer, DccCancelHandle, DccDownloadOptions,
     DccPassiveOptions, DEFAULT_DCC_TIMEOUT,
 };
@@ -68,6 +68,9 @@ pub struct DccDownloadRequest {
     pub size: Option<u64>,
     pub filename: String,
     pub folder: String,
+    /// Where to continue from, when the sender agreed to resume.
+    #[serde(default, rename = "resumeFrom")]
+    pub resume_from: Option<u64>,
     /// Whether the transfer's socket is TLS, from an `SSEND` offer.
     #[serde(default)]
     pub secure: bool,
@@ -89,6 +92,9 @@ pub struct DccPassiveRequest {
     pub folder: String,
     #[serde(default)]
     pub turbo: bool,
+    /// Where to continue from, when the sender agreed to resume.
+    #[serde(default, rename = "resumeFrom")]
+    pub resume_from: Option<u64>,
     #[serde(rename = "transferId")]
     pub transfer_id: String,
 }
@@ -144,6 +150,7 @@ pub async fn dcc_download_file(
             folder: PathBuf::from(request.folder),
             secure: request.secure,
             turbo: request.turbo,
+            resume_from: request.resume_from,
             timeout: DEFAULT_DCC_TIMEOUT,
             cancel: Some(cancel_signal),
         },
@@ -201,6 +208,7 @@ pub async fn dcc_receive_passive(
             filename: request.filename,
             folder: PathBuf::from(request.folder),
             turbo: request.turbo,
+            resume_from: request.resume_from,
             timeout: DEFAULT_DCC_TIMEOUT,
             cancel: Some(cancel_signal),
         },
@@ -236,6 +244,17 @@ pub async fn dcc_receive_passive(
 
     let path = result.map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// How much of this file an earlier attempt already wrote, if any.
+///
+/// Answered before a transfer starts, because resuming has to be agreed with
+/// the sender over IRC and by the time the socket is open it is too late to
+/// ask. Zero means there is nothing to continue — no part-file, or a finished
+/// file of that name, which is never resumed over.
+#[tauri::command]
+pub fn dcc_resumable_bytes(folder: String, filename: String) -> u64 {
+    dcc_plan_target(&PathBuf::from(folder), &filename).resumable
 }
 
 /// Removes a transfer's cancel channel from the registry when its download ends,

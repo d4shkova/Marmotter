@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio_rustls::TlsConnector;
@@ -134,6 +134,13 @@ pub struct DownloadOptions {
     /// window, blocks our write, and stalls a transfer that was working, so
     /// they are omitted for these.
     pub turbo: bool,
+    /// Where to continue from, when the sender agreed to resume.
+    ///
+    /// Only ever a position the sender acknowledged in a `DCC ACCEPT`: it is
+    /// the offset the sender starts sending from, so a position we merely
+    /// assumed would splice two different parts of a file together and produce
+    /// something that looks complete and is not.
+    pub resume_from: Option<u64>,
     /// The folder chosen in settings.
     pub folder: PathBuf,
     /// Connect and per-read timeout.
@@ -174,7 +181,7 @@ pub async fn download(
         ));
     }
 
-    let target = unique_target_path(&options.folder, &options.filename);
+    let target = plan_target(&options.folder, &options.filename);
 
     // The cancel signal is consumed here so it can be shared by the connect and
     // the read loop, which run one after the other on the same transfer.
@@ -214,10 +221,11 @@ pub async fn download(
         };
         stream_to_file(
             tls,
-            &target,
+            &target.partial_path,
             options.size,
             options.timeout,
             options.turbo,
+            options.resume_from,
             &mut cancel,
             &mut on_progress,
         )
@@ -225,25 +233,57 @@ pub async fn download(
     } else {
         stream_to_file(
             stream,
-            &target,
+            &target.partial_path,
             options.size,
             options.timeout,
             options.turbo,
+            options.resume_from,
             &mut cancel,
             &mut on_progress,
         )
         .await
     };
 
+    settle(result, target).await
+}
+
+/// Turns a finished transfer into a file, or a failed one into what is left.
+///
+/// On success the part-file becomes the real one. On a cancel the part-file is
+/// removed: stopping a download is the user saying they do not want it, and
+/// leaving the bytes behind to be silently continued is not what they asked
+/// for. On any other failure it is kept, because that is the whole of what
+/// makes the next attempt a resume rather than a fresh multi-gigabyte start.
+async fn settle(result: Result<()>, target: TransferTarget) -> Result<PathBuf> {
     match result {
-        Ok(()) => Ok(target),
-        Err(error) => {
-            // A half-written file is worse than none: it looks complete in the
-            // folder. Best-effort removal, since the error being returned is the
-            // one that matters.
-            let _ = tokio::fs::remove_file(&target).await;
-            Err(error)
+        Ok(()) => {
+            // Between planning and finishing, something else may have taken the
+            // name; the transfer is not thrown away over that.
+            let final_path = if target.final_path.exists() {
+                unique_target_path(
+                    target.final_path.parent().unwrap_or(Path::new(".")),
+                    &target
+                        .final_path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("download")
+                        .to_owned(),
+                )
+            } else {
+                target.final_path
+            };
+            tokio::fs::rename(&target.partial_path, &final_path)
+                .await
+                .map_err(|error| {
+                    TransportError::Network(format!("could not save the file: {error}"))
+                })?;
+            Ok(final_path)
         }
+        Err(TransportError::Cancelled) => {
+            let _ = tokio::fs::remove_file(&target.partial_path).await;
+            Err(TransportError::Cancelled)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -275,6 +315,13 @@ pub struct PassiveOptions {
     pub folder: PathBuf,
     /// Whether the sender streams without waiting to be acknowledged.
     pub turbo: bool,
+    /// Where to continue from, when the sender agreed to resume.
+    ///
+    /// Only ever a position the sender acknowledged in a `DCC ACCEPT`: it is
+    /// the offset the sender starts sending from, so a position we merely
+    /// assumed would splice two different parts of a file together and produce
+    /// something that looks complete and is not.
+    pub resume_from: Option<u64>,
     /// Per-read timeout once the sender has connected.
     pub timeout: Duration,
     /// A signal the caller can trip to abort the transfer, if it wants one.
@@ -317,7 +364,7 @@ pub async fn receive_passive(
         .map_err(|error| TransportError::Network(error.to_string()))?
         .port();
 
-    let target = unique_target_path(&options.folder, &options.filename);
+    let target = plan_target(&options.folder, &options.filename);
     let mut cancel = options.cancel.take();
     let expected: Option<std::net::IpAddr> = options.peer_host.parse().ok();
 
@@ -338,23 +385,19 @@ pub async fn receive_passive(
     // Nothing else is coming, and a socket left listening is a port left open.
     drop(listener);
 
-    match stream_to_file(
+    let result = stream_to_file(
         stream,
-        &target,
+        &target.partial_path,
         options.size,
         options.timeout,
         options.turbo,
+        options.resume_from,
         &mut cancel,
         &mut on_progress,
     )
-    .await
-    {
-        Ok(()) => Ok(target),
-        Err(error) => {
-            let _ = tokio::fs::remove_file(&target).await;
-            Err(error)
-        }
-    }
+    .await;
+
+    settle(result, target).await
 }
 
 /// Accepts until the sender itself connects, dropping anyone else.
@@ -424,19 +467,43 @@ async fn stream_to_file<S: AsyncRead + AsyncWrite + Unpin>(
     size: Option<u64>,
     timeout: Duration,
     turbo: bool,
+    resume_from: Option<u64>,
     cancel: &mut Option<CancelSignal>,
     on_progress: &mut impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
-    let mut file = File::create(target)
-        .await
-        .map_err(|error| TransportError::Network(error.to_string()))?;
+    // Resuming opens the part-file where it was left and cuts it back to the
+    // position the sender agreed to, which is the only position the bytes about
+    // to arrive belong after. Anything beyond it was never acknowledged and
+    // would otherwise sit in the middle of the finished file.
+    let mut file = match resume_from {
+        Some(position) if position > 0 => {
+            let handle = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(target)
+                .await
+                .map_err(|error| TransportError::Network(error.to_string()))?;
+            handle
+                .set_len(position)
+                .await
+                .map_err(|error| TransportError::Network(error.to_string()))?;
+            let mut handle = handle;
+            handle
+                .seek(std::io::SeekFrom::Start(position))
+                .await
+                .map_err(|error| TransportError::Network(error.to_string()))?;
+            handle
+        }
+        _ => File::create(target)
+            .await
+            .map_err(|error| TransportError::Network(error.to_string()))?,
+    };
 
     let cap = size.unwrap_or(MAX_UNKNOWN_SIZE);
-    let mut received: u64 = 0;
-    let mut reported: u64 = 0;
+    let mut received: u64 = resume_from.unwrap_or(0);
+    let mut reported: u64 = received;
     let mut buffer = vec![0_u8; READ_CHUNK];
 
-    on_progress(0, size);
+    on_progress(received, size);
 
     while received < cap {
         let read = tokio::select! {
@@ -525,6 +592,61 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// The suffix a transfer writes under while it is still running.
+///
+/// A file in the download folder should be a file that arrived. Writing to a
+/// marked name and renaming at the end keeps a half-finished download out of
+/// the folder proper, and — the reason it is here — leaves something for the
+/// next attempt to continue from instead of starting a multi-gigabyte file
+/// again because the connection dropped near the end.
+pub const PARTIAL_SUFFIX: &str = ".part";
+
+/// Where a transfer writes, and how much of it is already on disk.
+#[derive(Debug, Clone)]
+pub struct TransferTarget {
+    /// Where the finished file goes.
+    pub final_path: PathBuf,
+    /// Where the bytes go while it runs.
+    pub partial_path: PathBuf,
+    /// Bytes already written by an earlier attempt, which may be resumed.
+    pub resumable: u64,
+}
+
+/// Decides where a transfer of this name writes, and what it can continue from.
+///
+/// A part-file left by an earlier attempt is continued under the same name; a
+/// finished file of that name is never touched, and the new transfer takes the
+/// next free name. Exposed so the caller can ask what is resumable *before* the
+/// transfer starts — the sender has to be asked to resume, over IRC, and by the
+/// time the socket is open it is too late to ask.
+#[must_use]
+pub fn plan_target(folder: &Path, filename: &str) -> TransferTarget {
+    let safe = sanitize_filename(filename);
+    let partial = folder.join(format!("{safe}{PARTIAL_SUFFIX}"));
+
+    if let Ok(metadata) = std::fs::metadata(&partial) {
+        if metadata.is_file() {
+            return TransferTarget {
+                final_path: folder.join(&safe),
+                partial_path: partial,
+                resumable: metadata.len(),
+            };
+        }
+    }
+
+    let final_path = unique_target_path(folder, &safe);
+    let name = final_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&safe)
+        .to_owned();
+    TransferTarget {
+        partial_path: folder.join(format!("{name}{PARTIAL_SUFFIX}")),
+        final_path,
+        resumable: 0,
+    }
+}
+
 /// A path inside the folder that no existing file holds, so a download never
 /// overwrites. A clash gets " (2)", " (3)", and so on before the extension.
 fn unique_target_path(folder: &Path, filename: &str) -> PathBuf {
@@ -597,6 +719,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -625,6 +748,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |received, total| updates.push((received, total)),
@@ -654,6 +778,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -679,6 +804,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -686,8 +812,122 @@ mod tests {
         .await;
 
         assert!(result.is_err());
-        // The partial file is cleaned up rather than left looking complete.
+        // Nothing in the folder looks like a file that arrived...
         assert!(!folder.path().join("big.bin").exists());
+        // ...but what did arrive is kept under the part name, which is what the
+        // next attempt resumes from rather than starting the file again.
+        assert_eq!(
+            std::fs::read(folder.path().join("big.bin.part")).unwrap(),
+            b"tooshort"
+        );
+    }
+
+    #[tokio::test]
+    async fn continues_a_part_file_from_where_the_sender_agreed() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("big.bin.part"), b"first-half").unwrap();
+
+        // What is resumable is what the caller asks the sender for, so it has to
+        // be readable before the transfer starts.
+        let planned = plan_target(folder.path(), "big.bin");
+        assert_eq!(planned.resumable, 10);
+
+        let port = serve(b"second-half".to_vec()).await;
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(21),
+                filename: "big.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: false,
+                turbo: false,
+                resume_from: Some(10),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(path, folder.path().join("big.bin"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"first-halfsecond-half");
+        assert!(!folder.path().join("big.bin.part").exists());
+    }
+
+    #[tokio::test]
+    async fn cuts_a_part_file_back_to_the_position_the_sender_agreed() {
+        // The sender may accept a smaller position than we offered. Anything
+        // past it was never acknowledged and must not survive in the middle of
+        // the finished file.
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("f.bin.part"), b"aaaaaGARBAGE").unwrap();
+
+        let port = serve(b"bbbbb".to_vec()).await;
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(10),
+                filename: "f.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: false,
+                turbo: false,
+                resume_from: Some(5),
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"aaaaabbbbb");
+    }
+
+    #[tokio::test]
+    async fn a_resumed_transfer_reports_progress_from_where_it_started() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("p.bin.part"), b"12345").unwrap();
+        let port = serve(b"67890".to_vec()).await;
+
+        let mut updates: Vec<u64> = Vec::new();
+        download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(10),
+                filename: "p.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: false,
+                turbo: false,
+                resume_from: Some(5),
+                timeout: Duration::from_secs(5),
+            },
+            |received, _| updates.push(received),
+        )
+        .await
+        .unwrap();
+
+        // A bar that restarted at zero would report a transfer going backwards.
+        assert_eq!(updates.first(), Some(&5));
+        assert_eq!(updates.last(), Some(&10));
+    }
+
+    #[test]
+    fn a_finished_file_of_the_same_name_is_never_resumed_over() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("done.bin"), b"complete").unwrap();
+
+        let planned = plan_target(folder.path(), "done.bin");
+        assert_eq!(planned.resumable, 0);
+        assert_eq!(planned.final_path, folder.path().join("done (2).bin"));
+        assert_eq!(
+            planned.partial_path,
+            folder.path().join("done (2).bin.part")
+        );
     }
 
     /// A sender that never reads, and reports whatever the client wrote to it.
@@ -732,6 +972,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: true,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -759,6 +1000,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -788,6 +1030,7 @@ mod tests {
                 cancel: None,
                 secure: true,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(2),
             },
             |_, _| {},
@@ -814,6 +1057,7 @@ mod tests {
                         filename: "reverse.bin".to_owned(),
                         folder,
                         turbo: false,
+                        resume_from: None,
                         timeout: Duration::from_secs(5),
                         cancel: None,
                     },
@@ -856,6 +1100,7 @@ mod tests {
                         filename: "reverse.bin".to_owned(),
                         folder,
                         turbo: false,
+                        resume_from: None,
                         timeout: Duration::from_millis(200),
                         cancel: None,
                     },
@@ -899,6 +1144,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(1),
             },
             |_, _| {},
@@ -923,6 +1169,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -960,6 +1207,7 @@ mod tests {
                 cancel: None,
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -1003,6 +1251,7 @@ mod tests {
                 cancel: Some(signal),
                 secure: false,
                 turbo: false,
+                resume_from: None,
                 timeout: Duration::from_secs(30),
             },
             |_, _| {},

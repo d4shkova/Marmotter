@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { decodeCtcp } from './ctcp.js';
-import { buildPassiveAccept, parseDccSend, sanitizeDccFilename, type DccSend } from './dcc.js';
+import {
+  buildDccResume,
+  buildPassiveAccept,
+  parseDccAccept,
+  parseDccSend,
+  sanitizeDccFilename,
+  type DccSend,
+} from './dcc.js';
 
 /** Parses the CTCP out of a raw PRIVMSG body, as the reducer does. */
 function offer(body: string): DccSend | undefined {
@@ -202,5 +209,46 @@ describe('buildPassiveAccept', () => {
       token: 'abc',
       passive: false,
     });
+  });
+});
+
+describe('resuming a transfer', () => {
+  it('asks for a position, naming the offer by its port', () => {
+    expect(buildDccResume({ filename: 'big.bin', port: 5000, position: 1024 })).toBe(
+      'RESUME big.bin 5000 1024',
+    );
+  });
+
+  it('names a passive offer by its token, since it has no port', () => {
+    expect(buildDccResume({ filename: 'big.bin', port: 0, position: 1024, token: '998877' })).toBe(
+      'RESUME big.bin 0 1024 998877',
+    );
+  });
+
+  it('quotes a name that would otherwise split into two fields', () => {
+    expect(buildDccResume({ filename: 'my file.bin', port: 1, position: 2 })).toBe(
+      'RESUME "my file.bin" 1 2',
+    );
+  });
+
+  it('reads the position the sender agreed to', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT big.bin 5000 1024' })).toEqual({
+      filename: 'big.bin',
+      port: 5000,
+      position: 1024,
+    });
+  });
+
+  it('reads a passive acceptance, token and all', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT "my file.bin" 0 512 998877' })).toEqual(
+      { filename: 'my file.bin', port: 0, position: 512, token: '998877' },
+    );
+  });
+
+  it('is undefined for anything that is not an acceptance', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'SEND f 1 2 3' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'PING', params: 'ACCEPT f 1 2' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT f 1' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT f x y' })).toBeUndefined();
   });
 });

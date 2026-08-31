@@ -300,3 +300,85 @@ function encodeAddress(host: string): string {
       0,
   );
 }
+
+/**
+ * A sender's agreement to continue a file rather than start it again.
+ *
+ * `DCC ACCEPT` answers a `DCC RESUME`: it names the position the sender will
+ * begin from, which is not necessarily the one that was asked for. That
+ * position, and not the one on disk, is where the bytes about to arrive belong.
+ */
+export interface DccAccept {
+  readonly filename: string;
+  /** The port from the original offer, which is how the answer is matched. */
+  readonly port: number;
+  /** The byte offset the sender will start from. */
+  readonly position: number;
+  /** The token, on a passive offer, where the port is not the identifier. */
+  readonly token?: string;
+}
+
+/**
+ * Parses a `DCC ACCEPT`, or returns undefined for anything that is not one.
+ */
+export function parseDccAccept(ctcp: CtcpMessage): DccAccept | undefined {
+  if (ctcp.command !== 'DCC') {
+    return undefined;
+  }
+
+  const space = ctcp.params.indexOf(' ');
+  if (space === -1 || ctcp.params.slice(0, space).toUpperCase() !== 'ACCEPT') {
+    return undefined;
+  }
+
+  const split = splitFilename(ctcp.params.slice(space + 1).trim());
+  if (split === undefined || split.filename === '') {
+    return undefined;
+  }
+
+  const fields = split.remainder.split(/\s+/).filter((field) => field !== '');
+  const [portField, positionField, token] = fields;
+  if (portField === undefined || positionField === undefined) {
+    return undefined;
+  }
+  if (!/^\d+$/.test(portField) || !/^\d+$/.test(positionField)) {
+    return undefined;
+  }
+
+  const port = Number(portField);
+  const position = Number(positionField);
+  if (!Number.isSafeInteger(port) || !Number.isSafeInteger(position)) {
+    return undefined;
+  }
+
+  return {
+    filename: split.filename,
+    port,
+    position,
+    ...(token === undefined ? {} : { token }),
+  };
+}
+
+/**
+ * Asks a sender to continue a file from a position rather than start it again.
+ *
+ * The port is the one from the offer, which is what identifies the transfer
+ * being talked about; a passive offer has no port to name, so it sends zero and
+ * the token instead. Nothing is resumed until the sender answers with a
+ * {@link parseDccAccept | `DCC ACCEPT`} — the position it names is the one to
+ * use, since a sender is free to agree to less than was asked for.
+ *
+ * Returns the CTCP parameters, to be wrapped by {@link encodeCtcp}.
+ */
+export function buildDccResume(request: {
+  readonly filename: string;
+  readonly port: number;
+  readonly position: number;
+  readonly token?: string;
+}): string {
+  const name = /[\s"]/.test(request.filename)
+    ? `"${request.filename.replace(/"/g, '')}"`
+    : request.filename;
+  const token = request.token === undefined ? '' : ` ${request.token}`;
+  return `RESUME ${name} ${request.port} ${request.position}${token}`;
+}
