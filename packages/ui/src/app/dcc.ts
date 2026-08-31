@@ -26,6 +26,16 @@ export interface DccDownloadRequest {
   readonly filename: string;
   /** The folder chosen in settings. */
   readonly folder: string;
+  /**
+   * Whether the transfer's socket is TLS, from an `SSEND` offer.
+   *
+   * Carried all the way down because it changes how the socket is opened, and
+   * nothing below can infer it: dialled in the clear, a secure offer connects
+   * and then simply never says anything, which reads as a firewall.
+   */
+  readonly secure?: boolean;
+  /** Whether the sender streams without waiting to be acknowledged (`TSEND`). */
+  readonly turbo?: boolean;
 }
 
 /** Progress of a transfer in flight: bytes received, and the total if known. */

@@ -74,6 +74,8 @@ describe('a busy monitor and the interface around it', () => {
         port: 5000,
         size: 100_000_000,
         passive: false,
+        secure: false,
+        turbo: false,
       },
       at: 1_000,
     });

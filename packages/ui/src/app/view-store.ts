@@ -236,6 +236,15 @@ export interface XdccResponseOutcome {
   readonly error?: string;
   /** Whether the request should stop being waited on. */
   readonly settled: boolean;
+  /**
+   * Whether the bot now holds a transfer for us rather than a queue place.
+   *
+   * The two are undone by different commands — a queue place by `XDCC REMOVE`,
+   * a transfer the bot has opened by `XDCC CANCEL` — and sending the wrong one
+   * leaves the bot holding a slot it will not free until its own timeout, which
+   * is what makes the next request bounce.
+   */
+  readonly awaitingTransfer?: boolean;
 }
 
 /**
@@ -249,7 +258,20 @@ export interface XdccResponseOutcome {
 export function applyXdccResponse(response: XdccResponse): XdccResponseOutcome {
   switch (response.kind) {
     case 'sending':
-      return { status: 'requested', note: 'The bot is starting the transfer.', settled: false };
+      return {
+        status: 'requested',
+        note: 'The bot is starting the transfer.',
+        settled: false,
+        awaitingTransfer: true,
+      };
+
+    case 'awaiting-connection':
+      return {
+        status: 'requested',
+        note: 'The bot is waiting for Marmotter to connect.',
+        settled: false,
+        awaitingTransfer: true,
+      };
 
     case 'queued': {
       const place =
@@ -299,6 +321,16 @@ export function applyXdccResponse(response: XdccResponse): XdccResponseOutcome {
             error: "The bot doesn't have that file any more.",
             settled: true,
           };
+        case 'dcc-timeout':
+          return {
+            status: 'failed',
+            // Not a refusal: the bot opened the transfer and nothing arrived.
+            // What sits between the two machines is the thing to look at, so
+            // the message says that rather than blaming the bot.
+            error:
+              "Marmotter couldn't reach the bot's transfer before it gave up. A firewall or router between you may be blocking it.",
+            settled: true,
+          };
         case 'closed':
           return {
             status: 'failed',
@@ -344,12 +376,21 @@ export interface DccOfferRecord {
    * working as intended, and the two read differently for that reason.
    */
   readonly note?: string;
+  /**
+   * Whether the bot is holding an open transfer for this row rather than a
+   * queue place, which decides how the request is withdrawn.
+   */
+  readonly awaitingTransfer?: boolean;
   /** Where the file was written, once it was. */
   readonly savedPath?: string;
   /** Bytes received so far, while a download is in flight. */
   readonly received?: number;
   /** A passive (reverse) DCC offer, which the receive-only monitor cannot fetch. */
   readonly passive: boolean;
+  /** Whether the transfer's socket is TLS, from an `SSEND` offer. */
+  readonly secure?: boolean;
+  /** Whether the sender streams without waiting to be acknowledged (`TSEND`). */
+  readonly turbo?: boolean;
   /** The address to connect to, for a direct DCC offer. */
   readonly host?: string;
   /** The port to connect to, for a direct DCC offer. */
@@ -610,6 +651,7 @@ export interface ViewState {
       savedPath?: string;
       note?: string;
       filename?: string;
+      awaitingTransfer?: boolean;
     },
   ): void;
   /**
@@ -798,6 +840,8 @@ export const useView = create<ViewState>((set, get) => ({
         port: offer.send.port,
         ...(offer.send.size === undefined ? {} : { size: offer.send.size }),
         passive: offer.send.passive,
+        ...(offer.send.secure ? { secure: true } : {}),
+        ...(offer.send.turbo ? { turbo: true } : {}),
         receivedAt: offer.at,
         status: 'available',
       };
@@ -886,7 +930,7 @@ export const useView = create<ViewState>((set, get) => ({
         // The old note is dropped rather than merged: it described the state
         // this call is replacing, and a stale "position 4" under a failed row
         // would contradict the reason beside it.
-        const { note: _previous, ...rest } = entry;
+        const { note: _previous, awaitingTransfer: _held, ...rest } = entry;
         return {
           ...rest,
           status: patch.status,
@@ -896,6 +940,9 @@ export const useView = create<ViewState>((set, get) => ({
           // A bot does not always send back the name it advertised, and a row
           // asked for by pack number has no name at all until it does.
           ...(patch.filename === undefined ? {} : { filename: patch.filename }),
+          ...(patch.awaitingTransfer === undefined
+            ? {}
+            : { awaitingTransfer: patch.awaitingTransfer }),
         };
       }),
     }));

@@ -35,6 +35,8 @@ describe('a DCC offer', () => {
           port: 5000,
           size: 204800,
           passive: false,
+          secure: false,
+          turbo: false,
         },
       },
     ]);

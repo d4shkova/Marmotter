@@ -84,6 +84,8 @@ export function createDcc(options: DccOptions = {}): DccCapability {
               size: request.size ?? null,
               filename: request.filename,
               folder: request.folder,
+              secure: request.secure ?? false,
+              turbo: request.turbo ?? false,
               transferId,
             },
           });

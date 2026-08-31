@@ -18,6 +18,8 @@ const send: DccSend = {
   port: 5000,
   size: 204800,
   passive: false,
+  secure: false,
+  turbo: false,
 };
 
 type OfferArg = Parameters<ReturnType<typeof useView.getState>['recordDccOffer']>[0];
@@ -520,5 +522,30 @@ describe('a pack asked for by hand', () => {
     expect(useView.getState().dccOffers[0]?.note).toBe('Queued, position 4.');
     useView.getState().setDccOfferStatus(id, { status: 'failed', error: 'Nope.' });
     expect(useView.getState().dccOffers[0]?.note).toBeUndefined();
+  });
+});
+
+describe('what a bot is holding for a row', () => {
+  it('marks a row the bot has opened a transfer for', () => {
+    expect(applyXdccResponse({ kind: 'awaiting-connection', text: '' })).toEqual({
+      status: 'requested',
+      note: 'The bot is waiting for Marmotter to connect.',
+      settled: false,
+      awaitingTransfer: true,
+    });
+    expect(applyXdccResponse({ kind: 'sending', text: '' }).awaitingTransfer).toBe(true);
+  });
+
+  it('reads a transfer that timed out as unreachable, not as a refusal', () => {
+    const outcome = applyXdccResponse({ kind: 'denied', reason: 'dcc-timeout', text: '' });
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toContain('firewall');
+    expect(outcome.settled).toBe(true);
+  });
+
+  it('leaves a queue placement holding no transfer', () => {
+    expect(applyXdccResponse({ kind: 'queued', position: 2, text: '' }).awaitingTransfer).toBe(
+      undefined,
+    );
   });
 });

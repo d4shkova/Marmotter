@@ -58,6 +58,12 @@ pub struct DccDownloadRequest {
     pub size: Option<u64>,
     pub filename: String,
     pub folder: String,
+    /// Whether the transfer's socket is TLS, from an `SSEND` offer.
+    #[serde(default)]
+    pub secure: bool,
+    /// Whether the sender streams without waiting to be acknowledged.
+    #[serde(default)]
+    pub turbo: bool,
     /// Correlates progress events with the row that started the transfer.
     #[serde(rename = "transferId")]
     pub transfer_id: String,
@@ -100,6 +106,8 @@ pub async fn dcc_download_file(
             size: request.size,
             filename: request.filename,
             folder: PathBuf::from(request.folder),
+            secure: request.secure,
+            turbo: request.turbo,
             timeout: DEFAULT_DCC_TIMEOUT,
             cancel: Some(cancel_signal),
         },

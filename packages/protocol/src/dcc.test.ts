@@ -20,6 +20,8 @@ describe('parseDccSend', () => {
       port: 5000,
       size: 204800,
       passive: false,
+      secure: false,
+      turbo: false,
     });
   });
 
@@ -124,5 +126,33 @@ describe('sanitizeDccFilename', () => {
     expect(sanitizeDccFilename('..')).toBe('download');
     expect(sanitizeDccFilename('.')).toBe('download');
     expect(sanitizeDccFilename('/')).toBe('download');
+  });
+});
+
+describe('the send variants', () => {
+  it('marks a secure offer, which is a TLS socket rather than a plain one', () => {
+    const send = offer(`${CTCP}DCC SSEND f 3232235777 5000 1${CTCP}`);
+    expect(send?.secure).toBe(true);
+    expect(send?.turbo).toBe(false);
+  });
+
+  it('marks a turbo offer, where the sender never reads our acknowledgements', () => {
+    const send = offer(`${CTCP}DCC TSEND f 3232235777 5000 1${CTCP}`);
+    expect(send?.turbo).toBe(true);
+    expect(send?.secure).toBe(false);
+  });
+
+  it('reads an offer that is both', () => {
+    expect(offer(`${CTCP}DCC TSSEND f 3232235777 5000 1${CTCP}`)).toMatchObject({
+      secure: true,
+      turbo: true,
+    });
+  });
+
+  it('leaves an ordinary send as neither', () => {
+    expect(offer(`${CTCP}DCC SEND f 3232235777 5000 1${CTCP}`)).toMatchObject({
+      secure: false,
+      turbo: false,
+    });
   });
 });

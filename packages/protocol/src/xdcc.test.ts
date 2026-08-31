@@ -196,3 +196,22 @@ describe('parseXdccRequest', () => {
     expect(parseXdccRequest('xdcc send #123')).toBeUndefined();
   });
 });
+
+describe('a transfer the bot is waiting on', () => {
+  it('reads the reminder that a transfer is sitting there unanswered', () => {
+    expect(
+      parseXdccResponse(
+        '** You have a DCC pending, Set your client to receive the transfer. Type "/MSG [EWG]-[TB-DBi XDCC CANCEL" to abort the transfer. (90 seconds remaining until timeout)',
+      ),
+    ).toMatchObject({ kind: 'awaiting-connection' });
+  });
+
+  it('tells a transfer that timed out apart from a bot that is closed', () => {
+    expect(parseXdccResponse('** Closing Connection: DCC Timeout (180 Sec Timeout)')).toMatchObject(
+      { kind: 'denied', reason: 'dcc-timeout' },
+    );
+    expect(
+      parseXdccResponse('** The Bot Owner has requested that no new connections are made'),
+    ).toMatchObject({ reason: 'closed' });
+  });
+});

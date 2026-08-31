@@ -15,14 +15,17 @@
 //! downloader does not open a listening socket.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
+use tokio_rustls::TlsConnector;
 
 use crate::error::{Result, TransportError};
+use crate::tls::{client_config, Verification};
 
 /// A cancellation signal a caller can trip to abort a download in flight.
 ///
@@ -115,6 +118,22 @@ pub struct DownloadOptions {
     pub size: Option<u64>,
     /// The advertised name. Sanitised again here before anything is written.
     pub filename: String,
+    /// Whether the socket is TLS, from an `SSEND` offer.
+    ///
+    /// The certificate is not verified, and cannot usefully be: the peer is an
+    /// address rather than a name, the certificate is invariably self-signed,
+    /// and there is no authority that would vouch for it. What the handshake
+    /// buys is that the file is not readable in transit — which is the whole of
+    /// what the sender is offering, and is why a receiver that dials such an
+    /// offer in the clear simply hangs until the sender gives up.
+    pub secure: bool,
+    /// Whether the sender is in "turbo" mode, from a `TSEND` offer.
+    ///
+    /// A turbo sender streams without waiting to be acknowledged, and does not
+    /// read its socket. Sending the acknowledgements anyway fills its receive
+    /// window, blocks our write, and stalls a transfer that was working, so
+    /// they are omitted for these.
+    pub turbo: bool,
     /// The folder chosen in settings.
     pub folder: PathBuf,
     /// Connect and per-read timeout.
@@ -177,16 +196,46 @@ pub async fn download(
             .map_err(|error| TransportError::Network(format!("could not connect to {address}: {error}")))?,
     };
 
-    match stream_to_file(
-        stream,
-        &target,
-        options.size,
-        options.timeout,
-        &mut cancel,
-        &mut on_progress,
-    )
-    .await
-    {
+    // A secure offer is a TLS socket. The handshake is bounded by the same
+    // connect timeout: a sender that opened a plain socket and called it SSEND
+    // would otherwise leave us waiting on a `ServerHello` that is never coming.
+    let result = if options.secure {
+        let connector = TlsConnector::from(Arc::new(client_config(&Verification::None, None)?));
+        let server_name = server_name_for(&options.host)?;
+        let tls = tokio::select! {
+            biased;
+            () = cancelled(&mut cancel) => return Err(TransportError::Cancelled),
+            shaken = tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(server_name, stream)) => shaken
+                .map_err(|_| TransportError::Network(format!(
+                    "the encrypted transfer from {address} did not start within {}s",
+                    CONNECT_TIMEOUT.as_secs()
+                )))?
+                .map_err(|error| TransportError::Tls(error.to_string()))?,
+        };
+        stream_to_file(
+            tls,
+            &target,
+            options.size,
+            options.timeout,
+            options.turbo,
+            &mut cancel,
+            &mut on_progress,
+        )
+        .await
+    } else {
+        stream_to_file(
+            stream,
+            &target,
+            options.size,
+            options.timeout,
+            options.turbo,
+            &mut cancel,
+            &mut on_progress,
+        )
+        .await
+    };
+
+    match result {
         Ok(()) => Ok(target),
         Err(error) => {
             // A half-written file is worse than none: it looks complete in the
@@ -198,12 +247,29 @@ pub async fn download(
     }
 }
 
+/// The name a DCC peer is dialled under, which is an address rather than a host.
+///
+/// The certificate is not checked against it — the verifier accepts anything —
+/// but rustls still needs a name for the handshake, and an IP literal has to be
+/// offered as one rather than as a hostname or the connection is refused before
+/// it starts.
+fn server_name_for(host: &str) -> Result<rustls_pki_types::ServerName<'static>> {
+    rustls_pki_types::ServerName::try_from(host.to_owned())
+        .map_err(|_| TransportError::Tls(format!("`{host}` is not a valid peer address")))
+}
+
 /// Reads the socket into the file, acknowledging bytes as DCC expects.
-async fn stream_to_file(
-    mut stream: TcpStream,
+///
+/// Generic over the stream so a plain socket and a TLS one go through exactly
+/// the same loop: the only thing encryption changes is what the bytes travelled
+/// inside, and having two copies of the read-and-write path is how the two
+/// quietly stop behaving alike.
+async fn stream_to_file<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
     target: &Path,
     size: Option<u64>,
     timeout: Duration,
+    turbo: bool,
     cancel: &mut Option<CancelSignal>,
     on_progress: &mut impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
@@ -245,9 +311,13 @@ async fn stream_to_file(
         // The classic DCC acknowledgement: the total received so far, as a
         // four-byte big-endian value. Some senders ignore it and some wait for
         // it, so it is sent best-effort — a sender that has closed its read side
-        // must not fail an otherwise complete transfer.
-        let ack = (received as u32).to_be_bytes();
-        let _ = stream.write_all(&ack).await;
+        // must not fail an otherwise complete transfer. A turbo sender is the
+        // one case where sending it is actively harmful: it never reads, so the
+        // acknowledgements fill its window until our write blocks.
+        if !turbo {
+            let ack = (received as u32).to_be_bytes();
+            let _ = stream.write_all(&ack).await;
+        }
 
         if received - reported >= PROGRESS_STEP {
             reported = received;
@@ -371,6 +441,8 @@ mod tests {
                 filename: "photos.dat".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -397,6 +469,8 @@ mod tests {
                 filename: "photos.dat".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |received, total| updates.push((received, total)),
@@ -424,6 +498,8 @@ mod tests {
                 filename: "clip.bin".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -447,6 +523,8 @@ mod tests {
                 filename: "big.bin".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -456,6 +534,113 @@ mod tests {
         assert!(result.is_err());
         // The partial file is cleaned up rather than left looking complete.
         assert!(!folder.path().join("big.bin").exists());
+    }
+
+    /// A sender that never reads, and reports whatever the client wrote to it.
+    ///
+    /// This is a turbo sender: it streams the file and does not touch its read
+    /// side until the transfer is over, which is exactly the condition under
+    /// which acknowledging every chunk is the thing that stalls a download.
+    async fn serve_without_reading(bytes: Vec<u8>) -> (u16, tokio::sync::oneshot::Receiver<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (sent, received) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(&bytes).await;
+                let _ = socket.flush().await;
+                // Only now look at what came back the other way.
+                let mut scratch = [0_u8; 1024];
+                let read =
+                    tokio::time::timeout(Duration::from_millis(250), socket.read(&mut scratch))
+                        .await
+                        .unwrap_or(Ok(0))
+                        .unwrap_or(0);
+                let _ = sent.send(read);
+            }
+        });
+        (port, received)
+    }
+
+    #[tokio::test]
+    async fn a_turbo_transfer_sends_no_acknowledgements() {
+        let folder = tempfile::tempdir().unwrap();
+        let payload = b"marmot photographs".to_vec();
+        let (port, acknowledged) = serve_without_reading(payload.clone()).await;
+
+        let path = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(payload.len() as u64),
+                filename: "photos.dat".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: false,
+                turbo: true,
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+        assert_eq!(acknowledged.await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_transfer_acknowledges_what_it_received() {
+        let folder = tempfile::tempdir().unwrap();
+        let payload = b"marmot photographs".to_vec();
+        let (port, acknowledged) = serve_without_reading(payload.clone()).await;
+
+        download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(payload.len() as u64),
+                filename: "photos.dat".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: false,
+                turbo: false,
+                timeout: Duration::from_secs(5),
+            },
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        // Four bytes: the running total, big-endian, as DCC has always spelt it.
+        assert_eq!(acknowledged.await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn a_secure_offer_is_not_dialled_in_the_clear() {
+        // A plain listener answering an SSEND offer: the handshake cannot
+        // complete, and the transfer has to fail rather than sit there until
+        // the sender's own timeout gives up on it.
+        let folder = tempfile::tempdir().unwrap();
+        let port = serve(b"not a ServerHello".to_vec()).await;
+
+        let result = download(
+            DownloadOptions {
+                host: "127.0.0.1".to_owned(),
+                port,
+                size: Some(4),
+                filename: "x.bin".to_owned(),
+                folder: folder.path().to_path_buf(),
+                cancel: None,
+                secure: true,
+                turbo: false,
+                timeout: Duration::from_secs(2),
+            },
+            |_, _| {},
+        )
+        .await;
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -469,6 +654,8 @@ mod tests {
                 filename: "x".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(1),
             },
             |_, _| {},
@@ -491,6 +678,8 @@ mod tests {
                 filename: "dup.txt".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -526,6 +715,8 @@ mod tests {
                 filename: "../escape.txt".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: None,
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(5),
             },
             |_, _| {},
@@ -567,6 +758,8 @@ mod tests {
                 filename: "big.bin".to_owned(),
                 folder: folder.path().to_path_buf(),
                 cancel: Some(signal),
+                secure: false,
+                turbo: false,
                 timeout: Duration::from_secs(30),
             },
             |_, _| {},

@@ -38,10 +38,44 @@ export interface DccSend {
   readonly token?: string;
   /** Whether this is a passive (reverse) offer, which cannot be downloaded. */
   readonly passive: boolean;
+  /**
+   * Whether the transfer itself is TLS, from an `SSEND` offer.
+   *
+   * The socket is a TLS connection rather than a plain one, so a receiver that
+   * dials it in the clear connects, sends nothing the sender recognises, and
+   * both ends sit there until the sender's timeout — which looks exactly like a
+   * firewall and is not one. It is carried here so the downloader can bring up
+   * the handshake instead of guessing from the port.
+   */
+  readonly secure: boolean;
+  /**
+   * Whether the sender is in "turbo" mode, from a `TSEND` offer.
+   *
+   * Turbo means the sender streams without waiting for the four-byte
+   * acknowledgements ordinary DCC expects, and does not read its socket at all.
+   * Acknowledging anyway is not merely wasted: the unread bytes fill the send
+   * buffer and the write blocks, stalling a transfer that was working.
+   */
+  readonly turbo: boolean;
 }
 
-/** The `DCC` subcommands that advertise a file, uppercased. */
-const SEND_SUBCOMMANDS: ReadonlySet<string> = new Set(['SEND', 'TSEND', 'SSEND']);
+/**
+ * The `DCC` subcommands that advertise a file, and what each one means.
+ *
+ * `SEND` is the ordinary one. The letters in front of it are the two variants
+ * clients have added since: `S` for a TLS socket, `T` for "turbo", where the
+ * sender streams without waiting to be acknowledged. Both change how the
+ * receiving socket has to be driven, so they are read here rather than
+ * flattened into "it is a send" — which is what made a secure offer look like
+ * an unreachable one.
+ */
+const SEND_SUBCOMMANDS: ReadonlyMap<string, { secure: boolean; turbo: boolean }> = new Map([
+  ['SEND', { secure: false, turbo: false }],
+  ['SSEND', { secure: true, turbo: false }],
+  ['TSEND', { secure: false, turbo: true }],
+  ['TSSEND', { secure: true, turbo: true }],
+  ['STSEND', { secure: true, turbo: true }],
+]);
 
 /** The largest value the integer address form can hold: an unsigned 32-bit int. */
 const MAX_IPV4_INTEGER = 0xffffffff;
@@ -134,7 +168,8 @@ export function parseDccSend(ctcp: CtcpMessage): DccSend | undefined {
     return undefined;
   }
   const subcommand = ctcp.params.slice(0, space).toUpperCase();
-  if (!SEND_SUBCOMMANDS.has(subcommand)) {
+  const variant = SEND_SUBCOMMANDS.get(subcommand);
+  if (variant === undefined) {
     return undefined;
   }
 
@@ -181,6 +216,8 @@ export function parseDccSend(ctcp: CtcpMessage): DccSend | undefined {
     ...(size === undefined ? {} : { size }),
     ...(token === undefined ? {} : { token }),
     passive,
+    secure: variant.secure,
+    turbo: variant.turbo,
   };
 }
 

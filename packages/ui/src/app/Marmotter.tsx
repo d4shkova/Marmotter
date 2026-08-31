@@ -1474,7 +1474,14 @@ export function Marmotter({
   const fetchIntoFolder = useCallback(
     (
       offerId: string,
-      source: { host: string; port: number; filename: string; size?: number },
+      source: {
+        host: string;
+        port: number;
+        filename: string;
+        size?: number;
+        secure?: boolean;
+        turbo?: boolean;
+      },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
       if (dcc === undefined || folder === undefined) {
@@ -1500,6 +1507,8 @@ export function Marmotter({
           filename: source.filename,
           folder,
           ...(source.size === undefined ? {} : { size: source.size }),
+          ...(source.secure === undefined ? {} : { secure: source.secure }),
+          ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
@@ -1599,12 +1608,28 @@ export function Marmotter({
    */
   const cancelPackRequest = useCallback(
     (offer: DccOfferRecord): void => {
-      if (offer.kind !== 'xdcc' || offer.status !== 'requested' || offer.pack === undefined) {
+      // Only a row the bot is still holding something for. A saved or
+      // never-started one has nothing to withdraw, and cancelling against it
+      // would abort whatever that bot is doing for us next.
+      if (offer.kind !== 'xdcc' || offer.pack === undefined) {
         return;
       }
+      if (offer.status !== 'requested' && offer.status !== 'downloading') {
+        return;
+      }
+      // Which command depends on what the bot is actually holding. A queue place
+      // comes out with `XDCC REMOVE`; a transfer it has already opened for us
+      // needs `XDCC CANCEL`, which is what the bot's own reminder tells you to
+      // type. Getting it wrong leaves the slot held until the bot's timeout,
+      // and every request made in the meantime bounces off it.
+      const open = offer.awaitingTransfer === true || offer.status === 'downloading';
       registry
         .sessionOf(offer.networkId)
-        ?.send(`PRIVMSG ${offer.from} :XDCC REMOVE #${offer.pack}`);
+        ?.send(
+          open
+            ? `PRIVMSG ${offer.from} :XDCC CANCEL`
+            : `PRIVMSG ${offer.from} :XDCC REMOVE #${offer.pack}`,
+        );
     },
     [registry],
   );
@@ -1832,6 +1857,9 @@ export function Marmotter({
       status: outcome.status,
       ...(outcome.error === undefined ? {} : { error: outcome.error }),
       ...(outcome.note === undefined ? {} : { note: outcome.note }),
+      ...(outcome.awaitingTransfer === undefined
+        ? {}
+        : { awaitingTransfer: outcome.awaitingTransfer }),
     });
     if (outcome.settled) {
       forgetPendingRequest(targetId);
@@ -1865,6 +1893,8 @@ export function Marmotter({
         port: send.port,
         filename: send.filename,
         ...(send.size === undefined ? {} : { size: send.size }),
+        secure: send.secure,
+        turbo: send.turbo,
       });
     };
 
@@ -1931,6 +1961,13 @@ export function Marmotter({
           toast(`Can't reach ${offer.from} to request that file.`, 'error');
           return;
         }
+        // Asking again for a pack whose transfer the bot already opened and we
+        // never took is answered with "you have a DCC pending", not with a new
+        // transfer: the bot holds that one until its own timeout. Withdrawing it
+        // first is what makes Retry actually retry.
+        if (offer.awaitingTransfer === true) {
+          session.send(`PRIVMSG ${offer.from} :XDCC CANCEL`);
+        }
         pendingXdcc.current.set(pendingKey(offer.networkId, offer.from), [
           ...(pendingXdcc.current.get(pendingKey(offer.networkId, offer.from)) ?? []),
           offer.id,
@@ -1955,6 +1992,8 @@ export function Marmotter({
         port: offer.port,
         filename: offer.filename,
         ...(offer.size === undefined ? {} : { size: offer.size }),
+        ...(offer.secure === undefined ? {} : { secure: offer.secure }),
+        ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
     [announceDownload, registry, toast, fetchIntoFolder, pendingKey],

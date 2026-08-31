@@ -129,6 +129,14 @@ export type XdccResponseKind =
   | 'queued'
   /** The bot is about to open the transfer. A `DCC SEND` follows. */
   | 'sending'
+  /**
+   * The bot has opened its socket and is waiting for us to connect to it.
+   *
+   * Distinct from `sending` because it is the bot saying the offer is on the
+   * table and unanswered — the state a transfer sits in while nothing is
+   * happening, and the one that ends in a timeout if nothing does.
+   */
+  | 'awaiting-connection'
   /** The request was turned down. See {@link XdccResponse.reason}. */
   | 'denied'
   /** A queued request was taken out of the queue, by us or by the bot. */
@@ -148,6 +156,14 @@ export type XdccDenialReason =
   | 'no-such-pack'
   /** The bot is not accepting requests at the moment. */
   | 'closed'
+  /**
+   * The bot gave up waiting for us to connect to the transfer it opened.
+   *
+   * Not a refusal at all, which is why it is worth telling apart from one: the
+   * bot did everything right and the connection never arrived, so the thing to
+   * look at is what sits between the two machines.
+   */
+  | 'dcc-timeout'
   /** Refused, for a reason we do not have a specific translation for. */
   | 'other';
 
@@ -188,6 +204,7 @@ const QUEUE_WAIT = /estimated\s+(?:wait|time)(?:\s+remaining)?\s*[:\s]\s*([^.,;]
  * says queued.
  */
 const DENIALS: readonly (readonly [XdccDenialReason, RegExp])[] = [
+  ['dcc-timeout', /dcc\s+timeout|transfer\s+timed?\s*out/i],
   [
     'already-queued',
     /already\s+(?:have\s+(?:that|this)\s+\w+\s+)?queued|already\s+requested|already\s+queued\s+for/i,
@@ -216,6 +233,7 @@ const DENIALS: readonly (readonly [XdccDenialReason, RegExp])[] = [
 ];
 
 const SENDING = /sending\s+you\b|starting\s+(?:the\s+)?transfer|transfer\s+starting/i;
+const AWAITING = /you\s+have\s+a\s+dcc\s+pending|set\s+your\s+client\s+to\s+receive/i;
 const QUEUED =
   /(?:added\s+you|placed\s+you|you\s+(?:are|were)\s+added)\b[^.]*queue|queue[^.]*position|position[^.]*queue/i;
 const DEQUEUED =
@@ -268,6 +286,13 @@ export function parseXdccResponse(text: string): XdccResponse | undefined {
         return { kind: 'denied', reason, ...withPack, text: clean };
       }
     }
+  }
+
+  // Read before the send confirmation: a reminder that a transfer is sitting
+  // there unanswered often says "sending" somewhere in the same breath, and the
+  // two mean quite different things to a row that is waiting.
+  if (AWAITING.test(clean)) {
+    return { kind: 'awaiting-connection', ...withPack, text: clean };
   }
 
   if (SENDING.test(clean)) {
