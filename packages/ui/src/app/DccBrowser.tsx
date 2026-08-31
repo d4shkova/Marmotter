@@ -3,6 +3,7 @@ import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
+import { TextField } from '../primitives/TextField.js';
 import { Table, type Column } from '../primitives/Table.js';
 import { useBreakpoint } from './AppShell.js';
 import { formatAge, formatBytes } from './dcc.js';
@@ -105,6 +106,14 @@ export interface DccBrowserProps {
    * never answered pinned to the top with nothing on it at all.
    */
   readonly onDismiss: (offer: DccOfferRecord) => void;
+  /**
+   * Asks for a pack from a line pasted out of an XDCC index.
+   *
+   * Takes the text as typed rather than a parsed request, because what a person
+   * has on their clipboard is a whole line off a web page — a link, a message,
+   * or both — and deciding what it means is the client's job, not theirs.
+   */
+  readonly onRequestPack?: (text: string) => void;
   /** Injectable for tests. Left out, the clock is sampled on a slow timer. */
   readonly now?: number;
   /**
@@ -136,6 +145,7 @@ export function DccBrowser({
   onReveal,
   onClear,
   onDismiss,
+  onRequestPack,
   now,
   pageSize = CATALOGUE_PAGE,
   className,
@@ -143,6 +153,7 @@ export function DccBrowser({
   const ticking = useCoarseNow();
   const at = now ?? ticking;
   const [query, setQuery] = useState('');
+  const [pasted, setPasted] = useState('');
   const [sort, setSort] = useState<{ columnId: string; direction: 'asc' | 'desc' }>({
     columnId: 'received',
     direction: 'desc',
@@ -298,6 +309,35 @@ export function DccBrowser({
             Clear
           </Button>
         </div>
+
+        {onRequestPack === undefined ? null : (
+          // A whole line off an index site, taken as it comes. Sitting beside
+          // the search rather than behind a menu because for a lot of people it
+          // is the way in: they arrive holding the link, not browsing a channel.
+          <form
+            className="flex items-end gap-2 border-t border-[var(--separator)] px-4 py-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (pasted.trim() === '') {
+                return;
+              }
+              onRequestPack(pasted);
+              setPasted('');
+            }}
+          >
+            <TextField
+              label="Paste a pack request"
+              labelHidden
+              className="flex-1"
+              placeholder="irc://irc.example.net/files  /msg bot xdcc send #42"
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+            />
+            <Button type="submit" size="small" variant="secondary" disabled={pasted.trim() === ''}>
+              Request
+            </Button>
+          </form>
+        )}
 
         {tracked.length === 0 ? null : (
           <section
@@ -523,10 +563,23 @@ function DownloadCell({
   }
   switch (offer.status) {
     case 'requested':
+      // The bot's own word on where the request stands, when it gave one — a
+      // queue position is the difference between a wait and a dead end, and it
+      // is the only thing that makes the spinner mean anything.
       return (
-        <Button size="small" variant="secondary" busy disabled>
-          Requested
-        </Button>
+        <div className="flex flex-col items-end gap-0.5">
+          <Button size="small" variant="secondary" busy disabled>
+            {offer.note === undefined ? 'Requested' : 'Queued'}
+          </Button>
+          {offer.note === undefined ? null : (
+            <span
+              className="max-w-40 truncate text-caption-2 text-[var(--label-tertiary)]"
+              title={offer.note}
+            >
+              {offer.note}
+            </span>
+          )}
+        </div>
       );
     case 'downloading':
       return (

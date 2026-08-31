@@ -16,6 +16,7 @@ import {
   type CtcpPolicy,
   type DccSend,
   type XdccPack,
+  type XdccResponse,
 } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import { DEFAULT_THEME, type ThemeId } from '../themes.js';
@@ -180,6 +181,137 @@ export function classifyDccReoffer(
 }
 
 /**
+ * Which connected network an `irc://` link is pointing at.
+ *
+ * A pasted request carries the server it came from, and the person pasting it
+ * is usually connected to several. Matching the link to a network rather than
+ * assuming the one on screen is what stops a request going to a bot on the
+ * wrong network, where the nick means somebody else entirely.
+ *
+ * Exact host first, then either name being a suffix of the other, so a link to
+ * `abc.xyz` finds the profile connected to `irc.abc.xyz` — the same server
+ * under the name the round-robin answers to. Generic over the profile so this
+ * stays a pure comparison with nothing imported to test it against.
+ */
+export function networkForHost<
+  P extends { readonly servers: readonly { readonly host: string }[] },
+>(profiles: ReadonlyMap<string, P>, host: string): string | undefined {
+  const wanted = host.trim().toLowerCase();
+  if (wanted === '') {
+    return undefined;
+  }
+  const hosts = (profile: P): string[] =>
+    profile.servers.map((server) => server.host.toLowerCase());
+
+  for (const [id, profile] of profiles) {
+    if (hosts(profile).includes(wanted)) {
+      return id;
+    }
+  }
+  for (const [id, profile] of profiles) {
+    if (
+      hosts(profile).some((known) => known.endsWith(`.${wanted}`) || wanted.endsWith(`.${known}`))
+    ) {
+      return id;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * What a bot's answer to a pack request means for the row that is waiting.
+ *
+ * Pure, and separate from the event plumbing, because this is the whole of the
+ * translation the client exists to do: a bot says "** XDCC SEND denied, you
+ * must be on a known channel", and the row has to say what to do about it in
+ * words that assume nothing. The `settled` flag is the other half — a refusal
+ * ends the wait, a queue position does not, and getting that backwards either
+ * strands a request or discards one that was still coming.
+ */
+export interface XdccResponseOutcome {
+  readonly status: DccStatus;
+  /** A short line under a row still waiting, e.g. `Queued, position 4`. */
+  readonly note?: string;
+  /** Why it will not arrive, when it will not. */
+  readonly error?: string;
+  /** Whether the request should stop being waited on. */
+  readonly settled: boolean;
+}
+
+/**
+ * Turns a serving bot's notice into the state of the row that asked for it.
+ *
+ * Two of the answers deliberately leave the row waiting. A queue position is
+ * good news — the request was taken — and "you already have that queued" means
+ * the same thing said less kindly: in both cases the file is still coming, and
+ * failing the row would throw away a request the bot is still holding.
+ */
+export function applyXdccResponse(response: XdccResponse): XdccResponseOutcome {
+  switch (response.kind) {
+    case 'sending':
+      return { status: 'requested', note: 'The bot is starting the transfer.', settled: false };
+
+    case 'queued': {
+      const place =
+        response.position === undefined
+          ? 'Waiting in the queue'
+          : `Queued, position ${response.position}`;
+      const wait = response.waitText === undefined ? '' : ` · about ${response.waitText}`;
+      return { status: 'requested', note: `${place}${wait}.`, settled: false };
+    }
+
+    case 'dequeued':
+      return {
+        status: 'failed',
+        error: 'The bot dropped this from its queue.',
+        settled: true,
+      };
+
+    case 'denied':
+      switch (response.reason) {
+        case 'already-queued':
+          return {
+            status: 'requested',
+            note: "Already in the bot's queue.",
+            settled: false,
+          };
+        case 'not-in-channel':
+          return {
+            status: 'failed',
+            error: "Join one of the bot's channels first — it only sends files to people there.",
+            settled: true,
+          };
+        case 'slots-full':
+          return {
+            status: 'failed',
+            error: "The bot's queue is full. Try again in a few minutes.",
+            settled: true,
+          };
+        case 'transfer-limit':
+          return {
+            status: 'failed',
+            error: 'The bot allows you only so many downloads at once. Finish one and ask again.',
+            settled: true,
+          };
+        case 'no-such-pack':
+          return {
+            status: 'failed',
+            error: "The bot doesn't have that file any more.",
+            settled: true,
+          };
+        case 'closed':
+          return {
+            status: 'failed',
+            error: "The bot isn't taking requests at the moment.",
+            settled: true,
+          };
+        default:
+          return { status: 'failed', error: 'The bot turned down the request.', settled: true };
+      }
+  }
+}
+
+/**
  * A file the monitor has seen advertised, over a direct `DCC SEND` or an XDCC
  * pack listing.
  *
@@ -205,6 +337,13 @@ export interface DccOfferRecord {
   readonly status: DccStatus;
   /** Why a download failed, in plain words, when it did. */
   readonly error?: string;
+  /**
+   * What the bot last said about a request still waiting, in plain words.
+   *
+   * Separate from `error` because it is not one: a queue position is the row
+   * working as intended, and the two read differently for that reason.
+   */
+  readonly note?: string;
   /** Where the file was written, once it was. */
   readonly savedPath?: string;
   /** Bytes received so far, while a download is in flight. */
@@ -441,10 +580,37 @@ export interface ViewState {
     readonly pack: XdccPack;
     readonly at: number;
   }): void;
-  /** Updates a single offer's transfer state. */
+  /**
+   * Updates a single offer's transfer state.
+   *
+   * `note` is replaced on every call rather than merged: it says what the row
+   * is waiting on now, so a queue position from a minute ago must not survive
+   * the state that made it true.
+   */
+  /**
+   * Lists a pack somebody asked for by hand — pasted from an index site rather
+   * than seen advertised — and returns the row's id.
+   *
+   * Returns the id of the row already listing that pack where there is one, so
+   * pasting a request for a file the bot has advertised acts on the row that is
+   * already there. Undefined when the monitor is off, like the other two.
+   */
+  recordXdccRequest(request: {
+    readonly networkId: string;
+    readonly networkName: string;
+    readonly from: string;
+    readonly pack: number;
+    readonly at: number;
+  }): string | undefined;
   setDccOfferStatus(
     id: string,
-    patch: { status: DccStatus; error?: string; savedPath?: string },
+    patch: {
+      status: DccStatus;
+      error?: string;
+      savedPath?: string;
+      note?: string;
+      filename?: string;
+    },
   ): void;
   /**
    * Records how far a download has got. Moves the row to downloading and fills
@@ -680,18 +846,58 @@ export const useView = create<ViewState>((set, get) => ({
     });
   },
 
+  recordXdccRequest(request) {
+    const { userOptions, dccActive } = get();
+    if (!userOptions.dccMonitorEnabled || !dccActive) {
+      return undefined;
+    }
+    const id = xdccOfferId(request);
+    const existing = get().dccOffers.find((entry) => entry.id === id);
+    if (existing !== undefined) {
+      return id;
+    }
+    // No advertisement to take a name or a size from — the whole point of a
+    // pasted request is that the catalogue line was read somewhere else. The
+    // pack number stands in until the bot answers with the real name, which is
+    // what the download then fills in.
+    const record: DccOfferRecord = {
+      id,
+      kind: 'xdcc',
+      networkId: request.networkId,
+      networkName: request.networkName,
+      from: request.from,
+      target: request.from,
+      filename: `Pack #${request.pack}`,
+      passive: false,
+      pack: request.pack,
+      receivedAt: request.at,
+      status: 'available',
+    };
+    set((current) => ({ dccOffers: [...current.dccOffers, record] }));
+    return id;
+  },
+
   setDccOfferStatus(id, patch) {
     set((current) => ({
-      dccOffers: current.dccOffers.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              status: patch.status,
-              ...(patch.error === undefined ? {} : { error: patch.error }),
-              ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
-            }
-          : entry,
-      ),
+      dccOffers: current.dccOffers.map((entry) => {
+        if (entry.id !== id) {
+          return entry;
+        }
+        // The old note is dropped rather than merged: it described the state
+        // this call is replacing, and a stale "position 4" under a failed row
+        // would contradict the reason beside it.
+        const { note: _previous, ...rest } = entry;
+        return {
+          ...rest,
+          status: patch.status,
+          ...(patch.error === undefined ? {} : { error: patch.error }),
+          ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
+          ...(patch.note === undefined ? {} : { note: patch.note }),
+          // A bot does not always send back the name it advertised, and a row
+          // asked for by pack number has no name at all until it does.
+          ...(patch.filename === undefined ? {} : { filename: patch.filename }),
+        };
+      }),
     }));
   },
 

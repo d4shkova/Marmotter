@@ -42,7 +42,9 @@ import {
   parseDccSend,
   type DccSend,
   parseXdccAnnounce,
+  parseXdccResponse,
   type XdccPack,
+  type XdccResponse,
   parseStandardReply,
   parseUserModes,
   sameTarget,
@@ -123,6 +125,20 @@ export type Effect =
       readonly from: string;
       readonly target: string;
       readonly pack: XdccPack;
+    }
+  /**
+   * A serving bot answered an `XDCC SEND` with a notice — a queue position, a
+   * refusal, or word that it is about to send. Raised so a requested row can say
+   * where it stands instead of spinning until a file happens to arrive.
+   *
+   * Raised for any notice that reads as one; whether we actually asked this bot
+   * for anything is the file monitor's to know, not the reducer's.
+   */
+  | {
+      readonly kind: 'xdcc-response';
+      readonly from: string;
+      readonly target: string;
+      readonly response: XdccResponse;
     };
 
 export interface ReduceResult {
@@ -1041,6 +1057,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         const pack = parseXdccAnnounce(body);
         if (pack !== undefined) {
           effects.push({ kind: 'xdcc-offer', from: sender, target: conversation, pack });
+        }
+      }
+
+      // A notice from a bot may instead be its answer to a pack we asked for.
+      // Only notices: a catalogue line is a message, but iroffer and everything
+      // modelled on it replies to `XDCC SEND` with a NOTICE, so looking no
+      // further keeps the parse off the channel traffic that is merely chat.
+      if (action === undefined && msg.command === 'NOTICE') {
+        const response = parseXdccResponse(body);
+        if (response !== undefined) {
+          effects.push({ kind: 'xdcc-response', from: sender, target: conversation, response });
         }
       }
 

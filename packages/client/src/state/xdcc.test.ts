@@ -67,3 +67,35 @@ describe('an XDCC advertisement', () => {
     expect(xdccEffects(line)).toEqual([]);
   });
 });
+
+/** Only the answers a bot gave to a request. */
+const xdccResponses = (line: string) =>
+  feed(registeredSession(), [line], context()).effects.filter(
+    (effect) => effect.kind === 'xdcc-response',
+  );
+
+describe("a serving bot's answer to a request", () => {
+  it('raises a queue placement, with the position it named', () => {
+    const line =
+      ':bot!b@host NOTICE marmot :** All slots full, Added you to the main queue for pack 5 in position 3. Estimated wait: 8m.';
+    expect(xdccResponses(line)[0]).toMatchObject({
+      kind: 'xdcc-response',
+      from: 'bot',
+      response: { kind: 'queued', pack: 5, position: 3, waitText: '8m' },
+    });
+  });
+
+  it('raises a refusal with the reason', () => {
+    const line = ':bot!b@host NOTICE marmot :** Denied, You must be on a known channel';
+    expect(xdccResponses(line)[0]).toMatchObject({
+      response: { kind: 'denied', reason: 'not-in-channel' },
+    });
+  });
+
+  it('leaves ordinary channel chatter alone', () => {
+    expect(xdccResponses(':someone!s@host PRIVMSG #chat :sending you the link in a sec')).toEqual(
+      [],
+    );
+    expect(xdccResponses(':bot!b@host NOTICE #packlist :type @find to search')).toEqual([]);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseHumanSize, parseXdccAnnounce } from './xdcc.js';
+import { parseHumanSize, parseXdccAnnounce, parseXdccRequest, parseXdccResponse } from './xdcc.js';
 
 describe('parseXdccAnnounce', () => {
   it('parses a standard advertisement', () => {
@@ -78,5 +78,121 @@ describe('parseHumanSize', () => {
   it('is undefined for nonsense', () => {
     expect(parseHumanSize('big')).toBeUndefined();
     expect(parseHumanSize('')).toBeUndefined();
+  });
+});
+
+describe('parseXdccResponse', () => {
+  it('reads a queue placement with its position and wait', () => {
+    expect(
+      parseXdccResponse(
+        '** All slots full, Added you to the main queue for pack 123 in position 4. Estimated wait: 10m.',
+      ),
+    ).toEqual({
+      kind: 'queued',
+      pack: 123,
+      position: 4,
+      waitText: '10m',
+      text: 'All slots full, Added you to the main queue for pack 123 in position 4. Estimated wait: 10m.',
+    });
+  });
+
+  it('reads a send confirmation', () => {
+    const answer = parseXdccResponse('** Sending you pack #70 ("thing.mkv"), which is 2.2GB.');
+    expect(answer?.kind).toBe('sending');
+    expect(answer?.pack).toBe(70);
+  });
+
+  it('does not mistake "already queued" for an acceptance', () => {
+    const answer = parseXdccResponse('** You already have that item queued, Try Again Later');
+    expect(answer?.kind).toBe('denied');
+    expect(answer?.reason).toBe('already-queued');
+  });
+
+  it('reads the channel requirement, even when the bot wraps it in a disconnect', () => {
+    const answer = parseXdccResponse(
+      '** Closing Connection: You must be on a known channel to request a pack',
+    );
+    expect(answer?.kind).toBe('denied');
+    expect(answer?.reason).toBe('not-in-channel');
+  });
+
+  it('reads a bad pack number', () => {
+    expect(parseXdccResponse('** Invalid Pack Number, Try Again')?.reason).toBe('no-such-pack');
+  });
+
+  it('reads a per-user transfer limit', () => {
+    expect(parseXdccResponse('** Denied, You already have 1 transfer running')?.reason).toBe(
+      'transfer-limit',
+    );
+  });
+
+  it('reads a full queue as a refusal when no position was given', () => {
+    expect(
+      parseXdccResponse('** All Slots Full, Main queue is full, try again later')?.reason,
+    ).toBe('slots-full');
+  });
+
+  it('reads a bot that has closed its doors', () => {
+    expect(
+      parseXdccResponse('** The Bot Owner has requested that no new connections are made'),
+    ).toMatchObject({ kind: 'denied', reason: 'closed' });
+  });
+
+  it('reads a removal from the queue', () => {
+    expect(parseXdccResponse('** Removed you from the queue for pack #123')).toMatchObject({
+      kind: 'dequeued',
+      pack: 123,
+    });
+  });
+
+  it('sees through mIRC colour codes', () => {
+    expect(parseXdccResponse('\x0304**\x03 Sending you pack #5')?.kind).toBe('sending');
+  });
+
+  it('is undefined for a notice that says nothing it understands', () => {
+    expect(parseXdccResponse('** Welcome to the pack list, type @find to search')).toBeUndefined();
+    expect(parseXdccResponse('hello there')).toBeUndefined();
+  });
+});
+
+describe('parseXdccRequest', () => {
+  it('reads the line a search site hands you', () => {
+    expect(parseXdccRequest('/msg bob xdcc send #123')).toEqual({ nick: 'bob', pack: 123 });
+  });
+
+  it('reads it without the slash, the hash, or the msg', () => {
+    expect(parseXdccRequest('msg bob XDCC SEND 123')).toEqual({ nick: 'bob', pack: 123 });
+    expect(parseXdccRequest('bob xdcc send #123')).toEqual({ nick: 'bob', pack: 123 });
+  });
+
+  it('reads a link and a message together', () => {
+    expect(parseXdccRequest("irc://irc.abc.xyz/cool-stuff '/msg bob xdcc send #123'")).toEqual({
+      nick: 'bob',
+      pack: 123,
+      host: 'irc.abc.xyz',
+      channel: '#cool-stuff',
+    });
+  });
+
+  it('reads the port, the TLS scheme and an escaped channel', () => {
+    expect(parseXdccRequest('ircs://irc.abc.xyz:6697/%23warez /msg bob xdcc send #7')).toEqual({
+      nick: 'bob',
+      pack: 7,
+      host: 'irc.abc.xyz',
+      port: 6697,
+      tls: true,
+      channel: '#warez',
+    });
+  });
+
+  it('treats the needssl flag as TLS', () => {
+    expect(parseXdccRequest('irc://irc.abc.xyz/chan,needssl /msg bob xdcc send #7')?.tls).toBe(
+      true,
+    );
+  });
+
+  it('is undefined without a bot and a pack', () => {
+    expect(parseXdccRequest('irc://irc.abc.xyz/cool-stuff')).toBeUndefined();
+    expect(parseXdccRequest('xdcc send #123')).toBeUndefined();
   });
 });

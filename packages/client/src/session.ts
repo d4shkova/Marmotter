@@ -17,6 +17,7 @@ import {
   type CryptoProvider,
   type DccSend,
   type XdccPack,
+  type XdccResponse,
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
@@ -143,6 +144,17 @@ export type SessionEvent =
       readonly from: string;
       readonly target: string;
       readonly pack: XdccPack;
+    }
+  /**
+   * A serving bot answered a pack request. Raised so the file monitor can show
+   * a queue position or a refusal on the row that is waiting, rather than
+   * leaving it to spin until the bot either sends the file or never does.
+   */
+  | {
+      readonly kind: 'xdcc-response';
+      readonly from: string;
+      readonly target: string;
+      readonly response: XdccResponse;
     };
 
 export interface Session {
@@ -373,6 +385,14 @@ export function createSession(options: SessionOptions): Session {
             from: effect.from,
             target: effect.target,
             pack: effect.pack,
+          });
+          break;
+        case 'xdcc-response':
+          events.emit({
+            kind: 'xdcc-response',
+            from: effect.from,
+            target: effect.target,
+            response: effect.response,
           });
           break;
       }

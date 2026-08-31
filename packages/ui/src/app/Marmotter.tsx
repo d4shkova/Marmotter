@@ -16,6 +16,8 @@ import {
   type DccSend,
   type SuggestedAction,
   type XdccPack,
+  type XdccResponse,
+  parseXdccRequest,
 } from '@marmotter/protocol';
 import type { CloseReason } from '@marmotter/shared';
 import { effectivePolicy, retentionCutoff } from '@marmotter/client';
@@ -115,8 +117,10 @@ import {
   DEFAULT_LOGGING,
   type DccOfferRecord,
   type TargetRef,
+  applyXdccResponse,
   classifyDccReoffer,
   matchPendingRequest,
+  networkForHost,
   sameFilename,
   draftFor,
   isTransferInFlight,
@@ -1130,6 +1134,8 @@ export function Marmotter({
             sessionEvent.target,
             sessionEvent.pack,
           );
+        } else if (sessionEvent.kind === 'xdcc-response') {
+          handleXdccResponse.current(profile.id, sessionEvent.from, sessionEvent.response);
         }
       });
 
@@ -1481,7 +1487,12 @@ export function Marmotter({
       // A fresh attempt clears any earlier cancel mark, so a row downloaded,
       // cancelled, and started again is treated on its own terms.
       cancelledOffers.current.delete(offerId);
-      useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
+      // The name is written back to the row: a pack asked for by number had
+      // only its number until now, and a bot that renamed the file has just
+      // said what it will actually be saved as.
+      useView
+        .getState()
+        .setDccOfferStatus(offerId, { status: 'downloading', filename: source.filename });
       const transfer = dcc.download(
         {
           host: source.host,
@@ -1577,6 +1588,28 @@ export function Marmotter({
   }, []);
 
   /**
+   * Telling a bot to drop a pack we are no longer waiting for.
+   *
+   * Forgetting the row locally is not the same as leaving the queue: the bot
+   * still holds the request, and answers it eventually by opening a transfer
+   * for a file nobody is expecting any more. Serving bots take `XDCC REMOVE`
+   * for exactly this, so a row taken off the list is taken out of the queue too.
+   * Best-effort — a bot that does not understand it simply says nothing, which
+   * is no worse than never having asked.
+   */
+  const cancelPackRequest = useCallback(
+    (offer: DccOfferRecord): void => {
+      if (offer.kind !== 'xdcc' || offer.status !== 'requested' || offer.pack === undefined) {
+        return;
+      }
+      registry
+        .sessionOf(offer.networkId)
+        ?.send(`PRIVMSG ${offer.from} :XDCC REMOVE #${offer.pack}`);
+    },
+    [registry],
+  );
+
+  /**
    * Taking a row off the list, whatever state it is in.
    *
    * The way out of a row nothing else can shift: a pack a bot never answered
@@ -1592,21 +1625,23 @@ export function Marmotter({
         cancelledOffers.current.add(offer.id);
         transfer.cancel();
       }
+      cancelPackRequest(offer);
       forgetPendingRequest(offer.id);
       useView.getState().removeDccOffer(offer.id);
     },
-    [forgetPendingRequest],
+    [cancelPackRequest, forgetPendingRequest],
   );
 
-  /** Clearing the list, forgetting the requests the dropped rows were waiting on. */
+  /** Clearing the list, and leaving the queues the dropped rows were waiting in. */
   const clearOffers = useCallback((): void => {
     for (const offer of useView.getState().dccOffers) {
       if (!isTransferInFlight(offer.status)) {
+        cancelPackRequest(offer);
         forgetPendingRequest(offer.id);
       }
     }
     useView.getState().clearDccOffers();
-  }, [forgetPendingRequest]);
+  }, [cancelPackRequest, forgetPendingRequest]);
 
   // Opening the file manager on a saved download. Only wired where the platform
   // can do it — desktop — and only ever on a path the shell itself returned.
@@ -1760,6 +1795,49 @@ export function Marmotter({
     [registry],
   );
 
+  /**
+   * A serving bot's answer to a pack we asked for.
+   *
+   * Only ever applied to a row still waiting on that same bot: a notice is
+   * ordinary text anyone can send, and the pending queue is what makes this a
+   * reply to us rather than something a stranger typed. The pack number picks
+   * the row where the bot named one; with a single request outstanding there is
+   * nothing to pick between.
+   */
+  const handleXdccResponse = useRef<
+    (networkId: string, from: string, response: XdccResponse) => void
+  >(() => {});
+  handleXdccResponse.current = (networkId, from, response) => {
+    const queue = pendingXdcc.current.get(pendingKey(networkId, from)) ?? [];
+    if (queue.length === 0) {
+      return;
+    }
+    const rows = useView.getState().dccOffers;
+    const named =
+      response.pack === undefined
+        ? undefined
+        : queue.find((id) => rows.some((row) => row.id === id && row.pack === response.pack));
+    const targetId = named ?? (queue.length === 1 ? queue[0] : undefined);
+    if (targetId === undefined) {
+      return;
+    }
+    // A transfer that has already started says more than anything the bot is
+    // still narrating, so a late notice never drags a live download backwards.
+    if (rows.find((row) => row.id === targetId)?.status !== 'requested') {
+      return;
+    }
+
+    const outcome = applyXdccResponse(response);
+    useView.getState().setDccOfferStatus(targetId, {
+      status: outcome.status,
+      ...(outcome.error === undefined ? {} : { error: outcome.error }),
+      ...(outcome.note === undefined ? {} : { note: outcome.note }),
+    });
+    if (outcome.settled) {
+      forgetPendingRequest(targetId);
+    }
+  };
+
   // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
   // that row and downloads; otherwise it is an unsolicited offer of its own.
   const handleDccOffer = useRef<
@@ -1880,6 +1958,78 @@ export function Marmotter({
       });
     },
     [announceDownload, registry, toast, fetchIntoFolder, pendingKey],
+  );
+
+  /**
+   * Requesting a pack from a line pasted out of an XDCC index.
+   *
+   * Every index on the web hands a person the same two strings — an `irc://`
+   * link and a literal `/msg Bot xdcc send #42` — so those, rather than a form
+   * with a nick field and a number field, are what somebody arrives holding.
+   * Reading them is the whole feature: the link says which network, the message
+   * says which bot and which pack, and the row it makes behaves from then on
+   * exactly like one the monitor saw advertised.
+   */
+  const requestPastedPack = useCallback(
+    (text: string): void => {
+      const request = parseXdccRequest(text);
+      if (request === undefined) {
+        toast(
+          "That doesn't look like a pack request. Paste a line like /msg bot xdcc send #42.",
+          'error',
+        );
+        return;
+      }
+
+      // The link decides the network where it names one we are on; with no
+      // link, the network being looked at is the only sensible reading.
+      const linked =
+        request.host === undefined ? undefined : networkForHost(registry.profiles, request.host);
+      const networkId = linked ?? selection?.networkId;
+      if (networkId === undefined) {
+        toast(
+          request.host === undefined
+            ? 'Open a network first, so Marmotter knows who to ask.'
+            : `You're not connected to ${request.host}. Add it as a network first.`,
+          'error',
+        );
+        return;
+      }
+
+      const profile = registry.profiles.get(networkId);
+      const session = registry.sessionOf(networkId);
+      if (profile === undefined || session === undefined) {
+        toast(`Can't reach ${request.nick} to request that file.`, 'error');
+        return;
+      }
+
+      // Bots on most packlist networks refuse anyone who is not in one of their
+      // channels — the single most common reason a request is answered with
+      // silence — so a link that names one joins it before asking.
+      if (
+        request.channel !== undefined &&
+        registry.networks.get(networkId)?.channels.get(request.channel) === undefined
+      ) {
+        session.join(request.channel);
+      }
+
+      const id = useView.getState().recordXdccRequest({
+        networkId,
+        networkName: profile.name,
+        from: request.nick,
+        pack: request.pack,
+        at: Date.now(),
+      });
+      const row =
+        id === undefined
+          ? undefined
+          : useView.getState().dccOffers.find((entry) => entry.id === id);
+      if (row === undefined) {
+        return;
+      }
+      downloadOffer(row);
+    },
+    [downloadOffer, registry, selection, toast],
   );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
@@ -2500,6 +2650,7 @@ export function Marmotter({
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
+          onRequestPack={requestPastedPack}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (
         <LogSearch className="min-h-0 flex-1" store={logs} />

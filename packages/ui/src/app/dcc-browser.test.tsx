@@ -463,3 +463,63 @@ describe('a file list on a platform that chooses the folder for you', () => {
     expect(screen.getByRole('button', { name: 'Choose folder' })).toBeTruthy();
   });
 });
+
+describe('asking for a pack by hand', () => {
+  it('hands the pasted line over whole, and clears the field', () => {
+    const onRequestPack = vi.fn();
+    render(
+      <DccBrowser
+        offers={[]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        onRequestPack={onRequestPack}
+        now={2_000}
+      />,
+    );
+
+    const field = screen.getByLabelText('Paste a pack request') as HTMLInputElement;
+    fireEvent.change(field, {
+      target: { value: "irc://irc.abc.xyz/files '/msg bot xdcc send #7'" },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+
+    expect(onRequestPack).toHaveBeenCalledWith("irc://irc.abc.xyz/files '/msg bot xdcc send #7'");
+    expect(field.value).toBe('');
+  });
+
+  it('has no field at all where the platform cannot request anything', () => {
+    render(
+      <DccBrowser
+        offers={[]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.queryByLabelText('Paste a pack request')).toBeNull();
+  });
+
+  it('shows where a waiting request stands, when the bot said', () => {
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'requested', note: 'Queued, position 4 · about 10m.' })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText('Queued, position 4 · about 10m.').length).toBeGreaterThan(0);
+    // The button reads "Queued" rather than "Requested" once the bot has
+    // confirmed it took the request.
+    expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
+  });
+});
