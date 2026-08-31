@@ -413,3 +413,40 @@ export function buildDccResume(request: {
   const token = request.token === undefined ? '' : ` ${request.token}`;
   return `RESUME ${name} ${request.port} ${request.position}${token}`;
 }
+
+/**
+ * Whether an address only means anything on the sender's own network.
+ *
+ * A sender behind a router has to be told to advertise the address the world
+ * reaches it on; one that has not been told advertises the address it knows
+ * about, which is a private one. The offer is perfectly well-formed and the
+ * connection cannot possibly succeed unless the receiver happens to be on that
+ * same network — so it is worth telling apart from an address that is merely
+ * unreachable, because "the sender is misconfigured" and "something between us
+ * is blocking this" call for completely different things from the person
+ * reading it.
+ *
+ * Covers the RFC 1918 ranges, loopback, link-local, and the carrier-grade NAT
+ * range that behaves the same way from outside.
+ */
+export function isPrivateAddress(host: string): boolean {
+  const quad = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (quad === null) {
+    // IPv6 loopback, unique-local (fc00::/7) and link-local (fe80::/10).
+    const lower = host.toLowerCase();
+    return lower === '::1' || /^f[cd][0-9a-f]{2}:/.test(lower) || /^fe[89ab][0-9a-f]:/.test(lower);
+  }
+
+  const [a, b] = quad.slice(1, 3).map(Number);
+  if (a === undefined || b === undefined) {
+    return false;
+  }
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}

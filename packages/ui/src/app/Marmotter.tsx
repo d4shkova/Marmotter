@@ -18,6 +18,7 @@ import {
   type XdccPack,
   type XdccResponse,
   type DccAccept,
+  isPrivateAddress,
   parsePackRequest,
   buildDccResume,
   buildPassiveAccept,
@@ -1508,9 +1509,18 @@ export function Marmotter({
           if (cancelledOffers.current.delete(offerId)) {
             return;
           }
-          useView
-            .getState()
-            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
+          // An address only the sender's own network can reach is the one
+          // failure worth explaining rather than reporting: the offer is
+          // well-formed, nothing here is broken, and no amount of retrying
+          // will help. Said plainly, because "connection refused" sends a
+          // person looking at their own firewall for something that is not
+          // there.
+          const host = useView.getState().dccOffers.find((row) => row.id === offerId)?.host;
+          const reason =
+            host !== undefined && isPrivateAddress(host)
+              ? `The sender gave ${host}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
+              : describe(error);
+          useView.getState().setDccOfferStatus(offerId, { status: 'failed', error: reason });
           // Keyed to the row, not the wording: a serving bot re-offers a pack
           // every few seconds and each re-offer is another attempt, so one file
           // that will not come is one notice that keeps count, not a tower of
@@ -1521,8 +1531,8 @@ export function Marmotter({
             tone: 'error',
             text: (attempts) =>
               attempts === 1
-                ? `Couldn't download ${filename}. ${describe(error)}`
-                : `Couldn't download ${filename} after ${attempts} attempts. ${describe(error)}`,
+                ? `Couldn't download ${filename}. ${reason}`
+                : `Couldn't download ${filename} after ${attempts} attempts. ${reason}`,
           });
         });
     },

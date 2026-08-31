@@ -531,3 +531,31 @@ describe('an offer nothing here asked for', () => {
     await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('a bot that advertises an address only it can reach', () => {
+  it('says the sender is misconfigured rather than blaming the connection', async () => {
+    const shell = fakeShell();
+    // The transfer is attempted and refused, as it must be — the receiver may
+    // be on that same network, and only trying tells us.
+    shell.download.mockImplementation(() => ({
+      done: Promise.reject(new Error('could not connect to 192.168.1.103:45859')),
+      cancel: () => {},
+    }));
+    const transport = await connected(shell);
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[YOLOx0!~YOLx@host PRIVMSG marmot :${DELIM}DCC SEND test.mp4 3232235879 45859 2091954352${DELIM}`,
+      );
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    // No amount of retrying fixes somebody else's router, so the row says so.
+    expect(useView.getState().dccOffers[0]?.error).toContain('192.168.1.103');
+    expect(useView.getState().dccOffers[0]?.error).toContain('only works on its own network');
+  });
+});

@@ -3,6 +3,7 @@ import { decodeCtcp } from './ctcp.js';
 import {
   buildDccResume,
   buildPassiveAccept,
+  isPrivateAddress,
   parseDccAccept,
   parseDccSend,
   sanitizeDccFilename,
@@ -263,5 +264,27 @@ describe('the address field', () => {
     expect(offer(`${CTCP}DCC SEND f.bin -- 5000 1${CTCP}`)).toBeUndefined();
     expect(offer(`${CTCP}DCC SEND f.bin ../etc 5000 1${CTCP}`)).toBeUndefined();
     expect(offer(`${CTCP}DCC SEND f.bin localhost 5000 1${CTCP}`)).toBeUndefined();
+  });
+});
+
+describe('isPrivateAddress', () => {
+  it('knows the addresses that only work on the sender’s own network', () => {
+    expect(isPrivateAddress('192.168.1.103')).toBe(true);
+    expect(isPrivateAddress('10.0.0.5')).toBe(true);
+    expect(isPrivateAddress('172.16.4.1')).toBe(true);
+    expect(isPrivateAddress('172.31.255.255')).toBe(true);
+    expect(isPrivateAddress('127.0.0.1')).toBe(true);
+    expect(isPrivateAddress('169.254.10.1')).toBe(true);
+    expect(isPrivateAddress('100.64.0.1')).toBe(true);
+    expect(isPrivateAddress('::1')).toBe(true);
+    expect(isPrivateAddress('fd00::1')).toBe(true);
+  });
+
+  it('leaves a public address alone', () => {
+    expect(isPrivateAddress('81.42.231.7')).toBe(false);
+    expect(isPrivateAddress('172.32.0.1')).toBe(false);
+    expect(isPrivateAddress('8.8.8.8')).toBe(false);
+    expect(isPrivateAddress('2001:db8::1')).toBe(false);
+    expect(isPrivateAddress('dcc.example.net')).toBe(false);
   });
 });

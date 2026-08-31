@@ -23,6 +23,23 @@ type Direction = 'all' | 'in' | 'out';
  * nothing reworded — the one place in the interface where the protocol is
  * meant to be visible.
  */
+/**
+ * The line with its control characters made visible.
+ *
+ * A raw log that renders `\x01` as nothing shows a CTCP and a plain message as
+ * the same text, which is the one distinction somebody reading this tab is most
+ * likely to be there for: a `DCC SEND` and a person typing the words "DCC SEND"
+ * look identical without it. The Unicode control pictures are used, so the
+ * width is unchanged and the line still reads as itself.
+ */
+export function visible(line: string): string {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/[\u0000-\u001f\u007f]/g, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 0x7f ? '\u2421' : String.fromCodePoint(0x2400 + code);
+  });
+}
+
 export function RawLog({ network, onCopy, className }: RawLogProps): ReactNode {
   const [filter, setFilter] = useState('');
   const [direction, setDirection] = useState<Direction>('all');
@@ -41,7 +58,7 @@ export function RawLog({ network, onCopy, className }: RawLogProps): ReactNode {
       lines
         .map(
           (line) =>
-            `${formatTime(line.at, true)} ${line.direction === 'in' ? '<<' : '>>'} ${line.line}`,
+            `${formatTime(line.at, true)} ${line.direction === 'in' ? '<<' : '>>'} ${visible(line.line)}`,
         )
         .join('\n'),
     );
@@ -94,7 +111,7 @@ export function RawLog({ network, onCopy, className }: RawLogProps): ReactNode {
               >
                 {line.direction === 'in' ? '<<' : '>>'}
               </span>
-              <span className="break-all text-[var(--label-secondary)]">{line.line}</span>
+              <span className="break-all text-[var(--label-secondary)]">{visible(line.line)}</span>
             </li>
           ))}
         </ol>
