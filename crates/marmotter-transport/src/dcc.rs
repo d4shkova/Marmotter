@@ -222,10 +222,12 @@ pub async fn download(
         stream_to_file(
             tls,
             &target.partial_path,
-            options.size,
-            options.timeout,
-            options.turbo,
-            options.resume_from,
+            Terms {
+                size: options.size,
+                timeout: options.timeout,
+                turbo: options.turbo,
+                resume_from: options.resume_from,
+            },
             &mut cancel,
             &mut on_progress,
         )
@@ -234,10 +236,12 @@ pub async fn download(
         stream_to_file(
             stream,
             &target.partial_path,
-            options.size,
-            options.timeout,
-            options.turbo,
-            options.resume_from,
+            Terms {
+                size: options.size,
+                timeout: options.timeout,
+                turbo: options.turbo,
+                resume_from: options.resume_from,
+            },
             &mut cancel,
             &mut on_progress,
         )
@@ -262,12 +266,11 @@ async fn settle(result: Result<()>, target: TransferTarget) -> Result<PathBuf> {
             let final_path = if target.final_path.exists() {
                 unique_target_path(
                     target.final_path.parent().unwrap_or(Path::new(".")),
-                    &target
+                    target
                         .final_path
                         .file_name()
                         .and_then(|value| value.to_str())
-                        .unwrap_or("download")
-                        .to_owned(),
+                        .unwrap_or("download"),
                 )
             } else {
                 target.final_path
@@ -388,10 +391,12 @@ pub async fn receive_passive(
     let result = stream_to_file(
         stream,
         &target.partial_path,
-        options.size,
-        options.timeout,
-        options.turbo,
-        options.resume_from,
+        Terms {
+            size: options.size,
+            timeout: options.timeout,
+            turbo: options.turbo,
+            resume_from: options.resume_from,
+        },
         &mut cancel,
         &mut on_progress,
     )
@@ -455,6 +460,19 @@ fn server_name_for(host: &str) -> Result<rustls_pki_types::ServerName<'static>> 
         .map_err(|_| TransportError::Tls(format!("`{host}` is not a valid peer address")))
 }
 
+/// What the read loop needs to know about the transfer it is reading.
+///
+/// Grouped rather than passed one by one: they are four answers to the same
+/// question — how these particular bytes arrive — and every caller carries all
+/// four together anyway.
+#[derive(Debug, Clone, Copy)]
+struct Terms {
+    size: Option<u64>,
+    timeout: Duration,
+    turbo: bool,
+    resume_from: Option<u64>,
+}
+
 /// Reads the socket into the file, acknowledging bytes as DCC expects.
 ///
 /// Generic over the stream so a plain socket and a TLS one go through exactly
@@ -464,13 +482,16 @@ fn server_name_for(host: &str) -> Result<rustls_pki_types::ServerName<'static>> 
 async fn stream_to_file<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     target: &Path,
-    size: Option<u64>,
-    timeout: Duration,
-    turbo: bool,
-    resume_from: Option<u64>,
+    terms: Terms,
     cancel: &mut Option<CancelSignal>,
     on_progress: &mut impl FnMut(u64, Option<u64>),
 ) -> Result<()> {
+    let Terms {
+        size,
+        timeout,
+        turbo,
+        resume_from,
+    } = terms;
     // Resuming opens the part-file where it was left and cuts it back to the
     // position the sender agreed to, which is the only position the bytes about
     // to arrive belong after. Anything beyond it was never acknowledged and
