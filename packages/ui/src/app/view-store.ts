@@ -387,6 +387,13 @@ export interface DccOfferRecord {
   readonly received?: number;
   /** A passive (reverse) DCC offer, which the receive-only monitor cannot fetch. */
   readonly passive: boolean;
+  /**
+   * The token from a passive offer, which the reply has to carry back.
+   *
+   * It is how the sender ties our answer to the offer it made, so a row that
+   * lost it could be shown but never accepted.
+   */
+  readonly token?: string;
   /** Whether the transfer's socket is TLS, from an `SSEND` offer. */
   readonly secure?: boolean;
   /** Whether the sender streams without waiting to be acknowledged (`TSEND`). */
@@ -414,6 +421,18 @@ export interface UserOptions {
   /** Where downloaded files are written. Undefined until the user picks one. */
   readonly downloadFolder: string | undefined;
   /**
+   * The address to give a sender for a reverse transfer, where it must be said
+   * rather than worked out.
+   *
+   * A reverse transfer is one Marmotter listens for, so the sender is told
+   * where to dial. The shell reads that off the route to the sender, which is
+   * right on a machine with its own public address and wrong behind a router —
+   * there the address that reaches you is the router's, and only the person
+   * running it knows it. Undefined means "use whatever the shell worked out",
+   * which is the common case.
+   */
+  readonly dccAddress: string | undefined;
+  /**
    * How long a notice at the bottom of the screen stays, in seconds.
    *
    * Reading speed is not a thing the interface can guess, and the same ten
@@ -438,6 +457,7 @@ export function clampToastSeconds(seconds: number): number {
 export const DEFAULT_USER_OPTIONS: UserOptions = {
   dccMonitorEnabled: false,
   downloadFolder: undefined,
+  dccAddress: undefined,
   toastSeconds: TOAST_SECONDS_RANGE.default,
 };
 
@@ -840,6 +860,7 @@ export const useView = create<ViewState>((set, get) => ({
         port: offer.send.port,
         ...(offer.send.size === undefined ? {} : { size: offer.send.size }),
         passive: offer.send.passive,
+        ...(offer.send.token === undefined ? {} : { token: offer.send.token }),
         ...(offer.send.secure ? { secure: true } : {}),
         ...(offer.send.turbo ? { turbo: true } : {}),
         receivedAt: offer.at,

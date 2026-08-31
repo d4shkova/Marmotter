@@ -85,6 +85,7 @@ pub fn run() {
             // write inside its own storage without a permission, and every
             // other folder costs one that would let it read the whole device.
             dcc::dcc_download_file,
+            dcc::dcc_receive_passive,
             dcc::dcc_cancel_download,
             dcc::dcc_default_dir,
             opener::open_external_url,

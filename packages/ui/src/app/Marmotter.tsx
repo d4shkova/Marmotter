@@ -17,6 +17,8 @@ import {
   type SuggestedAction,
   type XdccPack,
   type XdccResponse,
+  buildPassiveAccept,
+  encodeCtcp,
   parseXdccRequest,
 } from '@marmotter/protocol';
 import type { CloseReason } from '@marmotter/shared';
@@ -54,7 +56,7 @@ import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.j
 import { Composer } from './Composer.js';
 import { DccBrowser, type DccBrowserProps } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
-import type { DccCapability } from './dcc.js';
+import type { DccCapability, DccTransfer } from './dcc.js';
 import { InviteBanner } from './Invites.js';
 import { Launch } from './Launch.js';
 import { connectionStatus, connectionStatusText } from './network-status.js';
@@ -1465,6 +1467,54 @@ export function Marmotter({
   // deliberate stop and not surfaced as a download failure.
   const cancelledOffers = useRef(new Set<string>());
 
+  /**
+   * What every started transfer does as it settles, whichever way it started.
+   *
+   * Shared by the two starters below — the one that dials the sender and the
+   * one that waits to be dialled — because from the moment bytes are moving
+   * they are the same transfer, and a row that ends differently depending on
+   * which direction the connection went would be a bug rather than a feature.
+   */
+  const trackTransfer = useCallback(
+    (offerId: string, filename: string, transfer: DccTransfer): void => {
+      transfers.current.set(offerId, transfer);
+      transfer.done
+        .then((savedPath) => {
+          transfers.current.delete(offerId);
+          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
+          announceDownload({
+            key: 'dcc-saved',
+            text: (saved) => (saved === 1 ? `Saved ${filename}.` : `Saved ${saved} files.`),
+          });
+        })
+        .catch((error: unknown) => {
+          transfers.current.delete(offerId);
+          // A cancel rejects the transfer too; that is the user's own doing, so
+          // the row is already back to available and no failure is shown.
+          if (cancelledOffers.current.delete(offerId)) {
+            return;
+          }
+          useView
+            .getState()
+            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
+          // Keyed to the row, not the wording: a serving bot re-offers a pack
+          // every few seconds and each re-offer is another attempt, so one file
+          // that will not come is one notice that keeps count, not a tower of
+          // them. Failures are said whether or not the file list is open —
+          // unlike a file arriving, they need a decision.
+          notify({
+            key: `dcc-failed-${offerId}`,
+            tone: 'error',
+            text: (attempts) =>
+              attempts === 1
+                ? `Couldn't download ${filename}. ${describe(error)}`
+                : `Couldn't download ${filename} after ${attempts} attempts. ${describe(error)}`,
+          });
+        });
+    },
+    [announceDownload, notify],
+  );
+
   // Fetching one direct DCC transfer into the chosen folder, updating a given
   // row as it goes. The optimistic status flips to downloading at once and
   // settles to saved or failed when the shell reports back, so a slow transfer
@@ -1512,42 +1562,104 @@ export function Marmotter({
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
-      transfers.current.set(offerId, transfer);
-      transfer.done
-        .then((savedPath) => {
-          transfers.current.delete(offerId);
-          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
-          announceDownload({
-            key: 'dcc-saved',
-            text: (saved) => (saved === 1 ? `Saved ${source.filename}.` : `Saved ${saved} files.`),
-          });
-        })
-        .catch((error: unknown) => {
-          transfers.current.delete(offerId);
-          // A cancel rejects the transfer too; that is the user's own doing, so
-          // the row is already back to available and no failure is shown.
-          if (cancelledOffers.current.delete(offerId)) {
+      trackTransfer(offerId, source.filename, transfer);
+    },
+    [dcc, toast, trackTransfer],
+  );
+
+  /**
+   * Receiving a passive (reverse) transfer, where we open the socket.
+   *
+   * A passive offer is the sender saying it cannot be connected to, and asking
+   * us to listen instead. The shell binds the socket and hands back the port;
+   * the reply carrying that port is what makes the sender dial, and it goes out
+   * from here because the session is the one thing the shell cannot reach.
+   *
+   * It needs an address of ours the sender can actually get to, which behind a
+   * router is not the one this machine knows about. So the setting can name the
+   * address to give out, and where neither it nor the shell can supply one the
+   * transfer stops and says so rather than advertising a private address and
+   * waiting out a timeout that looks like somebody else's fault.
+   */
+  const fetchPassively = useCallback(
+    (
+      offerId: string,
+      source: {
+        networkId: string;
+        from: string;
+        host: string;
+        filename: string;
+        token: string;
+        size?: number;
+        turbo?: boolean;
+      },
+    ): void => {
+      const folder = useView.getState().userOptions.downloadFolder;
+      const receive = dcc?.receivePassive;
+      if (dcc === undefined || receive === undefined || folder === undefined) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error:
+            folder === undefined
+              ? 'No download folder is set.'
+              : "Marmotter can't accept a reverse transfer on this device.",
+        });
+        return;
+      }
+      const session = registry.sessionOf(source.networkId);
+      if (session === undefined) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: `Marmotter is no longer connected to ${source.from}'s network.`,
+        });
+        return;
+      }
+
+      cancelledOffers.current.delete(offerId);
+      useView
+        .getState()
+        .setDccOfferStatus(offerId, { status: 'downloading', filename: source.filename });
+
+      const transfer: DccTransfer = receive.call(
+        dcc,
+        {
+          host: source.host,
+          filename: source.filename,
+          folder,
+          ...(source.size === undefined ? {} : { size: source.size }),
+          ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+        },
+        (address, port) => {
+          const advertised = useView.getState().userOptions.dccAddress ?? address;
+          if (advertised === undefined || advertised === '') {
+            cancelledOffers.current.add(offerId);
+            transfer.cancel();
+            useView.getState().setDccOfferStatus(offerId, {
+              status: 'failed',
+              error:
+                "Marmotter couldn't work out an address to give the sender. Set one under Settings.",
+            });
             return;
           }
-          useView
-            .getState()
-            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
-          // Keyed to the row, not the wording: a serving bot re-offers a pack
-          // every few seconds and each re-offer is another attempt, so one file
-          // that will not come is one notice that keeps count, not a tower of
-          // them. Failures are said whether or not the file list is open —
-          // unlike a file arriving, they need a decision.
-          notify({
-            key: `dcc-failed-${offerId}`,
-            tone: 'error',
-            text: (attempts) =>
-              attempts === 1
-                ? `Couldn't download ${source.filename}. ${describe(error)}`
-                : `Couldn't download ${source.filename} after ${attempts} attempts. ${describe(error)}`,
-          });
-        });
+          session.send(
+            `PRIVMSG ${source.from} :${encodeCtcp(
+              'DCC',
+              buildPassiveAccept({
+                filename: source.filename,
+                host: advertised,
+                port,
+                token: source.token,
+                ...(source.size === undefined ? {} : { size: source.size }),
+              }),
+            )}`,
+          );
+        },
+        (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+      );
+
+      trackTransfer(offerId, source.filename, transfer);
     },
-    [announceDownload, dcc, notify, toast],
+    [dcc, registry, trackTransfer],
   );
 
   // Stopping a download that is under way. The row goes straight back to
@@ -1881,10 +1993,29 @@ export function Marmotter({
       .getState()
       .dccOffers.filter((entry) => pendingKey(entry.networkId, entry.from) === key);
 
+    // A passive answer used to be the end of the road. Now it is a transfer the
+    // other way round, provided the platform can listen and the offer carried
+    // the token that ties our reply back to it.
     const refuse = (offerId: string): void => {
+      const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+      if (dcc?.receivePassive !== undefined && send.token !== undefined) {
+        fetchPassively(offerId, {
+          networkId,
+          from,
+          host: send.host,
+          filename: row?.filename ?? send.filename,
+          token: send.token,
+          ...(send.size === undefined ? {} : { size: send.size }),
+          turbo: send.turbo,
+        });
+        return;
+      }
       useView.getState().setDccOfferStatus(offerId, {
         status: 'failed',
-        error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+        error:
+          send.token === undefined
+            ? 'The bot sent a reverse transfer with nothing to identify it by.'
+            : "The bot sent a reverse transfer, which Marmotter can't accept on this device.",
       });
     };
     const fetchInto = (offerId: string): void => {
@@ -1983,6 +2114,26 @@ export function Marmotter({
         });
         return;
       }
+      if (offer.passive) {
+        if (
+          dcc?.receivePassive === undefined ||
+          offer.token === undefined ||
+          offer.host === undefined
+        ) {
+          toast("Marmotter can't accept that reverse transfer.", 'error');
+          return;
+        }
+        fetchPassively(offer.id, {
+          networkId: offer.networkId,
+          from: offer.from,
+          host: offer.host,
+          filename: offer.filename,
+          token: offer.token,
+          ...(offer.size === undefined ? {} : { size: offer.size }),
+          ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
+        });
+        return;
+      }
       if (offer.host === undefined || offer.port === undefined) {
         toast(`That offer has no address to connect to.`, 'error');
         return;
@@ -1996,7 +2147,7 @@ export function Marmotter({
         ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
-    [announceDownload, registry, toast, fetchIntoFolder, pendingKey],
+    [announceDownload, dcc, fetchPassively, registry, toast, fetchIntoFolder, pendingKey],
   );
 
   /**
@@ -2690,6 +2841,7 @@ export function Marmotter({
           onClear={clearOffers}
           onDismiss={dismissOffer}
           onRequestPack={requestPastedPack}
+          canFetchPassive={dcc?.receivePassive !== undefined}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (
         <LogSearch className="min-h-0 flex-1" store={logs} />

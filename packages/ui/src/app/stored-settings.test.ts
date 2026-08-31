@@ -41,6 +41,7 @@ describe('settings through the file and back', () => {
       userOptions: {
         dccMonitorEnabled: true,
         downloadFolder: '/home/tamsin/Downloads',
+        dccAddress: undefined,
         toastSeconds: 25,
       },
       logging: {
@@ -191,7 +192,12 @@ describe('resetting to the defaults', () => {
     // like this would be a nasty surprise.
     useView.setState({
       appearance: { ...DEFAULT_APPEARANCE, nickColumnWidth: 20, unfurlLinks: true },
-      userOptions: { dccMonitorEnabled: true, downloadFolder: '/downloads', toastSeconds: 45 },
+      userOptions: {
+        dccMonitorEnabled: true,
+        downloadFolder: '/downloads',
+        dccAddress: undefined,
+        toastSeconds: 45,
+      },
       logging: { ...defaultLoggingPolicy, enabled: true, retentionDays: 7 },
       ctcp: { ...DEFAULT_CTCP_POLICY, version: false },
       selection: { networkId: 'n1', target: '#marmotter' },

@@ -38,6 +38,17 @@ export interface DccDownloadRequest {
   readonly turbo?: boolean;
 }
 
+/** What the shell needs to receive one passive (reverse) transfer. */
+export interface DccPassiveRequest {
+  /** The sender's advertised address. Only it may connect to the socket. */
+  readonly host: string;
+  readonly size?: number;
+  readonly filename: string;
+  readonly folder: string;
+  /** Whether the sender streams without waiting to be acknowledged. */
+  readonly turbo?: boolean;
+}
+
 /** Progress of a transfer in flight: bytes received, and the total if known. */
 export type DccProgress = (received: number, total: number | undefined) => void;
 
@@ -87,6 +98,24 @@ export interface DccCapability {
    * cancellation.
    */
   download(request: DccDownloadRequest, onProgress?: DccProgress): DccTransfer;
+  /**
+   * Receives a passive (reverse) transfer: the shell listens, the sender dials.
+   *
+   * `onListening` is called once with the port the shell bound and the address
+   * it believes this machine has on the route to the sender; the caller must
+   * send both back to the sender over IRC, because nothing connects until it
+   * does. Everything after that is an ordinary transfer, so the handle is the
+   * same one {@link download} returns.
+   *
+   * Optional: a platform that cannot accept an incoming connection leaves it
+   * out, and a passive offer stays marked as one that cannot be fetched rather
+   * than offering a button that opens a socket nothing will ever dial.
+   */
+  receivePassive?(
+    request: DccPassiveRequest,
+    onListening: (address: string | undefined, port: number) => void,
+    onProgress?: DccProgress,
+  ): DccTransfer;
   /**
    * Opens the platform's file manager on a downloaded file, selecting it.
    *

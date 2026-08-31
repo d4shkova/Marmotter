@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio_rustls::TlsConnector;
 
@@ -245,6 +245,160 @@ pub async fn download(
             Err(error)
         }
     }
+}
+
+/// How long a passive transfer's listening socket waits to be connected to.
+///
+/// A reverse offer is answered the moment the sender reads our reply, so a
+/// sender that is coming connects within seconds. The wait is nonetheless
+/// generous, because it is bounded by something real — the socket is closed
+/// when it elapses — and a sender queueing behind its own transfers is the
+/// ordinary case rather than a fault.
+pub const LISTEN_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Everything needed to receive one passive (reverse) transfer.
+///
+/// The shape differs from [`DownloadOptions`] in the one way that matters: no
+/// port to dial. The sender is firewalled — that is what a passive offer says —
+/// so we open the socket and it connects to us, which means the port is an
+/// output of starting the transfer rather than an input to it, and has to reach
+/// the caller in time to be put in the reply.
+#[derive(Debug, Clone)]
+pub struct PassiveOptions {
+    /// The sender's advertised address, used to check who connected.
+    pub peer_host: String,
+    /// The advertised size in bytes, where the sender gave one.
+    pub size: Option<u64>,
+    /// The advertised name. Sanitised again here before anything is written.
+    pub filename: String,
+    /// The folder chosen in settings.
+    pub folder: PathBuf,
+    /// Whether the sender streams without waiting to be acknowledged.
+    pub turbo: bool,
+    /// Per-read timeout once the sender has connected.
+    pub timeout: Duration,
+    /// A signal the caller can trip to abort the transfer, if it wants one.
+    pub cancel: Option<CancelSignal>,
+}
+
+/// Receives a passive (reverse) transfer: we listen, the sender connects.
+///
+/// `on_listening` is called once with the port that was bound, and the caller
+/// must send the sender its half of the handshake with that port in it —
+/// nothing will connect until it does. The listening socket is closed as soon
+/// as one connection has been accepted, or when the wait elapses.
+///
+/// Only a connection from the sender's own address is taken. The port is
+/// advertised in a channel or a private message that anyone may be reading, and
+/// the alternative is that the first stranger to dial it decides what lands in
+/// the download folder.
+///
+/// # Errors
+///
+/// Returns [`TransportError`] when the socket cannot be bound, when nothing
+/// connects within [`LISTEN_TIMEOUT`], or for any of the reasons an ordinary
+/// download fails once the bytes are moving.
+pub async fn receive_passive(
+    mut options: PassiveOptions,
+    on_listening: impl FnOnce(u16),
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<PathBuf> {
+    if !options.folder.is_dir() {
+        return Err(TransportError::Network(
+            "the download folder does not exist".to_owned(),
+        ));
+    }
+
+    let listener = TcpListener::bind(("0.0.0.0", 0))
+        .await
+        .map_err(|error| TransportError::Network(format!("could not open a socket: {error}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| TransportError::Network(error.to_string()))?
+        .port();
+
+    let target = unique_target_path(&options.folder, &options.filename);
+    let mut cancel = options.cancel.take();
+    let expected: Option<std::net::IpAddr> = options.peer_host.parse().ok();
+
+    on_listening(port);
+
+    let stream = tokio::select! {
+        biased;
+        () = cancelled(&mut cancel) => return Err(TransportError::Cancelled),
+        accepted = tokio::time::timeout(LISTEN_TIMEOUT, accept_from(&listener, expected)) => accepted
+            .map_err(|_| {
+                TransportError::Network(format!(
+                    "{} did not connect within {}s",
+                    options.peer_host,
+                    LISTEN_TIMEOUT.as_secs()
+                ))
+            })??,
+    };
+    // Nothing else is coming, and a socket left listening is a port left open.
+    drop(listener);
+
+    match stream_to_file(
+        stream,
+        &target,
+        options.size,
+        options.timeout,
+        options.turbo,
+        &mut cancel,
+        &mut on_progress,
+    )
+    .await
+    {
+        Ok(()) => Ok(target),
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&target).await;
+            Err(error)
+        }
+    }
+}
+
+/// Accepts until the sender itself connects, dropping anyone else.
+///
+/// A connection from another address is closed rather than treated as a
+/// failure: an unrelated dial — a port scan, or a second client that saw the
+/// same advertisement — must not cost the transfer we are waiting for.
+async fn accept_from(
+    listener: &TcpListener,
+    expected: Option<std::net::IpAddr>,
+) -> Result<TcpStream> {
+    loop {
+        let (stream, from) = listener
+            .accept()
+            .await
+            .map_err(|error| TransportError::Network(error.to_string()))?;
+        match expected {
+            Some(address) if from.ip() != address => continue,
+            _ => return Ok(stream),
+        }
+    }
+}
+
+/// The address to advertise to a peer, as seen from the route towards it.
+///
+/// Found by asking the operating system which interface it would use to reach
+/// that address: a UDP socket is connected, which sends nothing, and its local
+/// address is read back. It is the machine's own address, so behind NAT it is
+/// the private one — a passive transfer needs an incoming connection, and no
+/// amount of guessing here substitutes for one being possible.
+#[must_use]
+pub fn local_address_towards(peer: &str) -> Option<String> {
+    use std::net::{IpAddr, SocketAddr, UdpSocket};
+
+    let address: IpAddr = peer.parse().ok()?;
+    let socket = UdpSocket::bind(if address.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+    .ok()?;
+    // Port 9 is discard; nothing is transmitted by connecting a UDP socket.
+    socket.connect(SocketAddr::new(address, 9)).ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
 }
 
 /// The name a DCC peer is dialled under, which is an address rather than a host.
@@ -641,6 +795,95 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn receives_a_passive_transfer_from_the_sender() {
+        let folder = tempfile::tempdir().unwrap();
+        let payload = b"reverse marmot".to_vec();
+        let (port_tx, port_rx) = tokio::sync::oneshot::channel();
+
+        let receiving = tokio::spawn({
+            let folder = folder.path().to_path_buf();
+            let payload_len = payload.len() as u64;
+            async move {
+                receive_passive(
+                    PassiveOptions {
+                        peer_host: "127.0.0.1".to_owned(),
+                        size: Some(payload_len),
+                        filename: "reverse.bin".to_owned(),
+                        folder,
+                        turbo: false,
+                        timeout: Duration::from_secs(5),
+                        cancel: None,
+                    },
+                    |port| {
+                        let _ = port_tx.send(port);
+                    },
+                    |_, _| {},
+                )
+                .await
+            }
+        });
+
+        // The sender reads the port out of our reply and dials it.
+        let port = port_rx.await.unwrap();
+        let mut sender = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        sender.write_all(&payload).await.unwrap();
+        sender.flush().await.unwrap();
+        let mut scratch = [0_u8; 64];
+        let _ = sender.read(&mut scratch).await;
+
+        let path = receiving.await.unwrap().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn a_passive_socket_ignores_a_dial_from_anyone_but_the_sender() {
+        // The port is advertised in a message anybody may be reading, so the
+        // first stranger to connect must not get to decide what is downloaded.
+        let folder = tempfile::tempdir().unwrap();
+        let (port_tx, port_rx) = tokio::sync::oneshot::channel();
+
+        let receiving = tokio::spawn({
+            let folder = folder.path().to_path_buf();
+            async move {
+                receive_passive(
+                    PassiveOptions {
+                        // Nothing on this machine dials from here.
+                        peer_host: "203.0.113.7".to_owned(),
+                        size: Some(4),
+                        filename: "reverse.bin".to_owned(),
+                        folder,
+                        turbo: false,
+                        timeout: Duration::from_millis(200),
+                        cancel: None,
+                    },
+                    |port| {
+                        let _ = port_tx.send(port);
+                    },
+                    |_, _| {},
+                )
+                .await
+            }
+        });
+
+        let port = port_rx.await.unwrap();
+        let mut stranger = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let _ = stranger.write_all(b"take this").await;
+
+        // The transfer is still waiting for the sender rather than saving that.
+        assert!(tokio::time::timeout(Duration::from_millis(300), receiving)
+            .await
+            .is_err());
+        assert!(!folder.path().join("reverse.bin").exists());
+    }
+
+    #[test]
+    fn the_local_address_towards_a_peer_is_one_of_ours() {
+        let address = local_address_towards("127.0.0.1").expect("a route to loopback");
+        assert_eq!(address, "127.0.0.1");
+        assert!(local_address_towards("not-an-address").is_none());
     }
 
     #[tokio::test]

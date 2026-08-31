@@ -114,6 +114,14 @@ export interface DccBrowserProps {
    * or both — and deciding what it means is the client's job, not theirs.
    */
   readonly onRequestPack?: (text: string) => void;
+  /**
+   * Whether a reverse (passive) offer can be taken on this device.
+   *
+   * False where the platform cannot listen for an incoming connection, and the
+   * row says so rather than offering a button that opens a socket nothing will
+   * dial.
+   */
+  readonly canFetchPassive?: boolean;
   /** Injectable for tests. Left out, the clock is sampled on a slow timer. */
   readonly now?: number;
   /**
@@ -146,6 +154,7 @@ export function DccBrowser({
   onClear,
   onDismiss,
   onRequestPack,
+  canFetchPassive = false,
   now,
   pageSize = CATALOGUE_PAGE,
   className,
@@ -264,6 +273,7 @@ export function DccBrowser({
           <DownloadCell
             offer={offer}
             disabled={downloadFolder === undefined}
+            canFetchPassive={canFetchPassive}
             onDownload={onDownload}
             onCancel={onCancel}
             {...(onReveal === undefined ? {} : { onReveal })}
@@ -271,7 +281,7 @@ export function DccBrowser({
         ),
       },
     ],
-    [at, downloadFolder, narrow, onCancel, onDownload, onReveal],
+    [at, canFetchPassive, downloadFolder, narrow, onCancel, onDownload, onReveal],
   );
 
   // Name and action on a phone; every column on anything wider.
@@ -367,6 +377,7 @@ export function DccBrowser({
                     <DownloadCell
                       offer={offer}
                       disabled={downloadFolder === undefined}
+                      canFetchPassive={canFetchPassive}
                       onDownload={onDownload}
                       onCancel={onCancel}
                       {...(onReveal === undefined ? {} : { onReveal })}
@@ -548,17 +559,21 @@ function DismissButton({
 function DownloadCell({
   offer,
   disabled,
+  canFetchPassive,
   onDownload,
   onCancel,
   onReveal,
 }: {
   offer: DccOfferRecord;
   disabled: boolean;
+  canFetchPassive: boolean;
   onDownload: (offer: DccOfferRecord) => void;
   onCancel: (offer: DccOfferRecord) => void;
   onReveal?: (offer: DccOfferRecord) => void;
 }): ReactNode {
-  if (offer.passive) {
+  // A reverse offer with nothing to identify it by, or on a device that cannot
+  // listen for the connection, is still one nothing can be done with.
+  if (offer.passive && (!canFetchPassive || offer.token === undefined)) {
     return <span className="text-caption-1 text-[var(--label-quaternary)]">Can't fetch</span>;
   }
   switch (offer.status) {

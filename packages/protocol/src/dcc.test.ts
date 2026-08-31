@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeCtcp } from './ctcp.js';
-import { parseDccSend, sanitizeDccFilename, type DccSend } from './dcc.js';
+import { buildPassiveAccept, parseDccSend, sanitizeDccFilename, type DccSend } from './dcc.js';
 
 /** Parses the CTCP out of a raw PRIVMSG body, as the reducer does. */
 function offer(body: string): DccSend | undefined {
@@ -153,6 +153,54 @@ describe('the send variants', () => {
     expect(offer(`${CTCP}DCC SEND f 3232235777 5000 1${CTCP}`)).toMatchObject({
       secure: false,
       turbo: false,
+    });
+  });
+});
+
+describe('buildPassiveAccept', () => {
+  it('answers with our own address and port, and the offer’s token', () => {
+    expect(
+      buildPassiveAccept({
+        filename: 'holiday.jpg',
+        host: '192.168.1.1',
+        port: 5000,
+        size: 204800,
+        token: '998877',
+      }),
+    ).toBe('SEND holiday.jpg 3232235777 5000 204800 998877');
+  });
+
+  it('quotes a name that would otherwise split into two fields', () => {
+    const reply = buildPassiveAccept({
+      filename: 'my holiday.jpg',
+      host: '10.0.0.1',
+      port: 1,
+      token: 't',
+    });
+    expect(reply).toBe('SEND "my holiday.jpg" 167772161 1 t');
+  });
+
+  it('sends an IPv6 address as the literal, having no integer form', () => {
+    expect(buildPassiveAccept({ filename: 'f', host: '2001:db8::1', port: 2, token: 't' })).toBe(
+      'SEND f 2001:db8::1 2 t',
+    );
+  });
+
+  it('round-trips through the parser', () => {
+    const params = buildPassiveAccept({
+      filename: 'f.bin',
+      host: '203.0.113.9',
+      port: 6000,
+      size: 42,
+      token: 'abc',
+    });
+    expect(parseDccSend({ command: 'DCC', params })).toMatchObject({
+      filename: 'f.bin',
+      host: '203.0.113.9',
+      port: 6000,
+      size: 42,
+      token: 'abc',
+      passive: false,
     });
   });
 });

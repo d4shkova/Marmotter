@@ -489,6 +489,24 @@ export function Settings({
                         onChange={(dccMonitorEnabled) => onUserOptionsChange({ dccMonitorEnabled })}
                       />
                     </div>
+                    {!userOptions.dccMonitorEnabled ? null : (
+                      <div className="px-4 py-2.5">
+                        <TextField
+                          label="Your address for incoming transfers"
+                          placeholder="Worked out automatically"
+                          hint="Some senders cannot be connected to and ask Marmotter to listen instead. Leave this empty unless those transfers time out — then put in the address other people reach you on, and forward the port on your router."
+                          value={userOptions.dccAddress ?? ''}
+                          onChange={(event) =>
+                            onUserOptionsChange({
+                              dccAddress:
+                                event.target.value.trim() === ''
+                                  ? undefined
+                                  : event.target.value.trim(),
+                            })
+                          }
+                        />
+                      </div>
+                    )}
                   </>
                 )}
               </ListGroup>

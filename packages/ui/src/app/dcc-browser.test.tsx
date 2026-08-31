@@ -523,3 +523,64 @@ describe('asking for a pack by hand', () => {
     expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
   });
 });
+
+describe('a reverse offer', () => {
+  const reverse = (overrides: Partial<DccOfferRecord> = {}): DccOfferRecord =>
+    offer({
+      status: 'available',
+      passive: true,
+      token: '998877',
+      kind: 'dcc',
+      ...overrides,
+    });
+
+  it('can be downloaded where the device can listen for the connection', () => {
+    const onDownload = vi.fn();
+    render(
+      <DccBrowser
+        offers={[reverse()]}
+        downloadFolder="/tmp/dl"
+        canFetchPassive
+        onDownload={onDownload}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download' })[0]!);
+    expect(onDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so plainly where the device cannot', () => {
+    render(
+      <DccBrowser
+        offers={[reverse()]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText("Can't fetch").length).toBeGreaterThan(0);
+  });
+
+  it('cannot be taken without the token that identifies it', () => {
+    const { token: _dropped, ...untokened } = reverse();
+    render(
+      <DccBrowser
+        offers={[untokened]}
+        downloadFolder="/tmp/dl"
+        canFetchPassive
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText("Can't fetch").length).toBeGreaterThan(0);
+  });
+});

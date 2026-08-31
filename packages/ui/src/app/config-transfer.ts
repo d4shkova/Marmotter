@@ -233,6 +233,10 @@ function settingsWithoutDevicePaths(settings: StoredSettings): Record<string, un
   const userOptions = { ...(asRecord(written['userOptions']) ?? {}) };
   const logging = { ...(asRecord(written['logging']) ?? {}) };
   delete userOptions['downloadFolder'];
+  // An address belongs to one machine's network in the same way a folder
+  // belongs to its disk: the router in front of this device is not the router
+  // in front of the one reading the file.
+  delete userOptions['dccAddress'];
   delete logging['path'];
   return { ...written, userOptions, logging };
 }

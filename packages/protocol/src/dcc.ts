@@ -245,3 +245,58 @@ export function sanitizeDccFilename(name: string): string {
   }
   return cleaned;
 }
+
+/**
+ * The reply that answers a passive (reverse) offer.
+ *
+ * A passive offer is the sender saying it cannot be connected to — it is behind
+ * something — and asking us to open the socket instead. The answer is a `DCC
+ * SEND` of our own carrying the same filename, size and token, with our address
+ * and the port we are listening on in place of the sender's. The token is what
+ * ties it back to the offer, so it is copied verbatim rather than regenerated.
+ *
+ * Returns the CTCP parameters, to be wrapped by {@link encodeCtcp} and sent as
+ * a `PRIVMSG` to the sender.
+ */
+export function buildPassiveAccept(reply: {
+  readonly filename: string;
+  readonly host: string;
+  readonly port: number;
+  readonly size?: number;
+  readonly token: string;
+}): string {
+  // Quoted whenever it could be read as more than one field. A name with a
+  // space in it is common and an unquoted one silently truncates the transfer
+  // to its first word.
+  const name = /[\s"]/.test(reply.filename)
+    ? `"${reply.filename.replace(/"/g, '')}"`
+    : reply.filename;
+  const size = reply.size === undefined ? '' : ` ${reply.size}`;
+  return `SEND ${name} ${encodeAddress(reply.host)} ${reply.port}${size} ${reply.token}`;
+}
+
+/**
+ * An address in the form a DCC offer carries it.
+ *
+ * IPv4 goes out as the unsigned 32-bit integer every client has always sent,
+ * because a receiver written to the original convention will read nothing else.
+ * IPv6 has no such convention and goes out as the literal.
+ */
+function encodeAddress(host: string): string {
+  const quad = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (quad === null) {
+    return host;
+  }
+  const parts = quad.slice(1).map(Number);
+  if (parts.some((part) => !Number.isInteger(part) || part > 255)) {
+    return host;
+  }
+  // Unsigned: the top bit set must not come out negative.
+  return String(
+    ((parts[0] ?? 0) * 0x1000000 +
+      (parts[1] ?? 0) * 0x10000 +
+      (parts[2] ?? 0) * 0x100 +
+      (parts[3] ?? 0)) >>>
+      0,
+  );
+}

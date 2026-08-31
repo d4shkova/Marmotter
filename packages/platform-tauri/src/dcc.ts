@@ -22,14 +22,27 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { DccCapability, DccDownloadRequest, DccProgress, DccTransfer } from '@marmotter/ui';
+import type {
+  DccCapability,
+  DccDownloadRequest,
+  DccPassiveRequest,
+  DccProgress,
+  DccTransfer,
+} from '@marmotter/ui';
 
 const PROGRESS_EVENT = 'marmotter://dcc-progress';
+const LISTENING_EVENT = 'marmotter://dcc-listening';
 
 interface ProgressPayload {
   readonly id: string;
   readonly received: number;
   readonly total: number | null;
+}
+
+interface ListeningPayload {
+  readonly id: string;
+  readonly port: number;
+  readonly address: string | null;
 }
 
 export interface DccOptions {
@@ -99,6 +112,62 @@ export function createDcc(options: DccOptions = {}): DccCapability {
         cancel(): void {
           // Best-effort: the Rust side no-ops an id it no longer holds, and the
           // transfer's own rejection is what actually settles the row.
+          void invoke('dcc_cancel_download', { transferId }).catch(() => {});
+        },
+      };
+    },
+
+    receivePassive(
+      request: DccPassiveRequest,
+      onListening: (address: string | undefined, port: number) => void,
+      onProgress?: DccProgress,
+    ): DccTransfer {
+      const transferId = crypto.randomUUID();
+
+      const done = (async (): Promise<string> => {
+        const unlisteners: (() => void)[] = [];
+        // Subscribed before the command is invoked: the socket is bound early
+        // in it, and a listener attached afterwards would miss the one event
+        // that says which port to advertise — leaving a transfer nothing will
+        // ever connect to.
+        unlisteners.push(
+          await listen<ListeningPayload>(LISTENING_EVENT, (event) => {
+            if (event.payload.id === transferId) {
+              onListening(event.payload.address ?? undefined, event.payload.port);
+            }
+          }),
+        );
+        if (onProgress !== undefined) {
+          unlisteners.push(
+            await listen<ProgressPayload>(PROGRESS_EVENT, (event) => {
+              if (event.payload.id === transferId) {
+                onProgress(event.payload.received, event.payload.total ?? undefined);
+              }
+            }),
+          );
+        }
+
+        try {
+          return await invoke<string>('dcc_receive_passive', {
+            request: {
+              host: request.host,
+              size: request.size ?? null,
+              filename: request.filename,
+              folder: request.folder,
+              turbo: request.turbo ?? false,
+              transferId,
+            },
+          });
+        } finally {
+          for (const unlisten of unlisteners) {
+            unlisten();
+          }
+        }
+      })();
+
+      return {
+        done,
+        cancel(): void {
           void invoke('dcc_cancel_download', { transferId }).catch(() => {});
         },
       };

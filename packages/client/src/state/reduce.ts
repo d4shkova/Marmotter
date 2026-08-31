@@ -952,9 +952,10 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
               {
                 kind: 'server',
                 target: conversation,
-                text: send.passive
-                  ? `${sender} offered you the file “${send.filename}”, but as a passive transfer Marmotter can't fetch it.`
-                  : `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
+                // One sentence for both directions now that a reverse offer is
+                // one the monitor can take: which way the connection goes is
+                // not something the person receiving a file has to know.
+                text: `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
               },
               now,
             );

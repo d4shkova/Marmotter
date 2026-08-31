@@ -63,7 +63,7 @@ describe('a DCC offer', () => {
     expect(sent).toEqual([]);
   });
 
-  it('marks a passive offer as one it cannot fetch', () => {
+  it('reads a passive offer, keeping the token the reply has to carry back', () => {
     const { state } = feed(
       registeredSession(),
       [dccSend('file.bin 3232235777 0 4096 998877')],
@@ -73,7 +73,9 @@ describe('a DCC offer', () => {
       kind: 'dcc-offer',
       send: { passive: true, token: '998877' },
     });
-    expect(state.serverNotices.at(-1)?.text).toContain("can't fetch it");
+    // One sentence whichever way the connection goes: the monitor decides what
+    // it can take, and the person receiving a file does not have to know.
+    expect(state.serverNotices.at(-1)?.text).toContain('Open the file monitor');
   });
 
   it('files it in the channel it arrived in', () => {

@@ -24,8 +24,10 @@ pub use connection::{
 };
 pub use dcc::{
     cancel_channel as dcc_cancel_channel, download as dcc_download,
+    local_address_towards as dcc_local_address_towards, receive_passive as dcc_receive_passive,
     CancelHandle as DccCancelHandle, CancelSignal as DccCancelSignal,
-    DownloadOptions as DccDownloadOptions, DEFAULT_DCC_TIMEOUT,
+    DownloadOptions as DccDownloadOptions, PassiveOptions as DccPassiveOptions,
+    DEFAULT_DCC_TIMEOUT,
 };
 pub use error::{Result, TransportError};
 pub use lines::{LineDecoder, MAX_LINE_BYTES};
