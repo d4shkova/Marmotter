@@ -163,7 +163,7 @@ fn start_ergo() -> Ergo {
         .spawn()
         .expect("start ergo");
 
-    let ergo = Ergo {
+    let mut ergo = Ergo {
         child,
         plaintext_port,
         tls_port,
@@ -171,18 +171,42 @@ fn start_ergo() -> Ergo {
         _directory: directory,
     };
 
-    wait_for_port(plaintext_port);
+    wait_for_port(&mut ergo.child, plaintext_port);
     ergo
 }
 
-fn wait_for_port(port: u16) {
-    for _ in 0..100 {
+/// How long a freshly spawned ergo is given to open its socket.
+///
+/// Generous rather than tight, because it is not an assertion about anything:
+/// six of these tests each start their own server and cargo runs them at once,
+/// so on a busy machine the wait says more about how many cores are free than
+/// about whether the server works. Ten seconds was enough locally and not on a
+/// loaded CI runner, where it failed at 10.12s having been about to succeed.
+const ERGO_START_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Waits for ergo to accept connections, or explains why it never will.
+///
+/// A server that has exited is noticed straight away instead of being waited
+/// out: a bad config or a missing binary is a different fault from a slow
+/// start, and a timeout that cannot tell them apart sends whoever reads it
+/// looking in the wrong place — which is exactly what happened.
+fn wait_for_port(child: &mut Child, port: u16) {
+    let deadline = std::time::Instant::now() + ERGO_START_TIMEOUT;
+
+    while std::time::Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
             return;
         }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("ergo exited before it started listening on port {port}: {status}");
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("ergo did not start listening on port {port}");
+
+    panic!(
+        "ergo did not start listening on port {port} within {}s",
+        ERGO_START_TIMEOUT.as_secs()
+    );
 }
 
 /// Reads events until one satisfies the predicate, or the deadline passes.
