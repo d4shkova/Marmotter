@@ -460,11 +460,14 @@ function DownloadProgress({
   received,
   total,
   filename,
+  address,
   onCancel,
 }: {
   received: number | undefined;
   total: number | undefined;
   filename: string;
+  /** Where the transfer is being made, shown until the first byte arrives. */
+  address: string | undefined;
   onCancel: () => void;
 }): ReactNode {
   const done = received ?? 0;
@@ -507,7 +510,16 @@ function DownloadProgress({
         </button>
       </div>
       <span className="text-caption-2 text-[var(--label-tertiary)]">
-        {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
+        {/* Before the first byte there is nothing to report but where we are
+            connecting, which is the one thing worth saying: a transfer that
+            never starts is almost always an address nothing can reach, and it
+            is otherwise invisible — a receiver answers a direct offer on the
+            socket, not over IRC, so there is nothing in the raw log to see. */}
+        {done === 0 && address !== undefined
+          ? `Connecting to ${address}`
+          : pct === undefined
+            ? formatBytes(done)
+            : `${formatBytes(done)} · ${pct}%`}
       </span>
     </div>
   );
@@ -602,6 +614,13 @@ function DownloadCell({
           received={offer.received}
           total={offer.size}
           filename={offer.filename}
+          address={
+            offer.host === undefined
+              ? undefined
+              : offer.port === undefined
+                ? offer.host
+                : `${offer.host}:${offer.port}`
+          }
           onCancel={() => onCancel(offer)}
         />
       );

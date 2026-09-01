@@ -584,3 +584,40 @@ describe('a reverse offer', () => {
     expect(screen.getAllByText("Can't fetch").length).toBeGreaterThan(0);
   });
 });
+
+describe('a transfer that has not started yet', () => {
+  it('says where it is connecting, which is otherwise invisible', () => {
+    // A receiver answers a direct offer on the socket rather than over IRC, so
+    // there is nothing in the raw log to show that anything is happening. This
+    // line is the only place a person can see it.
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'downloading', received: 0, host: '172.20.1.12', port: 36031 })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText('Connecting to 172.20.1.12:36031').length).toBeGreaterThan(0);
+  });
+
+  it('shows bytes instead once the file starts arriving', () => {
+    render(
+      <DccBrowser
+        offers={[
+          offer({ status: 'downloading', received: 300_000_000, host: '1.2.3.4', port: 5000 }),
+        ]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.queryByText(/Connecting to/)).toBeNull();
+  });
+});

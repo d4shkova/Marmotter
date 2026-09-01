@@ -1581,9 +1581,12 @@ export function Marmotter({
       // The name is written back to the row: a pack asked for by number had
       // only its number until now, and a bot that renamed the file has just
       // said what it will actually be saved as.
-      useView
-        .getState()
-        .setDccOfferStatus(offerId, { status: 'downloading', filename: source.filename });
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'downloading',
+        filename: source.filename,
+        host: source.host,
+        port: source.port,
+      });
       const transfer = dcc.download(
         {
           host: source.host,
@@ -1652,9 +1655,11 @@ export function Marmotter({
       }
 
       cancelledOffers.current.delete(offerId);
-      useView
-        .getState()
-        .setDccOfferStatus(offerId, { status: 'downloading', filename: source.filename });
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'downloading',
+        filename: source.filename,
+        host: source.host,
+      });
 
       const transfer: DccTransfer = receive.call(
         dcc,

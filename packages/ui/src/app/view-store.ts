@@ -699,6 +699,9 @@ export interface ViewState {
       note?: string;
       filename?: string;
       awaitingTransfer?: boolean;
+      /** The address the transfer is being made to, once one is known. */
+      host?: string;
+      port?: number;
     },
   ): void;
   /**
@@ -1021,6 +1024,11 @@ export const useView = create<ViewState>((set, get) => ({
           ...(patch.awaitingTransfer === undefined
             ? {}
             : { awaitingTransfer: patch.awaitingTransfer }),
+          // Where this transfer is actually going. A pack row has no address
+          // until the bot answers with one, and it is the single most useful
+          // thing on the row when a transfer does not start.
+          ...(patch.host === undefined ? {} : { host: patch.host }),
+          ...(patch.port === undefined ? {} : { port: patch.port }),
         };
       }),
     }));
