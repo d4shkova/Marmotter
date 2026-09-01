@@ -47,16 +47,59 @@ export const DEFAULT_BACKOFF: BackoffPolicy = {
 };
 
 /**
- * How many times a dropped connection is retried before the user is told.
+ * How many times a dropped connection is retried. Not a small number.
  *
- * Three. Retrying forever is what a bouncer does, and a desktop client that
- * does it quietly is one that looks connected while it is not — the person sees
- * a sidebar full of channels and no messages, with nothing saying why. Three
- * attempts covers the ordinary cases (a router rebooting, a laptop waking, a
- * server bouncing) and anything longer than that is worth interrupting for,
- * with a way to try again.
+ * This used to be three, on the reasoning that a client which retries quietly
+ * forever is one that looks busy while it is dead. The reasoning was right and
+ * the number was wrong: with the backoff below, three attempts are spent one,
+ * two and four seconds after the drop, so the client gives up seven seconds
+ * into an outage. Almost nothing real is over in seven seconds — a wifi
+ * handover, a laptop waking, a router rebooting, a phone moving between cells
+ * are all tens of seconds at least — so in practice every drop became permanent
+ * and reconnection never actually reconnected anything.
+ *
+ * So it retries for as long as the profile asks it to, and the backoff is what
+ * keeps that polite: the delay doubles to a five-minute ceiling, so an outage
+ * lasting all afternoon costs a handful of connection attempts an hour, not a
+ * flood. What the old number was protecting — that somebody is told rather than
+ * left watching a window — is `ATTEMPTS_BEFORE_NOTICE` below, which is a notice
+ * rather than a surrender.
  */
-export const DEFAULT_MAX_ATTEMPTS = 3;
+export const DEFAULT_MAX_ATTEMPTS = Number.POSITIVE_INFINITY;
+
+/**
+ * How many attempts pass before the interface says something.
+ *
+ * The first few failures are the ordinary ones and are not worth a word: a
+ * connection that comes back within a few seconds should look like nothing
+ * happened. Past that it is an outage the person can see the effects of, and
+ * saying so — while continuing to retry — is the difference between a client
+ * that is working on it and a client that appears to have stopped caring.
+ */
+export const ATTEMPTS_BEFORE_NOTICE = 3;
+
+/**
+ * How long a connection must last to count as having worked.
+ *
+ * Unbounded retrying needs this. A server that accepts a socket and drops it
+ * immediately — a full network, a ban, a load balancer in front of nothing —
+ * would otherwise reset the backoff on every attempt, and the client would
+ * reconnect once a second forever, which is a denial of service written by
+ * accident. A connection shorter than this is treated as a failed attempt in
+ * the same round, so the delay keeps growing.
+ */
+export const STABLE_CONNECTION_MS = 30_000;
+
+/**
+ * How long an attempt may take before it is abandoned.
+ *
+ * A default rather than nothing, because "nothing" is not "the platform's
+ * sensible default": a `WebSocket` opening towards a network that is
+ * black-holing packets never fails and never opens, so the web build sat in
+ * `connecting` indefinitely and no retry was ever scheduled. The Rust transport
+ * has its own timeout; this makes the browser behave the same way.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
 /** Computes the wait before a given attempt, jitter included. */
 export function backoffDelay(
@@ -92,10 +135,11 @@ export interface ReconnectingOptions {
   readonly createTransport: (endpoint: ServerEndpoint) => Transport;
   readonly autoReconnect: boolean;
   /**
-   * Attempts before giving up and reporting a close. Defaults to three.
+   * Attempts before giving up and reporting a close. Unbounded by default.
    *
-   * `Infinity` retries forever, which is what somebody pointing Marmotter at
-   * their own bouncer would want and is not the default.
+   * A finite number turns a long outage into a permanent disconnection, which
+   * is what this defaults away from; it is here for tests and for a caller that
+   * genuinely wants one shot.
    */
   readonly maxAttempts?: number;
   readonly backoff?: BackoffPolicy;
@@ -105,6 +149,7 @@ export interface ReconnectingOptions {
   readonly setTimeoutFn?: (handler: () => void, ms: number) => unknown;
   readonly clearTimeoutFn?: (handle: unknown) => void;
   readonly random?: () => number;
+  readonly now?: () => number;
 }
 
 /**
@@ -129,6 +174,15 @@ export interface ReconnectingTransport extends Omit<Transport, 'connect'> {
    * puts the same machinery in motion that a real close would.
    */
   dropped(reason: CloseReason): void;
+  /**
+   * Tries again now, abandoning the rest of the backoff wait.
+   *
+   * For the "Try again" the interface offers, and for the moment the operating
+   * system says the network is back: waiting out four more minutes of a delay
+   * calculated before the cable was plugged back in is the client looking
+   * broken for no reason. Ignored unless a retry is actually pending.
+   */
+  retryNow(): void;
 }
 
 /**
@@ -150,6 +204,8 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
   const schedule = options.setTimeoutFn ?? ((handler, ms) => setTimeout(handler, ms));
   const unschedule = options.clearTimeoutFn ?? ((handle) => clearTimeout(handle as never));
   const random = options.random ?? Math.random;
+  const now = options.now ?? ((): number => Date.now());
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 
   let state: ConnectionState = { kind: 'idle' };
   let active: Transport | undefined;
@@ -158,6 +214,8 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
   let attempt = 0;
   let endpointIndex = 0;
   let stopped = false;
+  /** When the current connection was established, for the stability check. */
+  let connectedAt: number | undefined;
 
   const setState = (next: ConnectionState): void => {
     state = next;
@@ -211,6 +269,13 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
 
   const handleClose = (reason: CloseReason): void => {
     detach();
+    // A connection that stood up for a while earns a fresh round of backoff.
+    // One that fell over immediately does not: see `STABLE_CONNECTION_MS`.
+    if (connectedAt !== undefined && now() - connectedAt >= STABLE_CONNECTION_MS) {
+      attempt = 0;
+      endpointIndex = 0;
+    }
+    connectedAt = undefined;
     if (stopped) {
       return;
     }
@@ -240,7 +305,7 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
 
     const connectOptions: ConnectOptions = {
       endpoint,
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      timeoutMs,
       ...(options.clientCertPath === undefined ? {} : { clientCertPath: options.clientCertPath }),
     };
 
@@ -251,7 +316,7 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
         transport.disconnect();
         return;
       }
-      attempt = 0;
+      connectedAt = now();
       setState({ kind: 'connected', endpoint });
     } catch (error) {
       detach();
@@ -286,6 +351,7 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
       stopped = false;
       attempt = 0;
       endpointIndex = 0;
+      connectedAt = undefined;
       await attemptConnect();
     },
 
@@ -299,6 +365,17 @@ export function createReconnectingTransport(options: ReconnectingOptions): Recon
     onLine: (callback) => lines.add(callback),
     onClose: (callback) => closes.add(callback),
     onStateChange: (callback) => states.add(callback),
+
+    retryNow(): void {
+      if (stopped || state.kind !== 'waiting') {
+        return;
+      }
+      cancelTimer();
+      // The attempt count is kept: this is the same round arriving early, not a
+      // fresh start, and resetting it would restart the backoff from a second
+      // on every click.
+      void attemptConnect();
+    },
 
     dropped(reason: CloseReason): void {
       if (stopped || state.kind !== 'connected') {

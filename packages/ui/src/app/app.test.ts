@@ -13,7 +13,7 @@ import {
   stripFormatting,
 } from './format.js';
 import { EMPTY_IDENTITY } from '@marmotter/shared';
-import { lostConnectionText, shouldAskForIdentity } from './Marmotter.js';
+import { lostConnectionText, reconnectingText, shouldAskForIdentity } from './Marmotter.js';
 import { buildRows, summarise } from './rows.js';
 import {
   TOAST_SECONDS_RANGE,
@@ -455,6 +455,28 @@ describe('the notice timeout', () => {
   it('rounds a fractional value, since the stepper counts whole seconds', () => {
     expect(clampToastSeconds(7.4)).toBe(7);
     expect(clampToastSeconds(7.6)).toBe(8);
+  });
+});
+
+describe('what to say while a connection is being retried', () => {
+  it('says the client is still working on it, not that it has stopped', () => {
+    // The opposite of `lostConnectionText`, and the distinction is the point:
+    // retrying is unbounded, so a long outage would otherwise be silent, and
+    // silence reads as a client that has given up.
+    const text = reconnectingText('Libera.Chat', 4_000);
+    expect(text).toContain('Libera.Chat');
+    expect(text).toContain('Still trying');
+    expect(text.toLowerCase()).not.toContain('sorry');
+  });
+
+  it('names a long wait in minutes rather than counting seconds at somebody', () => {
+    expect(reconnectingText('Libera.Chat', 300_000)).toContain('5 minutes');
+    expect(reconnectingText('Libera.Chat', 60_000)).toContain('1 minute');
+    expect(reconnectingText('Libera.Chat', 60_000)).not.toContain('minutes');
+  });
+
+  it('does not put a number on a wait short enough not to need one', () => {
+    expect(reconnectingText('Libera.Chat', 2_000)).toContain('shortly');
   });
 });
 

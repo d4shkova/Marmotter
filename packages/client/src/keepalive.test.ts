@@ -40,16 +40,22 @@ function fakeClock() {
   };
 }
 
-function build(options: { idleMs?: number; timeoutMs?: number } = {}) {
+function build(options: { idleMs?: number; timeoutMs?: number; sendThrows?: boolean } = {}) {
+  const { sendThrows, ...intervals } = options;
   const clock = fakeClock();
   const sent: string[] = [];
   const onDead = vi.fn();
   const keepalive = createKeepalive({
-    send: (line) => sent.push(line),
+    send: (line) => {
+      if (sendThrows === true) {
+        throw new Error('The connection is not open.');
+      }
+      sent.push(line);
+    },
     onDead,
     setTimeoutFn: clock.setTimeoutFn,
     clearTimeoutFn: clock.clearTimeoutFn,
-    ...options,
+    ...intervals,
   });
   return { clock, sent, onDead, keepalive };
 }
@@ -189,5 +195,60 @@ describe('noticing a connection that has died without closing', () => {
     expect(sent).toHaveLength(1);
     clock.advance(50);
     expect(onDead).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes a send that throws as the answer, without waiting the timeout out', () => {
+    // A transport that will not accept a line has no connection to ask down.
+    // Sitting out the timeout to reach a conclusion already in hand is a minute
+    // of the interface claiming to be connected for no reason.
+    const { clock, onDead, keepalive } = build({ sendThrows: true });
+    keepalive.start();
+
+    clock.advance(DEFAULT_IDLE_MS);
+    expect(onDead).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks immediately when something outside says to', () => {
+    // A machine that was asleep did not run the idle timer either, so waiting
+    // out a fresh minute of silence would be a minute spent on a connection
+    // that died an hour ago.
+    const { clock, sent, onDead, keepalive } = build();
+    keepalive.start();
+
+    clock.advance(1_000);
+    keepalive.probeNow();
+    expect(sent).toHaveLength(1);
+
+    clock.advance(DEFAULT_TIMEOUT_MS);
+    expect(onDead).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an answer to an early question settle it', () => {
+    const { clock, sent, onDead, keepalive } = build();
+    keepalive.start();
+    keepalive.probeNow();
+    keepalive.noteActivity();
+
+    clock.advance(DEFAULT_TIMEOUT_MS);
+    expect(onDead).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('does not ask twice when a question is already outstanding', () => {
+    const { clock, sent, keepalive } = build();
+    keepalive.start();
+    clock.advance(DEFAULT_IDLE_MS);
+    expect(sent).toHaveLength(1);
+
+    keepalive.probeNow();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('ignores an early question when it is not watching', () => {
+    const { sent, onDead, keepalive } = build();
+    keepalive.probeNow();
+
+    expect(sent).toEqual([]);
+    expect(onDead).not.toHaveBeenCalled();
   });
 });

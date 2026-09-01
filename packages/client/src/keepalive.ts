@@ -18,6 +18,22 @@
  * traffic to it, and servers send their own `PING` too — treating only our own
  * `PONG` as an answer would be stricter without being more correct.
  *
+ * Two things shorten the wait, because the idle timer alone is slower than the
+ * evidence usually available.
+ *
+ * A `send` that throws is the answer. A transport that will not take a line has
+ * no connection to ping through, and sitting out the full timeout to reach a
+ * conclusion already in hand is a minute of the interface claiming to be
+ * connected for no reason.
+ *
+ * And `probeNow` skips the idle wait when something outside knows the ground
+ * has moved — the machine woke from sleep, the tab came back to the front, the
+ * operating system says the network is back. Those are exactly the moments a
+ * connection is most likely to be half-open, and exactly the moments the idle
+ * timer is least trustworthy: a suspended machine does not run timers, so the
+ * sixty seconds of silence that should have raised a question were never
+ * counted. See `liveness.ts` for where those signals come from.
+ *
  * The timers are injected, so the whole thing is testable without waiting a
  * real minute.
  */
@@ -36,7 +52,13 @@ export const DEFAULT_IDLE_MS = 60_000;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface KeepaliveOptions {
-  /** Sends a raw line. Only ever used to send `PING`. */
+  /**
+   * Sends a raw line. Only ever used to send `PING`.
+   *
+   * Throwing is a valid answer, and a fast one: it means there is no open
+   * connection to ask down, so the connection is declared dead there and then
+   * rather than after the timeout.
+   */
   readonly send: (line: string) => void;
   /** Called once when the connection is judged dead. */
   readonly onDead: () => void;
@@ -52,6 +74,15 @@ export interface Keepalive {
   start(): void;
   /** Records that something arrived, which is what proof of life is. */
   noteActivity(): void;
+  /**
+   * Asks straight away rather than waiting out the idle window.
+   *
+   * For the moments when something outside has reason to doubt the connection:
+   * a wake from sleep, a tab returning to the front, the network coming back.
+   * A question already outstanding is left alone — asking twice does not make
+   * an answer arrive sooner.
+   */
+  probeNow(): void;
   /** Stops watching and forgets any pending question. */
   stop(): void;
   /** Whether a `PING` is outstanding, for tests and the raw log. */
@@ -96,7 +127,14 @@ export function createKeepalive(options: KeepaliveOptions): Keepalive {
     // The payload is a timestamp so a `PONG` is legible in the raw log, which
     // is where somebody debugging a flaky connection will be looking. Nothing
     // reads it back: any inbound line is the answer.
-    options.send(`PING :marmotter-${Date.now()}`);
+    try {
+      options.send(`PING :marmotter-${Date.now()}`);
+    } catch {
+      // Nothing to ask down. That is the answer, and waiting the timeout out
+      // to reach it would only keep the interface wrong for longer.
+      declareDead();
+      return;
+    }
     timer = schedule(declareDead, timeoutMs);
   };
 
@@ -121,6 +159,14 @@ export function createKeepalive(options: KeepaliveOptions): Keepalive {
       running = true;
       dead = false;
       waitForSilence();
+    },
+
+    probeNow(): void {
+      if (!running || waiting) {
+        return;
+      }
+      cancel();
+      ask();
     },
 
     noteActivity(): void {

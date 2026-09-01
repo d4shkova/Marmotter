@@ -1,4 +1,5 @@
 import {
+  ATTEMPTS_BEFORE_NOTICE,
   CHANNEL_LIST_LIMIT,
   createReconnectingTransport,
   type Member,
@@ -172,6 +173,28 @@ export function lostConnectionText(name: string, reason: CloseReason): string {
     case 'user':
       return `Disconnected from ${name}.`;
   }
+}
+
+/**
+ * What to say while a connection is being retried.
+ *
+ * A separate sentence from `lostConnectionText` because it means the opposite.
+ * That one is the client reporting it has stopped; this one is the client
+ * saying it is still working on it, which is what somebody watching an empty
+ * channel needs to know. Retrying is unbounded now, so without this a long
+ * outage would be silent — and silence reads as a client that has given up.
+ *
+ * The wait is named rather than counted down. A countdown implies a precision
+ * the backoff does not have — the delay is jittered — and there is a "Try now"
+ * beside this for anyone who does not want to wait.
+ */
+export function reconnectingText(name: string, delayMs: number): string {
+  const seconds = Math.round(delayMs / 1000);
+  const when =
+    seconds < 60
+      ? 'Trying again shortly.'
+      : `Trying again in about ${Math.round(seconds / 60)} minute${seconds < 90 ? '' : 's'}.`;
+  return `Still trying to reach ${name}. ${when}`;
 }
 
 /**
@@ -1111,10 +1134,19 @@ export function Marmotter({
           handleTlsError.current(profile);
         } else if (sessionEvent.kind === 'closed' && sessionEvent.reason.kind !== 'user') {
           // Reconnection has already been tried and given up — the wrapper only
-          // reports a close once it is out of attempts — so this is the point
-          // at which somebody needs telling, with the way back in the same
-          // notice rather than somewhere they have to go looking.
+          // reports a close once it is out of attempts, which with the default
+          // of unbounded retrying means the profile has auto-reconnect off or
+          // the failure is one no amount of retrying fixes — so this is the
+          // point at which somebody needs telling, with the way back in the
+          // same notice rather than somewhere they have to go looking.
           reportLostConnection.current(profile, sessionEvent.reason);
+        } else if (sessionEvent.kind === 'reconnecting') {
+          // Said once, on the attempt where an outage stops being the ordinary
+          // few seconds nobody should have to read about. Retrying continues
+          // either way; the notice is company, not a decision.
+          if (sessionEvent.attempt === ATTEMPTS_BEFORE_NOTICE) {
+            reportReconnecting.current(profile, sessionEvent.delayMs, () => transport.retryNow());
+          }
         } else if (sessionEvent.kind === 'channel-error') {
           // A refused join used to leave the sentence in the server tab, which
           // is not where somebody who clicked Join is looking: the channel row
@@ -2074,6 +2106,16 @@ export function Marmotter({
     toast(`${lostConnectionText(profile.name, reason)}`, 'error', {
       label: 'Try again',
       onSelect: () => reconnectRef.current(profile.id),
+    });
+  };
+
+  const reportReconnecting = useRef<
+    (profile: NetworkProfile, delayMs: number, retryNow: () => void) => void
+  >(() => {});
+  reportReconnecting.current = (profile, delayMs, retryNow) => {
+    toast(reconnectingText(profile.name, delayMs), 'info', {
+      label: 'Try now',
+      onSelect: retryNow,
     });
   };
 

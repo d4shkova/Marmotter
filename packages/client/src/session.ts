@@ -43,6 +43,7 @@ import type {
   Unsubscribe,
 } from '@marmotter/shared';
 import { type Keepalive, createKeepalive } from './keepalive.js';
+import { type StopWatching, watchLiveness } from './liveness.js';
 import { Listeners } from './transport/listeners.js';
 import { connectErrorReason } from './transport/connect-error.js';
 import type { ReconnectingTransport } from './transport/reconnecting.js';
@@ -110,6 +111,21 @@ export type SessionEvent =
   | { readonly kind: 'connected' }
   | { readonly kind: 'registered' }
   | { readonly kind: 'closed'; readonly reason: CloseReason }
+  /**
+   * The connection dropped and is being retried.
+   *
+   * Raised on every attempt, so the interface can say what is happening while
+   * it happens. A `closed` still means it has stopped for good; this one means
+   * the opposite, and the difference is the whole point of raising it — before
+   * this existed a drop was either invisible or final, and an outage lasting
+   * longer than a few seconds looked like the client giving up.
+   */
+  | {
+      readonly kind: 'reconnecting';
+      readonly attempt: number;
+      readonly delayMs: number;
+      readonly reason: CloseReason;
+    }
   /** Authentication failed. The connection continues, unauthenticated. */
   | { readonly kind: 'auth-failed'; readonly reason: string }
   /**
@@ -715,36 +731,43 @@ export function createSession(options: SessionOptions): Session {
    * Watching for a connection that has died without saying so.
    *
    * The half-open socket: the network goes away, nothing sends a FIN, and the
-   * client sits showing "connected" forever. Started once registration
-   * completes — before that the server is talking to us anyway — and told about
+   * client sits showing "connected" forever. Started as soon as a connection
+   * exists — the registration handshake can go unanswered too — and told about
    * every inbound line, which is what counts as proof of life.
    */
-  watch.current = createKeepalive({
-    send: (line) => {
-      try {
-        transport.send(line);
-      } catch {
-        // The transport refusing to send is itself the answer: there is nothing
-        // to ping through. The timeout below reaches the same conclusion.
-      }
-    },
-    onDead: () => {
-      const reason: CloseReason = {
-        kind: 'network-error',
-        message: 'The server stopped responding.',
-      };
-      // A reconnecting transport is told, so it retries. Anything else is
-      // disconnected, which at least stops the interface claiming otherwise.
-      if ('dropped' in transport) {
-        transport.dropped(reason);
-      } else {
-        transport.disconnect();
-        handleClose(reason);
-      }
-    },
-    ...(options.keepaliveIdleMs === undefined ? {} : { idleMs: options.keepaliveIdleMs }),
-    ...(options.keepaliveTimeoutMs === undefined ? {} : { timeoutMs: options.keepaliveTimeoutMs }),
-  });
+  /**
+   * Zero means no watch at all, which is what a test driving a scripted
+   * transcript wants: there is no socket there to go half-open, and a `PING`
+   * into one would only appear in the transcript as a line nobody sent.
+   */
+  const watching = options.keepaliveIdleMs !== 0;
+
+  watch.current = !watching
+    ? undefined
+    : createKeepalive({
+        // Not wrapped: a transport that refuses the line is the answer, and the
+        // keepalive treats the throw as one rather than sitting out the timeout to
+        // reach a conclusion already in hand.
+        send: (line) => transport.send(line),
+        onDead: () => {
+          const reason: CloseReason = {
+            kind: 'network-error',
+            message: 'The server stopped responding.',
+          };
+          // A reconnecting transport is told, so it retries. Anything else is
+          // disconnected, which at least stops the interface claiming otherwise.
+          if ('dropped' in transport) {
+            transport.dropped(reason);
+          } else {
+            transport.disconnect();
+            handleClose(reason);
+          }
+        },
+        ...(options.keepaliveIdleMs === undefined ? {} : { idleMs: options.keepaliveIdleMs }),
+        ...(options.keepaliveTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.keepaliveTimeoutMs }),
+      });
 
   /**
    * Listens from the moment the session exists, not from `connect`.
@@ -789,6 +812,14 @@ export function createSession(options: SessionOptions): Session {
       reconnecting.onStateChange((connection) => {
         if (connection.kind === 'connecting' || connection.kind === 'waiting') {
           watch.current?.stop();
+          if (connection.kind === 'waiting') {
+            events.emit({
+              kind: 'reconnecting',
+              attempt: connection.attempt,
+              delayMs: connection.delayMs,
+              reason: connection.reason,
+            });
+          }
           // Only from a state that claimed otherwise. A first connection
           // already sets this in `connect`, and republishing would discard the
           // `lastClose` it deliberately cleared.
@@ -799,11 +830,44 @@ export function createSession(options: SessionOptions): Session {
         }
 
         if (connection.kind === 'connected' && !destroyed) {
+          // Started here rather than waiting for a first line. A server that
+          // accepts the socket and then says nothing — the far end already gone
+          // when the handshake completed, a load balancer in front of nothing —
+          // would otherwise leave the session in `registering` with no watch on
+          // it and nothing that ever times out.
+          watch.current?.start();
           void register();
         }
       }),
     );
   }
+
+  /**
+   * Asking early when something outside says the ground has moved.
+   *
+   * The idle timer is the wrong instrument for a laptop that was asleep — it
+   * was not running either — and slow for a tab that has been throttled behind
+   * twenty others. A wake, a return to the foreground, or the operating system
+   * reporting the network back all skip the wait and ask now. Nothing here
+   * decides anything: the `PING` and its answer still do.
+   *
+   * A retry that is sitting out its backoff is also brought forward. The delay
+   * was calculated before the cable went back in, and waiting out four more
+   * minutes of it is the client looking broken for no reason.
+   */
+  const stopLiveness: StopWatching | undefined = !watching
+    ? undefined
+    : watchLiveness({
+        onSuspicion: () => {
+          if (destroyed) {
+            return;
+          }
+          watch.current?.probeNow();
+          if (reconnecting?.state.kind === 'waiting') {
+            reconnecting.retryNow();
+          }
+        },
+      });
 
   const detach = (): void => {
     for (const stop of subscriptions) {
@@ -861,6 +925,9 @@ export function createSession(options: SessionOptions): Session {
    */
   const register = async (): Promise<void> => {
     events.emit({ kind: 'connected' });
+    // Covers the registration itself, which is otherwise unwatched: `NICK` and
+    // `USER` go out and, if nothing comes back, nothing ever concludes.
+    watch.current?.start();
 
     const opening = startRegistration(state, profile.identity);
     publish(opening.state);
@@ -1035,6 +1102,8 @@ export function createSession(options: SessionOptions): Session {
 
     destroy() {
       destroyed = true;
+      watch.current?.stop();
+      stopLiveness?.();
       clearTimeout(coalescing);
       coalescing = undefined;
       stopPolling();

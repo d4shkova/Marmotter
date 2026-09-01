@@ -98,7 +98,9 @@ function build(queue: FakeTransport[]) {
     random: () => 0.5,
   });
 
-  const session = createSession({ profile: profile(), transport });
+  // The liveness watch would otherwise hold a real interval open per session,
+  // and its signals are covered on their own in `liveness.test.ts`.
+  const session = createSession({ profile: profile(), transport, keepaliveIdleMs: 0 });
   const events: SessionEvent[] = [];
   session.on((event) => events.push(event));
   return { session, transport, clock, created, events };
@@ -177,6 +179,47 @@ describe('reconnecting after a drop', () => {
     expect(session.state.phase).toBe('connecting');
 
     await clock.runPending();
+    expect(session.state.phase).toBe('registering');
+  });
+
+  it('says it is retrying, on every attempt, rather than only when it stops', async () => {
+    // Retrying is unbounded, so a close is no longer what tells somebody an
+    // outage is happening — this is. Without it a long outage is silent, and
+    // silence reads as a client that has given up.
+    const first = new FakeTransport();
+    const { session, clock, events } = build([
+      first,
+      new FakeTransport(new Error('refused')),
+      new FakeTransport(new Error('refused')),
+    ]);
+    await session.connect();
+
+    first.closes.emit({ kind: 'server' });
+    await clock.runPending();
+    await clock.runPending();
+
+    const retries = events.filter((event) => event.kind === 'reconnecting');
+    expect(retries.length).toBeGreaterThanOrEqual(2);
+    expect(retries[0]).toMatchObject({ attempt: 1, reason: { kind: 'server' } });
+    expect(retries[0]?.kind === 'reconnecting' && retries[0].delayMs).toBeGreaterThan(0);
+    // And none of it is reported as the connection having stopped for good.
+    expect(events.filter((event) => event.kind === 'closed')).toEqual([]);
+  });
+
+  it('does not report a close while it is still working on it', async () => {
+    const first = new FakeTransport();
+    const { session, clock, events, created } = build([first]);
+    await session.connect();
+
+    // Eight drops in a row: well past the three attempts this used to allow,
+    // which is seven seconds into an outage.
+    for (let round = 0; round < 8; round += 1) {
+      created[created.length - 1]?.closes.emit({ kind: 'server' });
+      await clock.runPending();
+    }
+
+    expect(created).toHaveLength(9);
+    expect(events.filter((event) => event.kind === 'closed')).toEqual([]);
     expect(session.state.phase).toBe('registering');
   });
 });
