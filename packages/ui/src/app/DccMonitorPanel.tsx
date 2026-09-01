@@ -18,8 +18,11 @@ export interface DccMonitorPanelProps {
  * The DCC file monitor's home at the foot of the sidebar, under the networks.
  *
  * Deliberately quiet: a line of status, a start/stop control, and a count. It
- * only appears at all once the feature is switched on in settings, so its mere
- * presence is the signal that the monitor is running.
+ * appears once the feature is switched on in settings, which is what says the
+ * monitor is available — not that it is watching. Watching starts here, with
+ * Start, and starts off on every launch: a feature that collects what strangers
+ * send should be something somebody switched on today, not something they
+ * inherit from having enabled it once.
  */
 export function DccMonitorPanel({
   active,
@@ -47,7 +50,7 @@ export function DccMonitorPanel({
             active ? 'text-[var(--status-connected)]' : 'text-[var(--label-quaternary)]',
           )}
         >
-          {active ? 'Watching' : 'Paused'}
+          {active ? 'Watching' : seen === 0 ? 'Not watching' : 'Paused'}
         </span>
       </div>
 
@@ -55,7 +58,9 @@ export function DccMonitorPanel({
         {seen === 0
           ? active
             ? 'No files offered yet.'
-            : 'Monitoring is paused.'
+            : // Nothing has been seen, so there is nothing this was paused
+              // from: saying so would suggest something was lost.
+              'Start watching to collect files people offer.'
           : `${seen} ${seen === 1 ? 'file' : 'files'} offered`}
       </p>
 

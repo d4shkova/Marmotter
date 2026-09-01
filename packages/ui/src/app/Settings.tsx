@@ -481,8 +481,8 @@ export function Settings({
                               ? 'Marmotter has nowhere it can save files on this device yet.'
                               : 'Choose a download folder first. Downloading connects directly to whoever offered the file, so it is off until you turn it on.'
                             : onChooseDownloadFolder === undefined
-                              ? 'Shows a file monitor you can open from the channel list. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you tap Download. Files are saved inside the app, and uninstalling it takes them with it.'
-                              : 'Shows a file monitor in the right-hand column. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
+                              ? 'Shows a file monitor you can open from the channel list. It starts off: tap Start on it to begin collecting what people offer. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you tap Download. Files are saved inside the app, and uninstalling it takes them with it.'
+                              : 'Shows a file monitor in the right-hand column. It starts off: click Start on it to begin collecting what people offer. Downloading connects directly to whoever offered the file, revealing your address to them, so nothing is fetched until you click Download.'
                         }
                         checked={userOptions.dccMonitorEnabled}
                         disabled={userOptions.downloadFolder === undefined}
