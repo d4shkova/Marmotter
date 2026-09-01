@@ -26,6 +26,36 @@ export interface DccDownloadRequest {
   readonly filename: string;
   /** The folder chosen in settings. */
   readonly folder: string;
+  /**
+   * Where to continue from, when the sender agreed to resume.
+   *
+   * Only ever a position the sender named in a `DCC ACCEPT`. Left out, the
+   * transfer starts the file again from nothing.
+   */
+  readonly resumeFrom?: number;
+  /**
+   * Whether the transfer's socket is TLS, from an `SSEND` offer.
+   *
+   * Carried all the way down because it changes how the socket is opened, and
+   * nothing below can infer it: dialled in the clear, a secure offer connects
+   * and then simply never says anything, which reads as a firewall.
+   */
+  readonly secure?: boolean;
+  /** Whether the sender streams without waiting to be acknowledged (`TSEND`). */
+  readonly turbo?: boolean;
+}
+
+/** What the shell needs to receive one passive (reverse) transfer. */
+export interface DccPassiveRequest {
+  /** The sender's advertised address. Only it may connect to the socket. */
+  readonly host: string;
+  readonly size?: number;
+  readonly filename: string;
+  readonly folder: string;
+  /** Whether the sender streams without waiting to be acknowledged. */
+  readonly turbo?: boolean;
+  /** Where to continue from, when the sender agreed to resume. */
+  readonly resumeFrom?: number;
 }
 
 /** Progress of a transfer in flight: bytes received, and the total if known. */
@@ -77,6 +107,33 @@ export interface DccCapability {
    * cancellation.
    */
   download(request: DccDownloadRequest, onProgress?: DccProgress): DccTransfer;
+  /**
+   * Receives a passive (reverse) transfer: the shell listens, the sender dials.
+   *
+   * `onListening` is called once with the port the shell bound and the address
+   * it believes this machine has on the route to the sender; the caller must
+   * send both back to the sender over IRC, because nothing connects until it
+   * does. Everything after that is an ordinary transfer, so the handle is the
+   * same one {@link download} returns.
+   *
+   * Optional: a platform that cannot accept an incoming connection leaves it
+   * out, and a passive offer stays marked as one that cannot be fetched rather
+   * than offering a button that opens a socket nothing will ever dial.
+   */
+  receivePassive?(
+    request: DccPassiveRequest,
+    onListening: (address: string | undefined, port: number) => void,
+    onProgress?: DccProgress,
+  ): DccTransfer;
+  /**
+   * How much of this file an earlier attempt already wrote, in bytes.
+   *
+   * Asked before a transfer starts, because continuing one has to be agreed
+   * with the sender over IRC and by the time the socket is open it is too late
+   * to ask. Zero means there is nothing to continue. Optional: a platform that
+   * leaves it out simply starts every transfer from the beginning.
+   */
+  resumableBytes?(folder: string, filename: string): Promise<number>;
   /**
    * Opens the platform's file manager on a downloaded file, selecting it.
    *

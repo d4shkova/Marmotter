@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-android"
-version = "1.0.5"
+version = "1.1.0"
 dependencies = [
  "android_logger",
  "log",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-desktop"
-version = "1.0.5"
+version = "1.1.0"
 dependencies = [
  "keyring",
  "marmotter-shell",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-shell"
-version = "1.0.5"
+version = "1.1.0"
 dependencies = [
  "marmotter-transport",
  "serde",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "marmotter-transport"
-version = "1.0.5"
+version = "1.1.0"
 dependencies = [
  "rcgen",
  "rustls",

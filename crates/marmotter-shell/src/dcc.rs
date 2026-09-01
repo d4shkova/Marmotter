@@ -30,13 +30,23 @@ use std::path::Path;
 use std::process::Command;
 
 use marmotter_transport::{
-    dcc_cancel_channel, dcc_download, DccCancelHandle, DccDownloadOptions, DEFAULT_DCC_TIMEOUT,
+    dcc_cancel_channel, dcc_download, dcc_local_address_towards, dcc_plan_target,
+    dcc_receive_passive as receive_passive_transfer, DccCancelHandle, DccDownloadOptions,
+    DccPassiveOptions, DEFAULT_DCC_TIMEOUT,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 /// Event emitted as a download proceeds. Payload is [`DccProgress`].
 pub const DCC_PROGRESS_EVENT: &str = "marmotter://dcc-progress";
+
+/// Event emitted once a passive transfer's socket is open. Payload is
+/// [`DccListening`].
+///
+/// The front end has to answer the sender with the port before anything will
+/// connect, and the port is only known once the socket is bound — so it arrives
+/// as an event partway through the command rather than as its return value.
+pub const DCC_LISTENING_EVENT: &str = "marmotter://dcc-listening";
 
 /// The cancel handle of every transfer currently in flight, keyed by its id.
 ///
@@ -58,9 +68,47 @@ pub struct DccDownloadRequest {
     pub size: Option<u64>,
     pub filename: String,
     pub folder: String,
+    /// Where to continue from, when the sender agreed to resume.
+    #[serde(default, rename = "resumeFrom")]
+    pub resume_from: Option<u64>,
+    /// Whether the transfer's socket is TLS, from an `SSEND` offer.
+    #[serde(default)]
+    pub secure: bool,
+    /// Whether the sender streams without waiting to be acknowledged.
+    #[serde(default)]
+    pub turbo: bool,
     /// Correlates progress events with the row that started the transfer.
     #[serde(rename = "transferId")]
     pub transfer_id: String,
+}
+
+/// What `dcc_receive_passive` accepts: a reverse offer we answer by listening.
+#[derive(Debug, Deserialize)]
+pub struct DccPassiveRequest {
+    /// The sender's advertised address; only it may connect to the socket.
+    pub host: String,
+    pub size: Option<u64>,
+    pub filename: String,
+    pub folder: String,
+    #[serde(default)]
+    pub turbo: bool,
+    /// Where to continue from, when the sender agreed to resume.
+    #[serde(default, rename = "resumeFrom")]
+    pub resume_from: Option<u64>,
+    #[serde(rename = "transferId")]
+    pub transfer_id: String,
+}
+
+/// Emitted when a passive transfer's socket is open and needs advertising.
+#[derive(Debug, Clone, Serialize)]
+pub struct DccListening {
+    pub id: String,
+    /// The port that was bound, which goes in the reply to the sender.
+    pub port: u16,
+    /// Our address on the route to the sender, for the same reply. Null when
+    /// the sender's address could not be read, which leaves the caller to fill
+    /// it in from its own settings.
+    pub address: Option<String>,
 }
 
 /// One progress update for a transfer in flight.
@@ -100,6 +148,9 @@ pub async fn dcc_download_file(
             size: request.size,
             filename: request.filename,
             folder: PathBuf::from(request.folder),
+            secure: request.secure,
+            turbo: request.turbo,
+            resume_from: request.resume_from,
             timeout: DEFAULT_DCC_TIMEOUT,
             cancel: Some(cancel_signal),
         },
@@ -123,6 +174,87 @@ pub async fn dcc_download_file(
 
     let path = result.map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Receives a passive (reverse) transfer: Marmotter listens, the sender connects.
+///
+/// Emits [`DCC_LISTENING_EVENT`] as soon as the socket is open, carrying the
+/// port and this machine's address on the route to the sender; the front end
+/// sends those back to the sender over IRC, which is what makes it connect.
+/// Returns the path the file was written to, exactly as an ordinary download
+/// does, so a row does not have to care which way round the connection went.
+#[tauri::command]
+pub async fn dcc_receive_passive(
+    app: AppHandle,
+    request: DccPassiveRequest,
+) -> Result<String, String> {
+    let transfer_id = request.transfer_id;
+    let emitter = app.clone();
+
+    let (cancel_handle, cancel_signal) = dcc_cancel_channel();
+    transfers()
+        .lock()
+        .expect("the transfer registry lock was poisoned")
+        .insert(transfer_id.clone(), cancel_handle);
+    let _guard = TransferGuard(transfer_id.clone());
+
+    let address = dcc_local_address_towards(&request.host);
+    // The transport's function under a different name: the command below shares
+    // the exported one, and calling it here would be recursion, not a transfer.
+    let result = receive_passive_transfer(
+        DccPassiveOptions {
+            peer_host: request.host,
+            size: request.size,
+            filename: request.filename,
+            folder: PathBuf::from(request.folder),
+            turbo: request.turbo,
+            resume_from: request.resume_from,
+            timeout: DEFAULT_DCC_TIMEOUT,
+            cancel: Some(cancel_signal),
+        },
+        {
+            let transfer_id = transfer_id.clone();
+            let emitter = app.clone();
+            move |port| {
+                let _ = emitter.emit(
+                    DCC_LISTENING_EVENT,
+                    DccListening {
+                        id: transfer_id,
+                        port,
+                        address,
+                    },
+                );
+            }
+        },
+        {
+            let transfer_id = transfer_id.clone();
+            move |received, total| {
+                let _ = emitter.emit(
+                    DCC_PROGRESS_EVENT,
+                    DccProgress {
+                        id: transfer_id.clone(),
+                        received,
+                        total,
+                    },
+                );
+            }
+        },
+    )
+    .await;
+
+    let path = result.map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// How much of this file an earlier attempt already wrote, if any.
+///
+/// Answered before a transfer starts, because resuming has to be agreed with
+/// the sender over IRC and by the time the socket is open it is too late to
+/// ask. Zero means there is nothing to continue — no part-file, or a finished
+/// file of that name, which is never resumed over.
+#[tauri::command]
+pub fn dcc_resumable_bytes(folder: String, filename: String) -> u64 {
+    dcc_plan_target(&PathBuf::from(folder), &filename).resumable
 }
 
 /// Removes a transfer's cancel channel from the registry when its download ends,

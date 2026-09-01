@@ -35,6 +35,8 @@ describe('a DCC offer', () => {
           port: 5000,
           size: 204800,
           passive: false,
+          secure: false,
+          turbo: false,
         },
       },
     ]);
@@ -61,7 +63,7 @@ describe('a DCC offer', () => {
     expect(sent).toEqual([]);
   });
 
-  it('marks a passive offer as one it cannot fetch', () => {
+  it('reads a passive offer, keeping the token the reply has to carry back', () => {
     const { state } = feed(
       registeredSession(),
       [dccSend('file.bin 3232235777 0 4096 998877')],
@@ -71,7 +73,9 @@ describe('a DCC offer', () => {
       kind: 'dcc-offer',
       send: { passive: true, token: '998877' },
     });
-    expect(state.serverNotices.at(-1)?.text).toContain("can't fetch it");
+    // One sentence whichever way the connection goes: the monitor decides what
+    // it can take, and the person receiving a file does not have to know.
+    expect(state.serverNotices.at(-1)?.text).toContain('Open the file monitor');
   });
 
   it('files it in the channel it arrived in', () => {
@@ -81,20 +85,40 @@ describe('a DCC offer', () => {
     });
   });
 
-  it('leaves a malformed DCC line as an ordinary unhandled CTCP', () => {
-    const { state } = feed(
+  it('says so when a line that claims to be a file cannot be read as one', () => {
+    // Not dropped and not filed away as an anonymous CTCP: somebody who asked a
+    // bot for a file and got nothing has no way to tell an unanswered request
+    // from an answer this client did not understand, and the raw line is what
+    // makes the difference reportable.
+    const line = `:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`;
+    const { effects } = feed(registeredSession(), [line], context());
+    expect(effects.filter((effect) => effect.kind === 'dcc-offer')).toEqual([]);
+    expect(effects.filter((effect) => effect.kind === 'dcc-unreadable')).toEqual([
+      { kind: 'dcc-unreadable', from: 'tamsin', target: 'tamsin', params: 'SEND broken' },
+    ]);
+  });
+});
+
+describe('a sender agreeing to continue a file', () => {
+  const dccAccept = (params: string): string =>
+    `:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC ACCEPT ${params}${DELIM}`;
+
+  it('raises the accepted position, and writes nothing into the conversation', () => {
+    const { state, effects } = feed(
       registeredSession(),
-      [`:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`],
+      [dccAccept('big.bin 5000 1024')],
       context(),
     );
-    expect(
-      feed(
-        registeredSession(),
-        [`:tamsin!~t@host.example PRIVMSG marmot :${DELIM}DCC SEND broken${DELIM}`],
-        context(),
-      ).effects.filter((effect) => effect.kind === 'dcc-offer'),
-    ).toEqual([]);
-    // Falls through to the generic CTCP notice rather than the DCC one.
-    expect(state.serverNotices.at(-1)?.text).toContain('an automated request');
+    expect(effects.filter((effect) => effect.kind === 'dcc-accept')).toEqual([
+      {
+        kind: 'dcc-accept',
+        from: 'tamsin',
+        accept: { filename: 'big.bin', port: 5000, position: 1024 },
+      },
+    ]);
+    // The row it belongs to says what is happening. A CTCP handshake line in
+    // the conversation would be exactly the protocol leakage this client exists
+    // to remove.
+    expect(state.serverNotices).toHaveLength(0);
   });
 });

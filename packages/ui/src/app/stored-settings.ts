@@ -119,6 +119,10 @@ function readUserOptions(value: unknown): UserOptions {
     // round trip through disk.
     dccMonitorEnabled: bool(fields['dccMonitorEnabled'], false) && typeof folder === 'string',
     downloadFolder: typeof folder === 'string' && folder !== '' ? folder : undefined,
+    dccAddress:
+      typeof fields['dccAddress'] === 'string' && fields['dccAddress'] !== ''
+        ? fields['dccAddress']
+        : undefined,
     toastSeconds: clampToastSeconds(
       typeof fields['toastSeconds'] === 'number'
         ? fields['toastSeconds']
@@ -198,6 +202,9 @@ export function writeStoredSettings(settings: StoredSettings): Record<string, un
       ...(settings.userOptions.downloadFolder === undefined
         ? {}
         : { downloadFolder: settings.userOptions.downloadFolder }),
+      ...(settings.userOptions.dccAddress === undefined
+        ? {}
+        : { dccAddress: settings.userOptions.dccAddress }),
       toastSeconds: settings.userOptions.toastSeconds,
     },
     logging: {

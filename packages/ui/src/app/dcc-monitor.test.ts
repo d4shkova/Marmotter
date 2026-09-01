@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { shallow } from 'zustand/shallow';
 import {
   DEFAULT_USER_OPTIONS,
+  applyXdccResponse,
   classifyDccReoffer,
   matchPendingRequest,
+  networkForHost,
   sameFilename,
   selectViewWithoutOffers,
   useView,
@@ -16,6 +18,8 @@ const send: DccSend = {
   port: 5000,
   size: 204800,
   passive: false,
+  secure: false,
+  turbo: false,
 };
 
 type OfferArg = Parameters<ReturnType<typeof useView.getState>['recordDccOffer']>[0];
@@ -247,10 +251,18 @@ describe('classifying a serving bot re-offer', () => {
     expect(classifyDccReoffer({ status: 'requested' }, { passive: true })).toBe('refuse');
   });
 
-  it('ignores a re-offer of a row that is mid-transfer, saved, or untouched', () => {
+  it('ignores a re-offer of a row that is mid-transfer or already saved', () => {
     expect(classifyDccReoffer({ status: 'downloading' }, active)).toBe('ignore');
     expect(classifyDccReoffer({ status: 'downloaded' }, active)).toBe('ignore');
-    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('ignore');
+  });
+
+  it('announces an offer of a listed row nothing here started', () => {
+    // The bot is sending a file that is on the list and that no button here
+    // asked for — a request typed at the bot rather than clicked, most often.
+    // Not fetched, because a stranger must not be able to put a file on the
+    // disk by naming one already listed; not dropped either, because a file
+    // somebody is waiting for would then never arrive and never be mentioned.
+    expect(classifyDccReoffer({ status: 'available' }, active)).toBe('announce');
   });
 });
 
@@ -399,5 +411,149 @@ describe('what the shell subscribes to', () => {
     useView.getState().setPane('dcc');
 
     expect(shallow(before, selectViewWithoutOffers(useView.getState()))).toBe(false);
+  });
+});
+
+describe('applyXdccResponse', () => {
+  it('keeps a queued row waiting, and says where it stands', () => {
+    expect(applyXdccResponse({ kind: 'queued', position: 4, waitText: '10m', text: '' })).toEqual({
+      status: 'requested',
+      note: 'Queued, position 4 · about 10m.',
+      settled: false,
+    });
+  });
+
+  it('keeps waiting when the bot says we already asked', () => {
+    // The request is still in the queue; failing the row would throw it away.
+    const outcome = applyXdccResponse({
+      kind: 'denied',
+      reason: 'already-queued',
+      text: '',
+    });
+    expect(outcome.status).toBe('requested');
+    expect(outcome.settled).toBe(false);
+  });
+
+  it('ends the wait on a refusal, in words that say what to do', () => {
+    const outcome = applyXdccResponse({ kind: 'denied', reason: 'not-in-channel', text: '' });
+    expect(outcome).toEqual({
+      status: 'failed',
+      error: "Join one of the bot's channels first — it only sends files to people there.",
+      settled: true,
+    });
+  });
+
+  it('ends the wait when the bot drops the request', () => {
+    expect(applyXdccResponse({ kind: 'dequeued', text: '' }).settled).toBe(true);
+  });
+});
+
+describe('networkForHost', () => {
+  const profiles = new Map([
+    ['libera', { servers: [{ host: 'irc.libera.chat' }] }],
+    ['abc', { servers: [{ host: 'irc.abc.xyz' }, { host: 'eu.abc.xyz' }] }],
+  ]);
+
+  it('finds the network a link names', () => {
+    expect(networkForHost(profiles, 'IRC.ABC.XYZ')).toBe('abc');
+    expect(networkForHost(profiles, 'eu.abc.xyz')).toBe('abc');
+  });
+
+  it('matches the round-robin name a profile connects under', () => {
+    expect(networkForHost(profiles, 'abc.xyz')).toBe('abc');
+  });
+
+  it('is undefined for a network we are not on', () => {
+    expect(networkForHost(profiles, 'irc.example.net')).toBeUndefined();
+    expect(networkForHost(profiles, '  ')).toBeUndefined();
+  });
+});
+
+describe('a pack asked for by hand', () => {
+  beforeEach(() => {
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: true,
+      dccOffers: [],
+    });
+  });
+
+  const request = {
+    networkId: 'libera',
+    networkName: 'Libera.Chat',
+    from: 'bot',
+    pack: 42,
+    at: 1_000,
+  };
+
+  it('lists a row standing in for the advertisement nobody saw', () => {
+    const id = useView.getState().recordXdccRequest(request);
+    const row = useView.getState().dccOffers.find((entry) => entry.id === id);
+    expect(row).toMatchObject({
+      kind: 'xdcc',
+      pack: 42,
+      filename: 'Pack #42',
+      status: 'available',
+    });
+  });
+
+  it('acts on the row already listing that pack rather than adding a second', () => {
+    useView.getState().recordXdccOffer({
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'bot',
+      target: '#packs',
+      pack: { pack: 42, gets: 3, sizeText: '1M', sizeBytes: 1024 ** 2, filename: 'thing.bin' },
+      at: 500,
+    });
+    const id = useView.getState().recordXdccRequest(request);
+    expect(useView.getState().dccOffers).toHaveLength(1);
+    expect(useView.getState().dccOffers[0]?.id).toBe(id);
+    expect(useView.getState().dccOffers[0]?.filename).toBe('thing.bin');
+  });
+
+  it('does nothing while the monitor is switched off', () => {
+    useView.setState({ userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: false } });
+    expect(useView.getState().recordXdccRequest(request)).toBeUndefined();
+    expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('takes the real name from the bot once it answers', () => {
+    const id = useView.getState().recordXdccRequest(request) ?? '';
+    useView.getState().setDccOfferStatus(id, { status: 'downloading', filename: 'thing.bin' });
+    expect(useView.getState().dccOffers[0]?.filename).toBe('thing.bin');
+  });
+
+  it('drops a stale note when the row moves on', () => {
+    const id = useView.getState().recordXdccRequest(request) ?? '';
+    useView.getState().setDccOfferStatus(id, { status: 'requested', note: 'Queued, position 4.' });
+    expect(useView.getState().dccOffers[0]?.note).toBe('Queued, position 4.');
+    useView.getState().setDccOfferStatus(id, { status: 'failed', error: 'Nope.' });
+    expect(useView.getState().dccOffers[0]?.note).toBeUndefined();
+  });
+});
+
+describe('what a bot is holding for a row', () => {
+  it('marks a row the bot has opened a transfer for', () => {
+    expect(applyXdccResponse({ kind: 'awaiting-connection', text: '' })).toEqual({
+      status: 'requested',
+      note: 'The bot is waiting for Marmotter to connect.',
+      settled: false,
+      awaitingTransfer: true,
+    });
+    expect(applyXdccResponse({ kind: 'sending', text: '' }).awaitingTransfer).toBe(true);
+  });
+
+  it('reads a transfer that timed out as unreachable, not as a refusal', () => {
+    const outcome = applyXdccResponse({ kind: 'denied', reason: 'dcc-timeout', text: '' });
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toContain('firewall');
+    expect(outcome.settled).toBe(true);
+  });
+
+  it('leaves a queue placement holding no transfer', () => {
+    expect(applyXdccResponse({ kind: 'queued', position: 2, text: '' }).awaitingTransfer).toBe(
+      undefined,
+    );
   });
 });

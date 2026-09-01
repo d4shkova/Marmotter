@@ -38,10 +38,63 @@ export interface DccSend {
   readonly token?: string;
   /** Whether this is a passive (reverse) offer, which cannot be downloaded. */
   readonly passive: boolean;
+  /**
+   * Whether the transfer itself is TLS, from an `SSEND` offer.
+   *
+   * The socket is a TLS connection rather than a plain one, so a receiver that
+   * dials it in the clear connects, sends nothing the sender recognises, and
+   * both ends sit there until the sender's timeout — which looks exactly like a
+   * firewall and is not one. It is carried here so the downloader can bring up
+   * the handshake instead of guessing from the port.
+   */
+  readonly secure: boolean;
+  /**
+   * Whether the sender is in "turbo" mode, from a `TSEND` offer.
+   *
+   * Turbo means the sender streams without waiting for the four-byte
+   * acknowledgements ordinary DCC expects, and does not read its socket at all.
+   * Acknowledging anyway is not merely wasted: the unread bytes fill the send
+   * buffer and the write blocks, stalling a transfer that was working.
+   */
+  readonly turbo: boolean;
 }
 
-/** The `DCC` subcommands that advertise a file, uppercased. */
-const SEND_SUBCOMMANDS: ReadonlySet<string> = new Set(['SEND', 'TSEND', 'SSEND']);
+/**
+ * The `DCC` subcommands that advertise a file, and what each one means.
+ *
+ * `SEND` is the ordinary one. The letters in front of it are the two variants
+ * clients have added since: `S` for a TLS socket, `T` for "turbo", where the
+ * sender streams without waiting to be acknowledged. Both change how the
+ * receiving socket has to be driven, so they are read here rather than
+ * flattened into "it is a send" — which is what made a secure offer look like
+ * an unreachable one.
+ */
+const SEND_SUBCOMMANDS: ReadonlyMap<string, { secure: boolean; turbo: boolean }> = new Map([
+  ['SEND', { secure: false, turbo: false }],
+  ['SSEND', { secure: true, turbo: false }],
+  ['TSEND', { secure: false, turbo: true }],
+  ['TSSEND', { secure: true, turbo: true }],
+  ['STSEND', { secure: true, turbo: true }],
+]);
+
+/**
+ * Whether a `DCC` CTCP claims to be a file offer, whatever else is wrong with it.
+ *
+ * Separate from {@link parseDccSend} because the two answer different
+ * questions. That one asks "can this be acted on"; this one asks "was this
+ * meant to be a file", which is what makes the difference between an offer
+ * Marmotter quietly ignored and one it could not read. The second is worth
+ * saying out loud: it is a file the person was waiting for, and silence about
+ * it is the hardest kind of fault to report.
+ */
+export function isDccSendOffer(ctcp: CtcpMessage): boolean {
+  if (ctcp.command !== 'DCC') {
+    return false;
+  }
+  const space = ctcp.params.indexOf(' ');
+  const subcommand = (space === -1 ? ctcp.params : ctcp.params.slice(0, space)).toUpperCase();
+  return SEND_SUBCOMMANDS.has(subcommand);
+}
 
 /** The largest value the integer address form can hold: an unsigned 32-bit int. */
 const MAX_IPV4_INTEGER = 0xffffffff;
@@ -84,6 +137,18 @@ function parseAddress(raw: string): string | undefined {
 
   // A dotted quad passes through unchanged.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+    return raw;
+  }
+
+  // A hostname. The convention is an integer and most senders follow it, but a
+  // bot told to advertise itself by name sends the name, and rejecting the
+  // whole offer over it means a file that never arrives for a reason nothing
+  // in the interface can explain. It is resolved where the socket is opened —
+  // the same place the address form would have been dialled — so nothing here
+  // has to do a lookup to decide whether an offer is readable.
+  if (
+    /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(raw)
+  ) {
     return raw;
   }
 
@@ -134,7 +199,8 @@ export function parseDccSend(ctcp: CtcpMessage): DccSend | undefined {
     return undefined;
   }
   const subcommand = ctcp.params.slice(0, space).toUpperCase();
-  if (!SEND_SUBCOMMANDS.has(subcommand)) {
+  const variant = SEND_SUBCOMMANDS.get(subcommand);
+  if (variant === undefined) {
     return undefined;
   }
 
@@ -181,6 +247,8 @@ export function parseDccSend(ctcp: CtcpMessage): DccSend | undefined {
     ...(size === undefined ? {} : { size }),
     ...(token === undefined ? {} : { token }),
     passive,
+    secure: variant.secure,
+    turbo: variant.turbo,
   };
 }
 
@@ -207,4 +275,178 @@ export function sanitizeDccFilename(name: string): string {
     return 'download';
   }
   return cleaned;
+}
+
+/**
+ * The reply that answers a passive (reverse) offer.
+ *
+ * A passive offer is the sender saying it cannot be connected to — it is behind
+ * something — and asking us to open the socket instead. The answer is a `DCC
+ * SEND` of our own carrying the same filename, size and token, with our address
+ * and the port we are listening on in place of the sender's. The token is what
+ * ties it back to the offer, so it is copied verbatim rather than regenerated.
+ *
+ * Returns the CTCP parameters, to be wrapped by {@link encodeCtcp} and sent as
+ * a `PRIVMSG` to the sender.
+ */
+export function buildPassiveAccept(reply: {
+  readonly filename: string;
+  readonly host: string;
+  readonly port: number;
+  readonly size?: number;
+  readonly token: string;
+}): string {
+  // Quoted whenever it could be read as more than one field. A name with a
+  // space in it is common and an unquoted one silently truncates the transfer
+  // to its first word.
+  const name = /[\s"]/.test(reply.filename)
+    ? `"${reply.filename.replace(/"/g, '')}"`
+    : reply.filename;
+  const size = reply.size === undefined ? '' : ` ${reply.size}`;
+  return `SEND ${name} ${encodeAddress(reply.host)} ${reply.port}${size} ${reply.token}`;
+}
+
+/**
+ * An address in the form a DCC offer carries it.
+ *
+ * IPv4 goes out as the unsigned 32-bit integer every client has always sent,
+ * because a receiver written to the original convention will read nothing else.
+ * IPv6 has no such convention and goes out as the literal.
+ */
+function encodeAddress(host: string): string {
+  const quad = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (quad === null) {
+    return host;
+  }
+  const parts = quad.slice(1).map(Number);
+  if (parts.some((part) => !Number.isInteger(part) || part > 255)) {
+    return host;
+  }
+  // Unsigned: the top bit set must not come out negative.
+  return String(
+    ((parts[0] ?? 0) * 0x1000000 +
+      (parts[1] ?? 0) * 0x10000 +
+      (parts[2] ?? 0) * 0x100 +
+      (parts[3] ?? 0)) >>>
+      0,
+  );
+}
+
+/**
+ * A sender's agreement to continue a file rather than start it again.
+ *
+ * `DCC ACCEPT` answers a `DCC RESUME`: it names the position the sender will
+ * begin from, which is not necessarily the one that was asked for. That
+ * position, and not the one on disk, is where the bytes about to arrive belong.
+ */
+export interface DccAccept {
+  readonly filename: string;
+  /** The port from the original offer, which is how the answer is matched. */
+  readonly port: number;
+  /** The byte offset the sender will start from. */
+  readonly position: number;
+  /** The token, on a passive offer, where the port is not the identifier. */
+  readonly token?: string;
+}
+
+/**
+ * Parses a `DCC ACCEPT`, or returns undefined for anything that is not one.
+ */
+export function parseDccAccept(ctcp: CtcpMessage): DccAccept | undefined {
+  if (ctcp.command !== 'DCC') {
+    return undefined;
+  }
+
+  const space = ctcp.params.indexOf(' ');
+  if (space === -1 || ctcp.params.slice(0, space).toUpperCase() !== 'ACCEPT') {
+    return undefined;
+  }
+
+  const split = splitFilename(ctcp.params.slice(space + 1).trim());
+  if (split === undefined || split.filename === '') {
+    return undefined;
+  }
+
+  const fields = split.remainder.split(/\s+/).filter((field) => field !== '');
+  const [portField, positionField, token] = fields;
+  if (portField === undefined || positionField === undefined) {
+    return undefined;
+  }
+  if (!/^\d+$/.test(portField) || !/^\d+$/.test(positionField)) {
+    return undefined;
+  }
+
+  const port = Number(portField);
+  const position = Number(positionField);
+  if (!Number.isSafeInteger(port) || !Number.isSafeInteger(position)) {
+    return undefined;
+  }
+
+  return {
+    filename: split.filename,
+    port,
+    position,
+    ...(token === undefined ? {} : { token }),
+  };
+}
+
+/**
+ * Asks a sender to continue a file from a position rather than start it again.
+ *
+ * The port is the one from the offer, which is what identifies the transfer
+ * being talked about; a passive offer has no port to name, so it sends zero and
+ * the token instead. Nothing is resumed until the sender answers with a
+ * {@link parseDccAccept | `DCC ACCEPT`} — the position it names is the one to
+ * use, since a sender is free to agree to less than was asked for.
+ *
+ * Returns the CTCP parameters, to be wrapped by {@link encodeCtcp}.
+ */
+export function buildDccResume(request: {
+  readonly filename: string;
+  readonly port: number;
+  readonly position: number;
+  readonly token?: string;
+}): string {
+  const name = /[\s"]/.test(request.filename)
+    ? `"${request.filename.replace(/"/g, '')}"`
+    : request.filename;
+  const token = request.token === undefined ? '' : ` ${request.token}`;
+  return `RESUME ${name} ${request.port} ${request.position}${token}`;
+}
+
+/**
+ * Whether an address only means anything on the sender's own network.
+ *
+ * A sender behind a router has to be told to advertise the address the world
+ * reaches it on; one that has not been told advertises the address it knows
+ * about, which is a private one. The offer is perfectly well-formed and the
+ * connection cannot possibly succeed unless the receiver happens to be on that
+ * same network — so it is worth telling apart from an address that is merely
+ * unreachable, because "the sender is misconfigured" and "something between us
+ * is blocking this" call for completely different things from the person
+ * reading it.
+ *
+ * Covers the RFC 1918 ranges, loopback, link-local, and the carrier-grade NAT
+ * range that behaves the same way from outside.
+ */
+export function isPrivateAddress(host: string): boolean {
+  const quad = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (quad === null) {
+    // IPv6 loopback, unique-local (fc00::/7) and link-local (fe80::/10).
+    const lower = host.toLowerCase();
+    return lower === '::1' || /^f[cd][0-9a-f]{2}:/.test(lower) || /^fe[89ab][0-9a-f]:/.test(lower);
+  }
+
+  const [a, b] = quad.slice(1, 3).map(Number);
+  if (a === undefined || b === undefined) {
+    return false;
+  }
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
 }

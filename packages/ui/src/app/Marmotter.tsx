@@ -16,6 +16,14 @@ import {
   type DccSend,
   type SuggestedAction,
   type XdccPack,
+  type XdccResponse,
+  type DccAccept,
+  isPrivateAddress,
+  parsePackRequest,
+  buildDccResume,
+  buildPassiveAccept,
+  encodeCtcp,
+  parseXdccRequest,
 } from '@marmotter/protocol';
 import type { CloseReason } from '@marmotter/shared';
 import { effectivePolicy, retentionCutoff } from '@marmotter/client';
@@ -52,7 +60,7 @@ import { ChannelPanel, type TabValue as ChannelPanelTab } from './ChannelPanel.j
 import { Composer } from './Composer.js';
 import { DccBrowser, type DccBrowserProps } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
-import type { DccCapability } from './dcc.js';
+import type { DccCapability, DccTransfer } from './dcc.js';
 import { InviteBanner } from './Invites.js';
 import { Launch } from './Launch.js';
 import { connectionStatus, connectionStatusText } from './network-status.js';
@@ -115,8 +123,10 @@ import {
   DEFAULT_LOGGING,
   type DccOfferRecord,
   type TargetRef,
+  applyXdccResponse,
   classifyDccReoffer,
   matchPendingRequest,
+  networkForHost,
   sameFilename,
   draftFor,
   isTransferInFlight,
@@ -1130,6 +1140,19 @@ export function Marmotter({
             sessionEvent.target,
             sessionEvent.pack,
           );
+        } else if (sessionEvent.kind === 'xdcc-response') {
+          handleXdccResponse.current(profile.id, sessionEvent.from, sessionEvent.response);
+        } else if (sessionEvent.kind === 'dcc-accept') {
+          handleDccAccept.current(profile.id, sessionEvent.from, sessionEvent.accept);
+        } else if (sessionEvent.kind === 'dcc-unreadable') {
+          useView.getState().recordUnreadableOffer({
+            networkId: profile.id,
+            networkName: profile.name,
+            from: sessionEvent.from,
+            target: sessionEvent.target,
+            params: sessionEvent.params,
+            at: Date.now(),
+          });
         }
       });
 
@@ -1459,6 +1482,72 @@ export function Marmotter({
   // deliberate stop and not surfaced as a download failure.
   const cancelledOffers = useRef(new Set<string>());
 
+  /**
+   * What every started transfer does as it settles, whichever way it started.
+   *
+   * Shared by the two starters below — the one that dials the sender and the
+   * one that waits to be dialled — because from the moment bytes are moving
+   * they are the same transfer, and a row that ends differently depending on
+   * which direction the connection went would be a bug rather than a feature.
+   */
+  const trackTransfer = useCallback(
+    (offerId: string, filename: string, transfer: DccTransfer): void => {
+      transfers.current.set(offerId, transfer);
+      transfer.done
+        .then((savedPath) => {
+          transfers.current.delete(offerId);
+          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
+          announceDownload({
+            key: 'dcc-saved',
+            text: (saved) => (saved === 1 ? `Saved ${filename}.` : `Saved ${saved} files.`),
+          });
+        })
+        .catch((error: unknown) => {
+          transfers.current.delete(offerId);
+          // A cancel rejects the transfer too; that is the user's own doing, so
+          // the row is already back to available and no failure is shown.
+          if (cancelledOffers.current.delete(offerId)) {
+            return;
+          }
+          // An address only the sender's own network can reach is the one
+          // failure worth explaining rather than reporting: the offer is
+          // well-formed, nothing here is broken, and no amount of retrying
+          // will help. Said plainly, because "connection refused" sends a
+          // person looking at their own firewall for something that is not
+          // there.
+          const host = useView.getState().dccOffers.find((row) => row.id === offerId)?.host;
+          const reason =
+            host !== undefined && isPrivateAddress(host)
+              ? `The sender gave ${host}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
+              : describe(error);
+          useView.getState().setDccOfferStatus(offerId, { status: 'failed', error: reason });
+          // Keyed to the row, not the wording: a serving bot re-offers a pack
+          // every few seconds and each re-offer is another attempt, so one file
+          // that will not come is one notice that keeps count, not a tower of
+          // them. Failures are said whether or not the file list is open —
+          // unlike a file arriving, they need a decision.
+          notify({
+            key: `dcc-failed-${offerId}`,
+            tone: 'error',
+            text: (attempts) =>
+              attempts === 1
+                ? `Couldn't download ${filename}. ${reason}`
+                : `Couldn't download ${filename} after ${attempts} attempts. ${reason}`,
+          });
+        });
+    },
+    [announceDownload, notify],
+  );
+
+  // The folded-nick key a pending request lives under.
+  const pendingKey = useCallback(
+    (networkId: string, nick: string): string => {
+      const mapping = registry.networks.get(networkId)?.support.caseMapping;
+      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
+    },
+    [registry],
+  );
+
   // Fetching one direct DCC transfer into the chosen folder, updating a given
   // row as it goes. The optimistic status flips to downloading at once and
   // settles to saved or failed when the shell reports back, so a slow transfer
@@ -1468,7 +1557,15 @@ export function Marmotter({
   const fetchIntoFolder = useCallback(
     (
       offerId: string,
-      source: { host: string; port: number; filename: string; size?: number },
+      source: {
+        host: string;
+        port: number;
+        filename: string;
+        size?: number;
+        secure?: boolean;
+        turbo?: boolean;
+        resumeFrom?: number;
+      },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
       if (dcc === undefined || folder === undefined) {
@@ -1481,7 +1578,15 @@ export function Marmotter({
       // A fresh attempt clears any earlier cancel mark, so a row downloaded,
       // cancelled, and started again is treated on its own terms.
       cancelledOffers.current.delete(offerId);
-      useView.getState().setDccOfferStatus(offerId, { status: 'downloading' });
+      // The name is written back to the row: a pack asked for by number had
+      // only its number until now, and a bot that renamed the file has just
+      // said what it will actually be saved as.
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'downloading',
+        filename: source.filename,
+        host: source.host,
+        port: source.port,
+      });
       const transfer = dcc.download(
         {
           host: source.host,
@@ -1489,46 +1594,303 @@ export function Marmotter({
           filename: source.filename,
           folder,
           ...(source.size === undefined ? {} : { size: source.size }),
+          ...(source.secure === undefined ? {} : { secure: source.secure }),
+          ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+          ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
-      transfers.current.set(offerId, transfer);
-      transfer.done
-        .then((savedPath) => {
-          transfers.current.delete(offerId);
-          useView.getState().setDccOfferStatus(offerId, { status: 'downloaded', savedPath });
-          announceDownload({
-            key: 'dcc-saved',
-            text: (saved) => (saved === 1 ? `Saved ${source.filename}.` : `Saved ${saved} files.`),
-          });
-        })
-        .catch((error: unknown) => {
-          transfers.current.delete(offerId);
-          // A cancel rejects the transfer too; that is the user's own doing, so
-          // the row is already back to available and no failure is shown.
-          if (cancelledOffers.current.delete(offerId)) {
+      trackTransfer(offerId, source.filename, transfer);
+    },
+    [dcc, toast, trackTransfer],
+  );
+
+  /**
+   * Receiving a passive (reverse) transfer, where we open the socket.
+   *
+   * A passive offer is the sender saying it cannot be connected to, and asking
+   * us to listen instead. The shell binds the socket and hands back the port;
+   * the reply carrying that port is what makes the sender dial, and it goes out
+   * from here because the session is the one thing the shell cannot reach.
+   *
+   * It needs an address of ours the sender can actually get to, which behind a
+   * router is not the one this machine knows about. So the setting can name the
+   * address to give out, and where neither it nor the shell can supply one the
+   * transfer stops and says so rather than advertising a private address and
+   * waiting out a timeout that looks like somebody else's fault.
+   */
+  const fetchPassively = useCallback(
+    (
+      offerId: string,
+      source: {
+        networkId: string;
+        from: string;
+        host: string;
+        filename: string;
+        token: string;
+        size?: number;
+        turbo?: boolean;
+        resumeFrom?: number;
+      },
+    ): void => {
+      const folder = useView.getState().userOptions.downloadFolder;
+      const receive = dcc?.receivePassive;
+      if (dcc === undefined || receive === undefined || folder === undefined) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error:
+            folder === undefined
+              ? 'No download folder is set.'
+              : "Marmotter can't accept a reverse transfer on this device.",
+        });
+        return;
+      }
+      const session = registry.sessionOf(source.networkId);
+      if (session === undefined) {
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: `Marmotter is no longer connected to ${source.from}'s network.`,
+        });
+        return;
+      }
+
+      cancelledOffers.current.delete(offerId);
+      useView.getState().setDccOfferStatus(offerId, {
+        status: 'downloading',
+        filename: source.filename,
+        host: source.host,
+      });
+
+      const transfer: DccTransfer = receive.call(
+        dcc,
+        {
+          host: source.host,
+          filename: source.filename,
+          folder,
+          ...(source.size === undefined ? {} : { size: source.size }),
+          ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+          ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
+        },
+        (address, port) => {
+          const advertised = useView.getState().userOptions.dccAddress ?? address;
+          if (advertised === undefined || advertised === '') {
+            cancelledOffers.current.add(offerId);
+            transfer.cancel();
+            useView.getState().setDccOfferStatus(offerId, {
+              status: 'failed',
+              error:
+                "Marmotter couldn't work out an address to give the sender. Set one under Settings.",
+            });
             return;
           }
-          useView
-            .getState()
-            .setDccOfferStatus(offerId, { status: 'failed', error: describe(error) });
-          // Keyed to the row, not the wording: a serving bot re-offers a pack
-          // every few seconds and each re-offer is another attempt, so one file
-          // that will not come is one notice that keeps count, not a tower of
-          // them. Failures are said whether or not the file list is open —
-          // unlike a file arriving, they need a decision.
-          notify({
-            key: `dcc-failed-${offerId}`,
-            tone: 'error',
-            text: (attempts) =>
-              attempts === 1
-                ? `Couldn't download ${source.filename}. ${describe(error)}`
-                : `Couldn't download ${source.filename} after ${attempts} attempts. ${describe(error)}`,
+          session.send(
+            `PRIVMSG ${source.from} :${encodeCtcp(
+              'DCC',
+              buildPassiveAccept({
+                filename: source.filename,
+                host: advertised,
+                port,
+                token: source.token,
+                ...(source.size === undefined ? {} : { size: source.size }),
+              }),
+            )}`,
+          );
+        },
+        (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+      );
+
+      trackTransfer(offerId, source.filename, transfer);
+    },
+    [dcc, registry, trackTransfer],
+  );
+
+  /**
+   * Transfers waiting on a sender's agreement to continue a file, by bot and
+   * name, each with the timer that gives up on the answer.
+   */
+  const pendingResumes = useRef(
+    new Map<
+      string,
+      {
+        readonly offerId: string;
+        readonly start: (position?: number) => void;
+        readonly timer: number;
+      }
+    >(),
+  );
+
+  /**
+   * Drops a resume nobody is waiting on any more.
+   *
+   * A row taken off the list while its resume is still out would otherwise be
+   * started by the timer that gives up on the answer — a file arriving with
+   * nothing on screen that shows it, or stops it.
+   */
+  const forgetPendingResume = useCallback((offerId: string): void => {
+    for (const [key, entry] of pendingResumes.current) {
+      if (entry.offerId === offerId) {
+        window.clearTimeout(entry.timer);
+        pendingResumes.current.delete(key);
+      }
+    }
+  }, []);
+
+  /** How long a sender is given to answer a resume before the file starts over. */
+  const RESUME_ANSWER_MS = 8_000;
+
+  const resumeKey = useCallback(
+    (networkId: string, from: string, filename: string): string =>
+      `${pendingKey(networkId, from)} ${filename.toLowerCase()}`,
+    [pendingKey],
+  );
+
+  /**
+   * Starting a transfer, continuing the file where there is something to
+   * continue.
+   *
+   * A dropped connection near the end of a multi-gigabyte file used to mean
+   * fetching the whole thing again, which on the sort of link these bots are
+   * reached over is the difference between a file arriving and a file never
+   * arriving. What is already on disk decides whether anything is asked for at
+   * all; the sender decides the position, since it is free to agree to less
+   * than was asked; and a sender that does not answer at all is not a sender
+   * that has refused — the file simply starts again, which is where we were.
+   */
+  const beginTransfer = useCallback(
+    (
+      offerId: string,
+      plan:
+        | {
+            readonly kind: 'active';
+            readonly networkId: string;
+            readonly from: string;
+            readonly host: string;
+            readonly port: number;
+            readonly filename: string;
+            readonly size?: number;
+            readonly secure?: boolean;
+            readonly turbo?: boolean;
+          }
+        | {
+            readonly kind: 'passive';
+            readonly networkId: string;
+            readonly from: string;
+            readonly host: string;
+            readonly filename: string;
+            readonly token: string;
+            readonly size?: number;
+            readonly turbo?: boolean;
+          },
+    ): void => {
+      const start = (resumeFrom?: number): void => {
+        if (plan.kind === 'active') {
+          fetchIntoFolder(offerId, {
+            host: plan.host,
+            port: plan.port,
+            filename: plan.filename,
+            ...(plan.size === undefined ? {} : { size: plan.size }),
+            ...(plan.secure === undefined ? {} : { secure: plan.secure }),
+            ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+            ...(resumeFrom === undefined ? {} : { resumeFrom }),
           });
+          return;
+        }
+        fetchPassively(offerId, {
+          networkId: plan.networkId,
+          from: plan.from,
+          host: plan.host,
+          filename: plan.filename,
+          token: plan.token,
+          ...(plan.size === undefined ? {} : { size: plan.size }),
+          ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+          ...(resumeFrom === undefined ? {} : { resumeFrom }),
+        });
+      };
+
+      const folder = useView.getState().userOptions.downloadFolder;
+      const ask = dcc?.resumableBytes;
+      const session = registry.sessionOf(plan.networkId);
+      if (dcc === undefined || ask === undefined || folder === undefined || session === undefined) {
+        start();
+        return;
+      }
+
+      void ask
+        .call(dcc, folder, plan.filename)
+        .then((already) => {
+          // Nothing to continue, or a part-file already as long as the whole
+          // thing — which is not a resume, it is a file to start again and let
+          // the size check catch.
+          if (already <= 0 || (plan.size !== undefined && already >= plan.size)) {
+            start();
+            return;
+          }
+
+          // Visibly waiting, and stoppable: the handshake takes a few seconds
+          // and a row still offering a Download button through it is one a
+          // person clicks again, starting a second negotiation for the file
+          // they are already waiting on.
+          useView.getState().setDccOfferStatus(offerId, {
+            status: 'requested',
+            note: 'Asking to continue where it left off.',
+          });
+
+          const key = resumeKey(plan.networkId, plan.from, plan.filename);
+          window.clearTimeout(pendingResumes.current.get(key)?.timer);
+          const timer = window.setTimeout(() => {
+            pendingResumes.current.delete(key);
+            start();
+          }, RESUME_ANSWER_MS);
+          pendingResumes.current.set(key, { offerId, start, timer });
+
+          session.send(
+            `PRIVMSG ${plan.from} :${encodeCtcp(
+              'DCC',
+              buildDccResume({
+                filename: plan.filename,
+                port: plan.kind === 'active' ? plan.port : 0,
+                position: already,
+                ...(plan.kind === 'passive' ? { token: plan.token } : {}),
+              }),
+            )}`,
+          );
+        })
+        .catch(() => {
+          start();
         });
     },
-    [announceDownload, dcc, notify, toast],
+    [dcc, fetchIntoFolder, fetchPassively, registry, resumeKey],
   );
+
+  /**
+   * A sender agreeing to continue a file. Held in a ref so the long-lived
+   * session listener always runs the current version.
+   */
+  const handleDccAccept = useRef<(networkId: string, from: string, accept: DccAccept) => void>(
+    () => {},
+  );
+  handleDccAccept.current = (networkId, from, accept) => {
+    const key = resumeKey(networkId, from, accept.filename);
+    // The name in the answer is the one we sent, but senders are not careful
+    // about it, so a bot answering with a name near enough is taken as an
+    // answer to the one transfer waiting on this bot.
+    // The fallback is scoped to this bot on this network: a sender being
+    // careless with the name it echoes back is ordinary, and a sender speaking
+    // for somebody else's transfer is not something to accommodate.
+    const prefix = `${pendingKey(networkId, from)} `;
+    const mine = [...pendingResumes.current.entries()].filter(([held]) => held.startsWith(prefix));
+    const entry = pendingResumes.current.get(key) ?? (mine.length === 1 ? mine[0]?.[1] : undefined);
+    if (entry === undefined) {
+      return;
+    }
+    for (const [held, value] of pendingResumes.current) {
+      if (value === entry) {
+        pendingResumes.current.delete(held);
+      }
+    }
+    window.clearTimeout(entry.timer);
+    entry.start(accept.position);
+  };
 
   // Stopping a download that is under way. The row goes straight back to
   // available so it can be started again, and the shell is asked to abort the
@@ -1541,6 +1903,7 @@ export function Marmotter({
       }
       cancelledOffers.current.add(offer.id);
       transfer.cancel();
+      forgetPendingResume(offer.id);
       useView.getState().setDccOfferStatus(offer.id, { status: 'available' });
       announceDownload({
         key: 'dcc-stopped',
@@ -1550,7 +1913,7 @@ export function Marmotter({
             : `Stopped ${stopped} downloads.`,
       });
     },
-    [announceDownload],
+    [announceDownload, forgetPendingResume],
   );
 
   /**
@@ -1577,6 +1940,44 @@ export function Marmotter({
   }, []);
 
   /**
+   * Telling a bot to drop a pack we are no longer waiting for.
+   *
+   * Forgetting the row locally is not the same as leaving the queue: the bot
+   * still holds the request, and answers it eventually by opening a transfer
+   * for a file nobody is expecting any more. Serving bots take `XDCC REMOVE`
+   * for exactly this, so a row taken off the list is taken out of the queue too.
+   * Best-effort — a bot that does not understand it simply says nothing, which
+   * is no worse than never having asked.
+   */
+  const cancelPackRequest = useCallback(
+    (offer: DccOfferRecord): void => {
+      // Only a row the bot is still holding something for. A saved or
+      // never-started one has nothing to withdraw, and cancelling against it
+      // would abort whatever that bot is doing for us next.
+      if (offer.kind !== 'xdcc' || offer.pack === undefined) {
+        return;
+      }
+      if (offer.status !== 'requested' && offer.status !== 'downloading') {
+        return;
+      }
+      // Which command depends on what the bot is actually holding. A queue place
+      // comes out with `XDCC REMOVE`; a transfer it has already opened for us
+      // needs `XDCC CANCEL`, which is what the bot's own reminder tells you to
+      // type. Getting it wrong leaves the slot held until the bot's timeout,
+      // and every request made in the meantime bounces off it.
+      const open = offer.awaitingTransfer === true || offer.status === 'downloading';
+      registry
+        .sessionOf(offer.networkId)
+        ?.send(
+          open
+            ? `PRIVMSG ${offer.from} :XDCC CANCEL`
+            : `PRIVMSG ${offer.from} :XDCC REMOVE #${offer.pack}`,
+        );
+    },
+    [registry],
+  );
+
+  /**
    * Taking a row off the list, whatever state it is in.
    *
    * The way out of a row nothing else can shift: a pack a bot never answered
@@ -1592,21 +1993,25 @@ export function Marmotter({
         cancelledOffers.current.add(offer.id);
         transfer.cancel();
       }
+      cancelPackRequest(offer);
       forgetPendingRequest(offer.id);
+      forgetPendingResume(offer.id);
       useView.getState().removeDccOffer(offer.id);
     },
-    [forgetPendingRequest],
+    [cancelPackRequest, forgetPendingRequest, forgetPendingResume],
   );
 
-  /** Clearing the list, forgetting the requests the dropped rows were waiting on. */
+  /** Clearing the list, and leaving the queues the dropped rows were waiting in. */
   const clearOffers = useCallback((): void => {
     for (const offer of useView.getState().dccOffers) {
       if (!isTransferInFlight(offer.status)) {
+        cancelPackRequest(offer);
         forgetPendingRequest(offer.id);
+        forgetPendingResume(offer.id);
       }
     }
     useView.getState().clearDccOffers();
-  }, [forgetPendingRequest]);
+  }, [cancelPackRequest, forgetPendingRequest, forgetPendingResume]);
 
   // Opening the file manager on a saved download. Only wired where the platform
   // can do it — desktop — and only ever on a path the shell itself returned.
@@ -1751,14 +2156,51 @@ export function Marmotter({
       .recordXdccOffer({ networkId, networkName, from, target, pack, at: Date.now() });
   };
 
-  // The folded-nick key a pending request lives under.
-  const pendingKey = useCallback(
-    (networkId: string, nick: string): string => {
-      const mapping = registry.networks.get(networkId)?.support.caseMapping;
-      return `${networkId} ${mapping === undefined ? nick.toLowerCase() : fold(nick, mapping)}`;
-    },
-    [registry],
-  );
+  /**
+   * A serving bot's answer to a pack we asked for.
+   *
+   * Only ever applied to a row still waiting on that same bot: a notice is
+   * ordinary text anyone can send, and the pending queue is what makes this a
+   * reply to us rather than something a stranger typed. The pack number picks
+   * the row where the bot named one; with a single request outstanding there is
+   * nothing to pick between.
+   */
+  const handleXdccResponse = useRef<
+    (networkId: string, from: string, response: XdccResponse) => void
+  >(() => {});
+  handleXdccResponse.current = (networkId, from, response) => {
+    const queue = pendingXdcc.current.get(pendingKey(networkId, from)) ?? [];
+    if (queue.length === 0) {
+      return;
+    }
+    const rows = useView.getState().dccOffers;
+    const named =
+      response.pack === undefined
+        ? undefined
+        : queue.find((id) => rows.some((row) => row.id === id && row.pack === response.pack));
+    const targetId = named ?? (queue.length === 1 ? queue[0] : undefined);
+    if (targetId === undefined) {
+      return;
+    }
+    // A transfer that has already started says more than anything the bot is
+    // still narrating, so a late notice never drags a live download backwards.
+    if (rows.find((row) => row.id === targetId)?.status !== 'requested') {
+      return;
+    }
+
+    const outcome = applyXdccResponse(response);
+    useView.getState().setDccOfferStatus(targetId, {
+      status: outcome.status,
+      ...(outcome.error === undefined ? {} : { error: outcome.error }),
+      ...(outcome.note === undefined ? {} : { note: outcome.note }),
+      ...(outcome.awaitingTransfer === undefined
+        ? {}
+        : { awaitingTransfer: outcome.awaitingTransfer }),
+    });
+    if (outcome.settled) {
+      forgetPendingRequest(targetId);
+    }
+  };
 
   // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
   // that row and downloads; otherwise it is an unsolicited offer of its own.
@@ -1775,18 +2217,43 @@ export function Marmotter({
       .getState()
       .dccOffers.filter((entry) => pendingKey(entry.networkId, entry.from) === key);
 
+    // A passive answer used to be the end of the road. Now it is a transfer the
+    // other way round, provided the platform can listen and the offer carried
+    // the token that ties our reply back to it.
     const refuse = (offerId: string): void => {
+      const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+      if (dcc?.receivePassive !== undefined && send.token !== undefined) {
+        beginTransfer(offerId, {
+          kind: 'passive',
+          networkId,
+          from,
+          host: send.host,
+          filename: row?.filename ?? send.filename,
+          token: send.token,
+          ...(send.size === undefined ? {} : { size: send.size }),
+          turbo: send.turbo,
+        });
+        return;
+      }
       useView.getState().setDccOfferStatus(offerId, {
         status: 'failed',
-        error: "The bot sent a passive transfer, which Marmotter can't fetch.",
+        error:
+          send.token === undefined
+            ? 'The bot sent a reverse transfer with nothing to identify it by.'
+            : "The bot sent a reverse transfer, which Marmotter can't accept on this device.",
       });
     };
     const fetchInto = (offerId: string): void => {
-      fetchIntoFolder(offerId, {
+      beginTransfer(offerId, {
+        kind: 'active',
+        networkId,
+        from,
         host: send.host,
         port: send.port,
         filename: send.filename,
         ...(send.size === undefined ? {} : { size: send.size }),
+        secure: send.secure,
+        turbo: send.turbo,
       });
     };
 
@@ -1829,6 +2296,20 @@ export function Marmotter({
           refuse(existing.id);
         }
         return;
+      case 'announce':
+        // The bot is sending a file that is on the list and that nothing here
+        // started — a request typed at it rather than clicked, most often. It
+        // is not fetched on its own say-so, but it is said out loud, because a
+        // transfer nobody knows about is a transfer that times out.
+        if (existing !== undefined) {
+          notify({
+            key: `dcc-offered-${existing.id}`,
+            text: () =>
+              `${from} is ready to send ${existing.filename}. Open the file monitor to accept it.`,
+            action: { label: 'Open', onSelect: () => useView.getState().setPane('dcc') },
+          });
+        }
+        return;
       case 'ignore':
         return;
       case 'record':
@@ -1853,6 +2334,13 @@ export function Marmotter({
           toast(`Can't reach ${offer.from} to request that file.`, 'error');
           return;
         }
+        // Asking again for a pack whose transfer the bot already opened and we
+        // never took is answered with "you have a DCC pending", not with a new
+        // transfer: the bot holds that one until its own timeout. Withdrawing it
+        // first is what makes Retry actually retry.
+        if (offer.awaitingTransfer === true) {
+          session.send(`PRIVMSG ${offer.from} :XDCC CANCEL`);
+        }
         pendingXdcc.current.set(pendingKey(offer.networkId, offer.from), [
           ...(pendingXdcc.current.get(pendingKey(offer.networkId, offer.from)) ?? []),
           offer.id,
@@ -1868,18 +2356,182 @@ export function Marmotter({
         });
         return;
       }
+      if (offer.passive) {
+        if (
+          dcc?.receivePassive === undefined ||
+          offer.token === undefined ||
+          offer.host === undefined
+        ) {
+          toast("Marmotter can't accept that reverse transfer.", 'error');
+          return;
+        }
+        beginTransfer(offer.id, {
+          kind: 'passive',
+          networkId: offer.networkId,
+          from: offer.from,
+          host: offer.host,
+          filename: offer.filename,
+          token: offer.token,
+          ...(offer.size === undefined ? {} : { size: offer.size }),
+          ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
+        });
+        return;
+      }
       if (offer.host === undefined || offer.port === undefined) {
         toast(`That offer has no address to connect to.`, 'error');
         return;
       }
-      fetchIntoFolder(offer.id, {
+      beginTransfer(offer.id, {
+        kind: 'active',
+        networkId: offer.networkId,
+        from: offer.from,
         host: offer.host,
         port: offer.port,
         filename: offer.filename,
         ...(offer.size === undefined ? {} : { size: offer.size }),
+        ...(offer.secure === undefined ? {} : { secure: offer.secure }),
+        ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
-    [announceDownload, registry, toast, fetchIntoFolder, pendingKey],
+    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey],
+  );
+
+  /**
+   * Recording that a pack has been asked for, however the asking happened.
+   *
+   * The Download button is not the only way, and on the evidence it is not even
+   * the usual one: every XDCC index on the web prints the message to send, so
+   * people type `/msg bot xdcc send #26`, or type `xdcc send #26` into the
+   * bot's own conversation. Those went out as ordinary text and nothing here
+   * knew a transfer was coming, so when the bot answered, the offer matched a
+   * row already on the list and was treated as a duplicate — dropped in
+   * silence, while the bot sat waiting to be connected to until it timed out.
+   *
+   * Registering the request here makes all three ways the same thing: the row
+   * moves to requested, and the answering `DCC SEND` is matched back to it.
+   */
+  const notePackRequest = useCallback(
+    (networkId: string, nick: string, pack: number): void => {
+      const profile = registry.profiles.get(networkId);
+      if (profile === undefined) {
+        return;
+      }
+      const id = useView.getState().recordXdccRequest({
+        networkId,
+        networkName: profile.name,
+        from: nick,
+        pack,
+        at: Date.now(),
+      });
+      if (id === undefined) {
+        return;
+      }
+      const key = pendingKey(networkId, nick);
+      pendingXdcc.current.set(key, [...(pendingXdcc.current.get(key) ?? []), id]);
+      useView.getState().setDccOfferStatus(id, { status: 'requested' });
+    },
+    [pendingKey, registry],
+  );
+
+  /**
+   * Reads a pack request out of something about to be sent, and notes it.
+   *
+   * Given the line as it will go on the wire, so it catches the request however
+   * it was typed — a `/msg`, a `/quote PRIVMSG`, or a message into the bot's
+   * conversation — rather than trying to guess from what was typed.
+   */
+  const notePackRequestInLine = useCallback(
+    (networkId: string, line: string): void => {
+      const match = /^PRIVMSG\s+([^\s,]+)\s+:(.*)$/is.exec(line);
+      const nick = match?.[1];
+      const body = match?.[2];
+      const support = registry.networks.get(networkId)?.support;
+      if (nick === undefined || body === undefined || support === undefined) {
+        return;
+      }
+      // A pack is asked for from a bot, never from a room. A channel target
+      // here would be somebody talking about a pack, not requesting one.
+      if (isChannel(nick, support)) {
+        return;
+      }
+      const pack = parsePackRequest(body);
+      if (pack !== undefined) {
+        notePackRequest(networkId, nick, pack);
+      }
+    },
+    [notePackRequest, registry],
+  );
+
+  /**
+   * Requesting a pack from a line pasted out of an XDCC index.
+   *
+   * Every index on the web hands a person the same two strings — an `irc://`
+   * link and a literal `/msg Bot xdcc send #42` — so those, rather than a form
+   * with a nick field and a number field, are what somebody arrives holding.
+   * Reading them is the whole feature: the link says which network, the message
+   * says which bot and which pack, and the row it makes behaves from then on
+   * exactly like one the monitor saw advertised.
+   */
+  const requestPastedPack = useCallback(
+    (text: string): void => {
+      const request = parseXdccRequest(text);
+      if (request === undefined) {
+        toast(
+          "That doesn't look like a pack request. Paste a line like /msg bot xdcc send #42.",
+          'error',
+        );
+        return;
+      }
+
+      // The link decides the network where it names one we are on; with no
+      // link, the network being looked at is the only sensible reading.
+      const linked =
+        request.host === undefined ? undefined : networkForHost(registry.profiles, request.host);
+      const networkId = linked ?? selection?.networkId;
+      if (networkId === undefined) {
+        toast(
+          request.host === undefined
+            ? 'Open a network first, so Marmotter knows who to ask.'
+            : `You're not connected to ${request.host}. Add it as a network first.`,
+          'error',
+        );
+        return;
+      }
+
+      const profile = registry.profiles.get(networkId);
+      const session = registry.sessionOf(networkId);
+      if (profile === undefined || session === undefined) {
+        toast(`Can't reach ${request.nick} to request that file.`, 'error');
+        return;
+      }
+
+      // Bots on most packlist networks refuse anyone who is not in one of their
+      // channels — the single most common reason a request is answered with
+      // silence — so a link that names one joins it before asking.
+      if (
+        request.channel !== undefined &&
+        registry.networks.get(networkId)?.channels.get(request.channel) === undefined
+      ) {
+        session.join(request.channel);
+      }
+
+      const id = useView.getState().recordXdccRequest({
+        networkId,
+        networkName: profile.name,
+        from: request.nick,
+        pack: request.pack,
+        at: Date.now(),
+      });
+      const row =
+        id === undefined
+          ? undefined
+          : useView.getState().dccOffers.find((entry) => entry.id === id);
+      if (row === undefined) {
+        return;
+      }
+      downloadOffer(row);
+    },
+    [downloadOffer, registry, selection, toast],
   );
 
   // Joining a channel from the GUI: the sidebar's "+" asks for a name here and
@@ -2200,13 +2852,17 @@ export function Marmotter({
     const parsed = parseInput(text, { target: selection.target, nick: network.nick });
 
     switch (parsed.kind) {
-      case 'message':
+      case 'message': {
         if (selection.target === undefined) {
           toast('Pick a conversation first, or use a command.', 'error');
           return;
         }
+        // A pack asked for by typing it at the bot, which is how the indexes
+        // tell people to do it, is the same request as the button's.
+        notePackRequestInLine(network.id, `PRIVMSG ${selection.target} :${parsed.text}`);
         session.sendMessage(selection.target, parsed.text);
         return;
+      }
       case 'line':
         // `/list` is the one command whose answer has nowhere to go in the
         // message list — a numeric per channel is exactly what CLAUDE.md says
@@ -2217,6 +2873,7 @@ export function Marmotter({
           askForList(network.id, parsed.line.slice('LIST'.length).trim());
           return;
         }
+        notePackRequestInLine(network.id, parsed.line);
         session.send(parsed.line);
         return;
       case 'handled':
@@ -2500,6 +3157,8 @@ export function Marmotter({
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
+          onRequestPack={requestPastedPack}
+          canFetchPassive={dcc?.receivePassive !== undefined}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (
         <LogSearch className="min-h-0 flex-1" store={logs} />

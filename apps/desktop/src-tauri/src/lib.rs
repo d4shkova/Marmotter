@@ -36,6 +36,8 @@ pub fn run() {
             transport::transport_send,
             transport::transport_disconnect,
             dcc::dcc_download_file,
+            dcc::dcc_receive_passive,
+            dcc::dcc_resumable_bytes,
             dcc::dcc_cancel_download,
             dcc::dcc_reveal_file,
             dcc::dcc_default_dir,

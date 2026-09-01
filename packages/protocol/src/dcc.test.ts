@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { decodeCtcp } from './ctcp.js';
-import { parseDccSend, sanitizeDccFilename, type DccSend } from './dcc.js';
+import {
+  buildDccResume,
+  buildPassiveAccept,
+  isPrivateAddress,
+  parseDccAccept,
+  parseDccSend,
+  sanitizeDccFilename,
+  type DccSend,
+} from './dcc.js';
 
 /** Parses the CTCP out of a raw PRIVMSG body, as the reducer does. */
 function offer(body: string): DccSend | undefined {
@@ -20,6 +28,8 @@ describe('parseDccSend', () => {
       port: 5000,
       size: 204800,
       passive: false,
+      secure: false,
+      turbo: false,
     });
   });
 
@@ -124,5 +134,157 @@ describe('sanitizeDccFilename', () => {
     expect(sanitizeDccFilename('..')).toBe('download');
     expect(sanitizeDccFilename('.')).toBe('download');
     expect(sanitizeDccFilename('/')).toBe('download');
+  });
+});
+
+describe('the send variants', () => {
+  it('marks a secure offer, which is a TLS socket rather than a plain one', () => {
+    const send = offer(`${CTCP}DCC SSEND f 3232235777 5000 1${CTCP}`);
+    expect(send?.secure).toBe(true);
+    expect(send?.turbo).toBe(false);
+  });
+
+  it('marks a turbo offer, where the sender never reads our acknowledgements', () => {
+    const send = offer(`${CTCP}DCC TSEND f 3232235777 5000 1${CTCP}`);
+    expect(send?.turbo).toBe(true);
+    expect(send?.secure).toBe(false);
+  });
+
+  it('reads an offer that is both', () => {
+    expect(offer(`${CTCP}DCC TSSEND f 3232235777 5000 1${CTCP}`)).toMatchObject({
+      secure: true,
+      turbo: true,
+    });
+  });
+
+  it('leaves an ordinary send as neither', () => {
+    expect(offer(`${CTCP}DCC SEND f 3232235777 5000 1${CTCP}`)).toMatchObject({
+      secure: false,
+      turbo: false,
+    });
+  });
+});
+
+describe('buildPassiveAccept', () => {
+  it('answers with our own address and port, and the offer’s token', () => {
+    expect(
+      buildPassiveAccept({
+        filename: 'holiday.jpg',
+        host: '192.168.1.1',
+        port: 5000,
+        size: 204800,
+        token: '998877',
+      }),
+    ).toBe('SEND holiday.jpg 3232235777 5000 204800 998877');
+  });
+
+  it('quotes a name that would otherwise split into two fields', () => {
+    const reply = buildPassiveAccept({
+      filename: 'my holiday.jpg',
+      host: '10.0.0.1',
+      port: 1,
+      token: 't',
+    });
+    expect(reply).toBe('SEND "my holiday.jpg" 167772161 1 t');
+  });
+
+  it('sends an IPv6 address as the literal, having no integer form', () => {
+    expect(buildPassiveAccept({ filename: 'f', host: '2001:db8::1', port: 2, token: 't' })).toBe(
+      'SEND f 2001:db8::1 2 t',
+    );
+  });
+
+  it('round-trips through the parser', () => {
+    const params = buildPassiveAccept({
+      filename: 'f.bin',
+      host: '203.0.113.9',
+      port: 6000,
+      size: 42,
+      token: 'abc',
+    });
+    expect(parseDccSend({ command: 'DCC', params })).toMatchObject({
+      filename: 'f.bin',
+      host: '203.0.113.9',
+      port: 6000,
+      size: 42,
+      token: 'abc',
+      passive: false,
+    });
+  });
+});
+
+describe('resuming a transfer', () => {
+  it('asks for a position, naming the offer by its port', () => {
+    expect(buildDccResume({ filename: 'big.bin', port: 5000, position: 1024 })).toBe(
+      'RESUME big.bin 5000 1024',
+    );
+  });
+
+  it('names a passive offer by its token, since it has no port', () => {
+    expect(buildDccResume({ filename: 'big.bin', port: 0, position: 1024, token: '998877' })).toBe(
+      'RESUME big.bin 0 1024 998877',
+    );
+  });
+
+  it('quotes a name that would otherwise split into two fields', () => {
+    expect(buildDccResume({ filename: 'my file.bin', port: 1, position: 2 })).toBe(
+      'RESUME "my file.bin" 1 2',
+    );
+  });
+
+  it('reads the position the sender agreed to', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT big.bin 5000 1024' })).toEqual({
+      filename: 'big.bin',
+      port: 5000,
+      position: 1024,
+    });
+  });
+
+  it('reads a passive acceptance, token and all', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT "my file.bin" 0 512 998877' })).toEqual(
+      { filename: 'my file.bin', port: 0, position: 512, token: '998877' },
+    );
+  });
+
+  it('is undefined for anything that is not an acceptance', () => {
+    expect(parseDccAccept({ command: 'DCC', params: 'SEND f 1 2 3' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'PING', params: 'ACCEPT f 1 2' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT f 1' })).toBeUndefined();
+    expect(parseDccAccept({ command: 'DCC', params: 'ACCEPT f x y' })).toBeUndefined();
+  });
+});
+
+describe('the address field', () => {
+  it('accepts a hostname, which some senders advertise instead of an address', () => {
+    const send = offer(`${CTCP}DCC SEND f.bin dcc.example.net 5000 1${CTCP}`);
+    expect(send?.host).toBe('dcc.example.net');
+  });
+
+  it('still refuses something that is no kind of address at all', () => {
+    expect(offer(`${CTCP}DCC SEND f.bin -- 5000 1${CTCP}`)).toBeUndefined();
+    expect(offer(`${CTCP}DCC SEND f.bin ../etc 5000 1${CTCP}`)).toBeUndefined();
+    expect(offer(`${CTCP}DCC SEND f.bin localhost 5000 1${CTCP}`)).toBeUndefined();
+  });
+});
+
+describe('isPrivateAddress', () => {
+  it('knows the addresses that only work on the sender’s own network', () => {
+    expect(isPrivateAddress('192.168.1.103')).toBe(true);
+    expect(isPrivateAddress('10.0.0.5')).toBe(true);
+    expect(isPrivateAddress('172.16.4.1')).toBe(true);
+    expect(isPrivateAddress('172.31.255.255')).toBe(true);
+    expect(isPrivateAddress('127.0.0.1')).toBe(true);
+    expect(isPrivateAddress('169.254.10.1')).toBe(true);
+    expect(isPrivateAddress('100.64.0.1')).toBe(true);
+    expect(isPrivateAddress('::1')).toBe(true);
+    expect(isPrivateAddress('fd00::1')).toBe(true);
+  });
+
+  it('leaves a public address alone', () => {
+    expect(isPrivateAddress('81.42.231.7')).toBe(false);
+    expect(isPrivateAddress('172.32.0.1')).toBe(false);
+    expect(isPrivateAddress('8.8.8.8')).toBe(false);
+    expect(isPrivateAddress('2001:db8::1')).toBe(false);
+    expect(isPrivateAddress('dcc.example.net')).toBe(false);
   });
 });

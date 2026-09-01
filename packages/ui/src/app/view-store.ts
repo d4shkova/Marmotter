@@ -16,6 +16,7 @@ import {
   type CtcpPolicy,
   type DccSend,
   type XdccPack,
+  type XdccResponse,
 } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
 import { DEFAULT_THEME, type ThemeId } from '../themes.js';
@@ -151,12 +152,20 @@ export function matchPendingRequest(
  * the row is failed with a reason rather than left waiting on a transfer that
  * will never start.
  *
- * `ignore` — a duplicate of a row that is mid-transfer, already saved, or
- * sitting there waiting for the user to start it; nothing to do.
+ * `ignore` — a duplicate of a row already downloading or downloaded; nothing to
+ * do, and nothing worth saying about it either.
+ *
+ * `announce` — the row is listed and nobody here started it, so the bot is
+ * offering a file we did not ask for through the interface. Not fetched, which
+ * is the whole of the safety rule — a stranger must not be able to put a file
+ * on the disk by naming one already on the list — but never dropped in silence
+ * either, because a request made any other way (typed at the bot, or from
+ * another client on the same account) lands here and a file the person is
+ * waiting for would simply never appear.
  *
  * `record` — no such row: a genuinely new, unsolicited offer to list.
  */
-export type DccReofferAction = 'retry' | 'refuse' | 'ignore' | 'record';
+export type DccReofferAction = 'retry' | 'refuse' | 'ignore' | 'announce' | 'record';
 
 /**
  * Decides how an incoming `DCC SEND` relates to the file monitor's rows.
@@ -176,7 +185,173 @@ export function classifyDccReoffer(
   if (existing.status === 'failed' || existing.status === 'requested') {
     return send.passive ? 'refuse' : 'retry';
   }
+  if (existing.status === 'available') {
+    return 'announce';
+  }
   return 'ignore';
+}
+
+/**
+ * Which connected network an `irc://` link is pointing at.
+ *
+ * A pasted request carries the server it came from, and the person pasting it
+ * is usually connected to several. Matching the link to a network rather than
+ * assuming the one on screen is what stops a request going to a bot on the
+ * wrong network, where the nick means somebody else entirely.
+ *
+ * Exact host first, then either name being a suffix of the other, so a link to
+ * `abc.xyz` finds the profile connected to `irc.abc.xyz` — the same server
+ * under the name the round-robin answers to. Generic over the profile so this
+ * stays a pure comparison with nothing imported to test it against.
+ */
+export function networkForHost<
+  P extends { readonly servers: readonly { readonly host: string }[] },
+>(profiles: ReadonlyMap<string, P>, host: string): string | undefined {
+  const wanted = host.trim().toLowerCase();
+  if (wanted === '') {
+    return undefined;
+  }
+  const hosts = (profile: P): string[] =>
+    profile.servers.map((server) => server.host.toLowerCase());
+
+  for (const [id, profile] of profiles) {
+    if (hosts(profile).includes(wanted)) {
+      return id;
+    }
+  }
+  for (const [id, profile] of profiles) {
+    if (
+      hosts(profile).some((known) => known.endsWith(`.${wanted}`) || wanted.endsWith(`.${known}`))
+    ) {
+      return id;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * What a bot's answer to a pack request means for the row that is waiting.
+ *
+ * Pure, and separate from the event plumbing, because this is the whole of the
+ * translation the client exists to do: a bot says "** XDCC SEND denied, you
+ * must be on a known channel", and the row has to say what to do about it in
+ * words that assume nothing. The `settled` flag is the other half — a refusal
+ * ends the wait, a queue position does not, and getting that backwards either
+ * strands a request or discards one that was still coming.
+ */
+export interface XdccResponseOutcome {
+  readonly status: DccStatus;
+  /** A short line under a row still waiting, e.g. `Queued, position 4`. */
+  readonly note?: string;
+  /** Why it will not arrive, when it will not. */
+  readonly error?: string;
+  /** Whether the request should stop being waited on. */
+  readonly settled: boolean;
+  /**
+   * Whether the bot now holds a transfer for us rather than a queue place.
+   *
+   * The two are undone by different commands — a queue place by `XDCC REMOVE`,
+   * a transfer the bot has opened by `XDCC CANCEL` — and sending the wrong one
+   * leaves the bot holding a slot it will not free until its own timeout, which
+   * is what makes the next request bounce.
+   */
+  readonly awaitingTransfer?: boolean;
+}
+
+/**
+ * Turns a serving bot's notice into the state of the row that asked for it.
+ *
+ * Two of the answers deliberately leave the row waiting. A queue position is
+ * good news — the request was taken — and "you already have that queued" means
+ * the same thing said less kindly: in both cases the file is still coming, and
+ * failing the row would throw away a request the bot is still holding.
+ */
+export function applyXdccResponse(response: XdccResponse): XdccResponseOutcome {
+  switch (response.kind) {
+    case 'sending':
+      return {
+        status: 'requested',
+        note: 'The bot is starting the transfer.',
+        settled: false,
+        awaitingTransfer: true,
+      };
+
+    case 'awaiting-connection':
+      return {
+        status: 'requested',
+        note: 'The bot is waiting for Marmotter to connect.',
+        settled: false,
+        awaitingTransfer: true,
+      };
+
+    case 'queued': {
+      const place =
+        response.position === undefined
+          ? 'Waiting in the queue'
+          : `Queued, position ${response.position}`;
+      const wait = response.waitText === undefined ? '' : ` · about ${response.waitText}`;
+      return { status: 'requested', note: `${place}${wait}.`, settled: false };
+    }
+
+    case 'dequeued':
+      return {
+        status: 'failed',
+        error: 'The bot dropped this from its queue.',
+        settled: true,
+      };
+
+    case 'denied':
+      switch (response.reason) {
+        case 'already-queued':
+          return {
+            status: 'requested',
+            note: "Already in the bot's queue.",
+            settled: false,
+          };
+        case 'not-in-channel':
+          return {
+            status: 'failed',
+            error: "Join one of the bot's channels first — it only sends files to people there.",
+            settled: true,
+          };
+        case 'slots-full':
+          return {
+            status: 'failed',
+            error: "The bot's queue is full. Try again in a few minutes.",
+            settled: true,
+          };
+        case 'transfer-limit':
+          return {
+            status: 'failed',
+            error: 'The bot allows you only so many downloads at once. Finish one and ask again.',
+            settled: true,
+          };
+        case 'no-such-pack':
+          return {
+            status: 'failed',
+            error: "The bot doesn't have that file any more.",
+            settled: true,
+          };
+        case 'dcc-timeout':
+          return {
+            status: 'failed',
+            // Not a refusal: the bot opened the transfer and nothing arrived.
+            // What sits between the two machines is the thing to look at, so
+            // the message says that rather than blaming the bot.
+            error:
+              "Marmotter couldn't reach the bot's transfer before it gave up. A firewall or router between you may be blocking it.",
+            settled: true,
+          };
+        case 'closed':
+          return {
+            status: 'failed',
+            error: "The bot isn't taking requests at the moment.",
+            settled: true,
+          };
+        default:
+          return { status: 'failed', error: 'The bot turned down the request.', settled: true };
+      }
+  }
 }
 
 /**
@@ -205,12 +380,35 @@ export interface DccOfferRecord {
   readonly status: DccStatus;
   /** Why a download failed, in plain words, when it did. */
   readonly error?: string;
+  /**
+   * What the bot last said about a request still waiting, in plain words.
+   *
+   * Separate from `error` because it is not one: a queue position is the row
+   * working as intended, and the two read differently for that reason.
+   */
+  readonly note?: string;
+  /**
+   * Whether the bot is holding an open transfer for this row rather than a
+   * queue place, which decides how the request is withdrawn.
+   */
+  readonly awaitingTransfer?: boolean;
   /** Where the file was written, once it was. */
   readonly savedPath?: string;
   /** Bytes received so far, while a download is in flight. */
   readonly received?: number;
   /** A passive (reverse) DCC offer, which the receive-only monitor cannot fetch. */
   readonly passive: boolean;
+  /**
+   * The token from a passive offer, which the reply has to carry back.
+   *
+   * It is how the sender ties our answer to the offer it made, so a row that
+   * lost it could be shown but never accepted.
+   */
+  readonly token?: string;
+  /** Whether the transfer's socket is TLS, from an `SSEND` offer. */
+  readonly secure?: boolean;
+  /** Whether the sender streams without waiting to be acknowledged (`TSEND`). */
+  readonly turbo?: boolean;
   /** The address to connect to, for a direct DCC offer. */
   readonly host?: string;
   /** The port to connect to, for a direct DCC offer. */
@@ -233,6 +431,18 @@ export interface UserOptions {
   readonly dccMonitorEnabled: boolean;
   /** Where downloaded files are written. Undefined until the user picks one. */
   readonly downloadFolder: string | undefined;
+  /**
+   * The address to give a sender for a reverse transfer, where it must be said
+   * rather than worked out.
+   *
+   * A reverse transfer is one Marmotter listens for, so the sender is told
+   * where to dial. The shell reads that off the route to the sender, which is
+   * right on a machine with its own public address and wrong behind a router —
+   * there the address that reaches you is the router's, and only the person
+   * running it knows it. Undefined means "use whatever the shell worked out",
+   * which is the common case.
+   */
+  readonly dccAddress: string | undefined;
   /**
    * How long a notice at the bottom of the screen stays, in seconds.
    *
@@ -258,6 +468,7 @@ export function clampToastSeconds(seconds: number): number {
 export const DEFAULT_USER_OPTIONS: UserOptions = {
   dccMonitorEnabled: false,
   downloadFolder: undefined,
+  dccAddress: undefined,
   toastSeconds: TOAST_SECONDS_RANGE.default,
 };
 
@@ -441,10 +652,57 @@ export interface ViewState {
     readonly pack: XdccPack;
     readonly at: number;
   }): void;
-  /** Updates a single offer's transfer state. */
+  /**
+   * Updates a single offer's transfer state.
+   *
+   * `note` is replaced on every call rather than merged: it says what the row
+   * is waiting on now, so a queue position from a minute ago must not survive
+   * the state that made it true.
+   */
+  /**
+   * Lists a pack somebody asked for by hand — pasted from an index site rather
+   * than seen advertised — and returns the row's id.
+   *
+   * Returns the id of the row already listing that pack where there is one, so
+   * pasting a request for a file the bot has advertised acts on the row that is
+   * already there. Undefined when the monitor is off, like the other two.
+   */
+  recordXdccRequest(request: {
+    readonly networkId: string;
+    readonly networkName: string;
+    readonly from: string;
+    readonly pack: number;
+    readonly at: number;
+  }): string | undefined;
+  /**
+   * Lists an offer that arrived in a shape Marmotter could not read.
+   *
+   * Shown as a failed row carrying the raw line, because the alternative is
+   * silence: somebody who asked a bot for a file and got nothing cannot
+   * otherwise tell a bot that never answered from an answer this client did not
+   * understand, and the second is the one worth reporting.
+   */
+  recordUnreadableOffer(offer: {
+    readonly networkId: string;
+    readonly networkName: string;
+    readonly from: string;
+    readonly target: string;
+    readonly params: string;
+    readonly at: number;
+  }): void;
   setDccOfferStatus(
     id: string,
-    patch: { status: DccStatus; error?: string; savedPath?: string },
+    patch: {
+      status: DccStatus;
+      error?: string;
+      savedPath?: string;
+      note?: string;
+      filename?: string;
+      awaitingTransfer?: boolean;
+      /** The address the transfer is being made to, once one is known. */
+      host?: string;
+      port?: number;
+    },
   ): void;
   /**
    * Records how far a download has got. Moves the row to downloading and fills
@@ -632,6 +890,9 @@ export const useView = create<ViewState>((set, get) => ({
         port: offer.send.port,
         ...(offer.send.size === undefined ? {} : { size: offer.send.size }),
         passive: offer.send.passive,
+        ...(offer.send.token === undefined ? {} : { token: offer.send.token }),
+        ...(offer.send.secure ? { secure: true } : {}),
+        ...(offer.send.turbo ? { turbo: true } : {}),
         receivedAt: offer.at,
         status: 'available',
       };
@@ -680,18 +941,96 @@ export const useView = create<ViewState>((set, get) => ({
     });
   },
 
+  recordXdccRequest(request) {
+    const { userOptions, dccActive } = get();
+    if (!userOptions.dccMonitorEnabled || !dccActive) {
+      return undefined;
+    }
+    const id = xdccOfferId(request);
+    const existing = get().dccOffers.find((entry) => entry.id === id);
+    if (existing !== undefined) {
+      return id;
+    }
+    // No advertisement to take a name or a size from — the whole point of a
+    // pasted request is that the catalogue line was read somewhere else. The
+    // pack number stands in until the bot answers with the real name, which is
+    // what the download then fills in.
+    const record: DccOfferRecord = {
+      id,
+      kind: 'xdcc',
+      networkId: request.networkId,
+      networkName: request.networkName,
+      from: request.from,
+      target: request.from,
+      filename: `Pack #${request.pack}`,
+      passive: false,
+      pack: request.pack,
+      receivedAt: request.at,
+      status: 'available',
+    };
+    set((current) => ({ dccOffers: [...current.dccOffers, record] }));
+    return id;
+  },
+
+  recordUnreadableOffer(offer) {
+    const { userOptions, dccActive } = get();
+    if (!userOptions.dccMonitorEnabled || !dccActive) {
+      return;
+    }
+    const id = `${offer.networkId} unreadable ${offer.from} ${offer.params}`;
+    set((current) => {
+      if (current.dccOffers.some((entry) => entry.id === id)) {
+        return {};
+      }
+      const record: DccOfferRecord = {
+        id,
+        kind: 'dcc',
+        networkId: offer.networkId,
+        networkName: offer.networkName,
+        from: offer.from,
+        target: offer.target,
+        // The raw parameters stand in for a name, since reading one out of them
+        // is the very thing that failed. It is also exactly what a bug report
+        // needs, sitting where the person is already looking.
+        filename: offer.params,
+        passive: false,
+        receivedAt: offer.at,
+        status: 'failed',
+        error: "Marmotter couldn't read this offer. The raw line is in the network's raw log.",
+      };
+      return { dccOffers: [...current.dccOffers, record] };
+    });
+  },
+
   setDccOfferStatus(id, patch) {
     set((current) => ({
-      dccOffers: current.dccOffers.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              status: patch.status,
-              ...(patch.error === undefined ? {} : { error: patch.error }),
-              ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
-            }
-          : entry,
-      ),
+      dccOffers: current.dccOffers.map((entry) => {
+        if (entry.id !== id) {
+          return entry;
+        }
+        // The old note is dropped rather than merged: it described the state
+        // this call is replacing, and a stale "position 4" under a failed row
+        // would contradict the reason beside it.
+        const { note: _previous, awaitingTransfer: _held, ...rest } = entry;
+        return {
+          ...rest,
+          status: patch.status,
+          ...(patch.error === undefined ? {} : { error: patch.error }),
+          ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
+          ...(patch.note === undefined ? {} : { note: patch.note }),
+          // A bot does not always send back the name it advertised, and a row
+          // asked for by pack number has no name at all until it does.
+          ...(patch.filename === undefined ? {} : { filename: patch.filename }),
+          ...(patch.awaitingTransfer === undefined
+            ? {}
+            : { awaitingTransfer: patch.awaitingTransfer }),
+          // Where this transfer is actually going. A pack row has no address
+          // until the bot answers with one, and it is the single most useful
+          // thing on the row when a transfer does not start.
+          ...(patch.host === undefined ? {} : { host: patch.host }),
+          ...(patch.port === undefined ? {} : { port: patch.port }),
+        };
+      }),
     }));
   },
 

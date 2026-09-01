@@ -39,10 +39,15 @@ import {
   isChannel,
   parseChannelModes,
   isCtcp,
+  isDccSendOffer,
+  parseDccAccept,
   parseDccSend,
+  type DccAccept,
   type DccSend,
   parseXdccAnnounce,
+  parseXdccResponse,
   type XdccPack,
+  type XdccResponse,
   parseStandardReply,
   parseUserModes,
   sameTarget,
@@ -123,6 +128,46 @@ export type Effect =
       readonly from: string;
       readonly target: string;
       readonly pack: XdccPack;
+    }
+  /**
+   * A serving bot answered an `XDCC SEND` with a notice — a queue position, a
+   * refusal, or word that it is about to send. Raised so a requested row can say
+   * where it stands instead of spinning until a file happens to arrive.
+   *
+   * Raised for any notice that reads as one; whether we actually asked this bot
+   * for anything is the file monitor's to know, not the reducer's.
+   */
+  | {
+      readonly kind: 'xdcc-response';
+      readonly from: string;
+      readonly target: string;
+      readonly response: XdccResponse;
+    }
+  /**
+   * A sender agreed to continue a file rather than start it again. Raised so
+   * the transfer waiting on that answer can open its socket and append.
+   */
+  | {
+      readonly kind: 'dcc-accept';
+      readonly from: string;
+      readonly accept: DccAccept;
+    }
+  /**
+   * Somebody offered a file in a shape this client could not read.
+   *
+   * Raised rather than dropped, because the silence is the problem: a person
+   * who asked for a file and got nothing has no way to tell a bot that never
+   * answered from an answer that arrived and was not understood. The raw
+   * parameters travel with it so the file monitor can show exactly what came
+   * in — which is the thing worth reporting, and the thing nobody can produce
+   * from a client that says nothing.
+   */
+  | {
+      readonly kind: 'dcc-unreadable';
+      readonly from: string;
+      readonly target: string;
+      /** The CTCP parameters exactly as they arrived. */
+      readonly params: string;
     };
 
 export interface ReduceResult {
@@ -929,6 +974,14 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         // notice in the conversation. It is never auto-answered, and nothing is
         // fetched without the user clicking Download.
         if (msg.command === 'PRIVMSG' && ctcp.command === 'DCC') {
+          // The answer to a resume we asked for. It carries no text worth
+          // showing — the row it belongs to says what is happening — so it is
+          // raised and nothing is written into the conversation.
+          const accept = parseDccAccept(ctcp);
+          if (accept !== undefined) {
+            return result(state, [], [{ kind: 'dcc-accept', from: sender, accept }]);
+          }
+
           const send = parseDccSend(ctcp);
           if (send !== undefined) {
             const notice = buildMessage(
@@ -936,9 +989,10 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
               {
                 kind: 'server',
                 target: conversation,
-                text: send.passive
-                  ? `${sender} offered you the file “${send.filename}”, but as a passive transfer Marmotter can't fetch it.`
-                  : `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
+                // One sentence for both directions now that a reverse offer is
+                // one the monitor can take: which way the connection goes is
+                // not something the person receiving a file has to know.
+                text: `${sender} offered you the file “${send.filename}”. Open the file monitor to download it.`,
               },
               now,
             );
@@ -946,6 +1000,25 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
               { ...state, serverNotices: [...state.serverNotices, notice] },
               [],
               [{ kind: 'dcc-offer', from: sender, target: conversation, send }],
+            );
+          }
+
+          // It said it was a file and could not be read as one. Raised so the
+          // monitor can show it: an offer that fell through to the generic CTCP
+          // notice below would land in the server tab, which is not where
+          // somebody waiting for a file is looking.
+          if (isDccSendOffer(ctcp)) {
+            return result(
+              state,
+              [],
+              [
+                {
+                  kind: 'dcc-unreadable',
+                  from: sender,
+                  target: conversation,
+                  params: ctcp.params,
+                },
+              ],
             );
           }
         }
@@ -1041,6 +1114,17 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
         const pack = parseXdccAnnounce(body);
         if (pack !== undefined) {
           effects.push({ kind: 'xdcc-offer', from: sender, target: conversation, pack });
+        }
+      }
+
+      // A notice from a bot may instead be its answer to a pack we asked for.
+      // Only notices: a catalogue line is a message, but iroffer and everything
+      // modelled on it replies to `XDCC SEND` with a NOTICE, so looking no
+      // further keeps the parse off the channel traffic that is merely chat.
+      if (action === undefined && msg.command === 'NOTICE') {
+        const response = parseXdccResponse(body);
+        if (response !== undefined) {
+          effects.push({ kind: 'xdcc-response', from: sender, target: conversation, response });
         }
       }
 

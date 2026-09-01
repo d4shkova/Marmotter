@@ -3,6 +3,7 @@ import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
+import { TextField } from '../primitives/TextField.js';
 import { Table, type Column } from '../primitives/Table.js';
 import { useBreakpoint } from './AppShell.js';
 import { formatAge, formatBytes } from './dcc.js';
@@ -105,6 +106,22 @@ export interface DccBrowserProps {
    * never answered pinned to the top with nothing on it at all.
    */
   readonly onDismiss: (offer: DccOfferRecord) => void;
+  /**
+   * Asks for a pack from a line pasted out of an XDCC index.
+   *
+   * Takes the text as typed rather than a parsed request, because what a person
+   * has on their clipboard is a whole line off a web page — a link, a message,
+   * or both — and deciding what it means is the client's job, not theirs.
+   */
+  readonly onRequestPack?: (text: string) => void;
+  /**
+   * Whether a reverse (passive) offer can be taken on this device.
+   *
+   * False where the platform cannot listen for an incoming connection, and the
+   * row says so rather than offering a button that opens a socket nothing will
+   * dial.
+   */
+  readonly canFetchPassive?: boolean;
   /** Injectable for tests. Left out, the clock is sampled on a slow timer. */
   readonly now?: number;
   /**
@@ -136,6 +153,8 @@ export function DccBrowser({
   onReveal,
   onClear,
   onDismiss,
+  onRequestPack,
+  canFetchPassive = false,
   now,
   pageSize = CATALOGUE_PAGE,
   className,
@@ -143,6 +162,7 @@ export function DccBrowser({
   const ticking = useCoarseNow();
   const at = now ?? ticking;
   const [query, setQuery] = useState('');
+  const [pasted, setPasted] = useState('');
   const [sort, setSort] = useState<{ columnId: string; direction: 'asc' | 'desc' }>({
     columnId: 'received',
     direction: 'desc',
@@ -253,6 +273,7 @@ export function DccBrowser({
           <DownloadCell
             offer={offer}
             disabled={downloadFolder === undefined}
+            canFetchPassive={canFetchPassive}
             onDownload={onDownload}
             onCancel={onCancel}
             {...(onReveal === undefined ? {} : { onReveal })}
@@ -260,7 +281,7 @@ export function DccBrowser({
         ),
       },
     ],
-    [at, downloadFolder, narrow, onCancel, onDownload, onReveal],
+    [at, canFetchPassive, downloadFolder, narrow, onCancel, onDownload, onReveal],
   );
 
   // Name and action on a phone; every column on anything wider.
@@ -299,6 +320,35 @@ export function DccBrowser({
           </Button>
         </div>
 
+        {onRequestPack === undefined ? null : (
+          // A whole line off an index site, taken as it comes. Sitting beside
+          // the search rather than behind a menu because for a lot of people it
+          // is the way in: they arrive holding the link, not browsing a channel.
+          <form
+            className="flex items-end gap-2 border-t border-[var(--separator)] px-4 py-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (pasted.trim() === '') {
+                return;
+              }
+              onRequestPack(pasted);
+              setPasted('');
+            }}
+          >
+            <TextField
+              label="Paste a pack request"
+              labelHidden
+              className="flex-1"
+              placeholder="irc://irc.example.net/files  /msg bot xdcc send #42"
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+            />
+            <Button type="submit" size="small" variant="secondary" disabled={pasted.trim() === ''}>
+              Request
+            </Button>
+          </form>
+        )}
+
         {tracked.length === 0 ? null : (
           <section
             aria-label="Your downloads"
@@ -327,6 +377,7 @@ export function DccBrowser({
                     <DownloadCell
                       offer={offer}
                       disabled={downloadFolder === undefined}
+                      canFetchPassive={canFetchPassive}
                       onDownload={onDownload}
                       onCancel={onCancel}
                       {...(onReveal === undefined ? {} : { onReveal })}
@@ -409,11 +460,14 @@ function DownloadProgress({
   received,
   total,
   filename,
+  address,
   onCancel,
 }: {
   received: number | undefined;
   total: number | undefined;
   filename: string;
+  /** Where the transfer is being made, shown until the first byte arrives. */
+  address: string | undefined;
   onCancel: () => void;
 }): ReactNode {
   const done = received ?? 0;
@@ -456,7 +510,16 @@ function DownloadProgress({
         </button>
       </div>
       <span className="text-caption-2 text-[var(--label-tertiary)]">
-        {pct === undefined ? formatBytes(done) : `${formatBytes(done)} · ${pct}%`}
+        {/* Before the first byte there is nothing to report but where we are
+            connecting, which is the one thing worth saying: a transfer that
+            never starts is almost always an address nothing can reach, and it
+            is otherwise invisible — a receiver answers a direct offer on the
+            socket, not over IRC, so there is nothing in the raw log to see. */}
+        {done === 0 && address !== undefined
+          ? `Connecting to ${address}`
+          : pct === undefined
+            ? formatBytes(done)
+            : `${formatBytes(done)} · ${pct}%`}
       </span>
     </div>
   );
@@ -508,25 +571,42 @@ function DismissButton({
 function DownloadCell({
   offer,
   disabled,
+  canFetchPassive,
   onDownload,
   onCancel,
   onReveal,
 }: {
   offer: DccOfferRecord;
   disabled: boolean;
+  canFetchPassive: boolean;
   onDownload: (offer: DccOfferRecord) => void;
   onCancel: (offer: DccOfferRecord) => void;
   onReveal?: (offer: DccOfferRecord) => void;
 }): ReactNode {
-  if (offer.passive) {
+  // A reverse offer with nothing to identify it by, or on a device that cannot
+  // listen for the connection, is still one nothing can be done with.
+  if (offer.passive && (!canFetchPassive || offer.token === undefined)) {
     return <span className="text-caption-1 text-[var(--label-quaternary)]">Can't fetch</span>;
   }
   switch (offer.status) {
     case 'requested':
+      // The bot's own word on where the request stands, when it gave one — a
+      // queue position is the difference between a wait and a dead end, and it
+      // is the only thing that makes the spinner mean anything.
       return (
-        <Button size="small" variant="secondary" busy disabled>
-          Requested
-        </Button>
+        <div className="flex flex-col items-end gap-0.5">
+          <Button size="small" variant="secondary" busy disabled>
+            {offer.note === undefined ? 'Requested' : 'Queued'}
+          </Button>
+          {offer.note === undefined ? null : (
+            <span
+              className="max-w-40 truncate text-caption-2 text-[var(--label-tertiary)]"
+              title={offer.note}
+            >
+              {offer.note}
+            </span>
+          )}
+        </div>
       );
     case 'downloading':
       return (
@@ -534,6 +614,13 @@ function DownloadCell({
           received={offer.received}
           total={offer.size}
           filename={offer.filename}
+          address={
+            offer.host === undefined
+              ? undefined
+              : offer.port === undefined
+                ? offer.host
+                : `${offer.host}:${offer.port}`
+          }
           onCancel={() => onCancel(offer)}
         />
       );

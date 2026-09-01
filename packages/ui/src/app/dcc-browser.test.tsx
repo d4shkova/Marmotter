@@ -463,3 +463,161 @@ describe('a file list on a platform that chooses the folder for you', () => {
     expect(screen.getByRole('button', { name: 'Choose folder' })).toBeTruthy();
   });
 });
+
+describe('asking for a pack by hand', () => {
+  it('hands the pasted line over whole, and clears the field', () => {
+    const onRequestPack = vi.fn();
+    render(
+      <DccBrowser
+        offers={[]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        onRequestPack={onRequestPack}
+        now={2_000}
+      />,
+    );
+
+    const field = screen.getByLabelText('Paste a pack request') as HTMLInputElement;
+    fireEvent.change(field, {
+      target: { value: "irc://irc.abc.xyz/files '/msg bot xdcc send #7'" },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+
+    expect(onRequestPack).toHaveBeenCalledWith("irc://irc.abc.xyz/files '/msg bot xdcc send #7'");
+    expect(field.value).toBe('');
+  });
+
+  it('has no field at all where the platform cannot request anything', () => {
+    render(
+      <DccBrowser
+        offers={[]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.queryByLabelText('Paste a pack request')).toBeNull();
+  });
+
+  it('shows where a waiting request stands, when the bot said', () => {
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'requested', note: 'Queued, position 4 · about 10m.' })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText('Queued, position 4 · about 10m.').length).toBeGreaterThan(0);
+    // The button reads "Queued" rather than "Requested" once the bot has
+    // confirmed it took the request.
+    expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
+  });
+});
+
+describe('a reverse offer', () => {
+  const reverse = (overrides: Partial<DccOfferRecord> = {}): DccOfferRecord =>
+    offer({
+      status: 'available',
+      passive: true,
+      token: '998877',
+      kind: 'dcc',
+      ...overrides,
+    });
+
+  it('can be downloaded where the device can listen for the connection', () => {
+    const onDownload = vi.fn();
+    render(
+      <DccBrowser
+        offers={[reverse()]}
+        downloadFolder="/tmp/dl"
+        canFetchPassive
+        onDownload={onDownload}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download' })[0]!);
+    expect(onDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so plainly where the device cannot', () => {
+    render(
+      <DccBrowser
+        offers={[reverse()]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText("Can't fetch").length).toBeGreaterThan(0);
+  });
+
+  it('cannot be taken without the token that identifies it', () => {
+    const { token: _dropped, ...untokened } = reverse();
+    render(
+      <DccBrowser
+        offers={[untokened]}
+        downloadFolder="/tmp/dl"
+        canFetchPassive
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText("Can't fetch").length).toBeGreaterThan(0);
+  });
+});
+
+describe('a transfer that has not started yet', () => {
+  it('says where it is connecting, which is otherwise invisible', () => {
+    // A receiver answers a direct offer on the socket rather than over IRC, so
+    // there is nothing in the raw log to show that anything is happening. This
+    // line is the only place a person can see it.
+    render(
+      <DccBrowser
+        offers={[offer({ status: 'downloading', received: 0, host: '172.20.1.12', port: 36031 })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.getAllByText('Connecting to 172.20.1.12:36031').length).toBeGreaterThan(0);
+  });
+
+  it('shows bytes instead once the file starts arriving', () => {
+    render(
+      <DccBrowser
+        offers={[
+          offer({ status: 'downloading', received: 300_000_000, host: '1.2.3.4', port: 5000 }),
+        ]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+    expect(screen.queryByText(/Connecting to/)).toBeNull();
+  });
+});

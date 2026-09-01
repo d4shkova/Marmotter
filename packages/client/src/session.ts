@@ -15,8 +15,10 @@
 import {
   AuthenticateReassembler,
   type CryptoProvider,
+  type DccAccept,
   type DccSend,
   type XdccPack,
+  type XdccResponse,
   type IrcMessage,
   type SaslMechanism,
   type SaslMechanismName,
@@ -143,6 +145,37 @@ export type SessionEvent =
       readonly from: string;
       readonly target: string;
       readonly pack: XdccPack;
+    }
+  /**
+   * A serving bot answered a pack request. Raised so the file monitor can show
+   * a queue position or a refusal on the row that is waiting, rather than
+   * leaving it to spin until the bot either sends the file or never does.
+   */
+  | {
+      readonly kind: 'xdcc-response';
+      readonly from: string;
+      readonly target: string;
+      readonly response: XdccResponse;
+    }
+  /**
+   * A sender agreed to continue a file from a position rather than start it
+   * again, answering a resume we asked for.
+   */
+  | {
+      readonly kind: 'dcc-accept';
+      readonly from: string;
+      readonly accept: DccAccept;
+    }
+  /**
+   * A file offer arrived in a shape this client could not read. Raised so the
+   * monitor can show what came in, rather than the person waiting for a file
+   * being left with silence and nothing to report.
+   */
+  | {
+      readonly kind: 'dcc-unreadable';
+      readonly from: string;
+      readonly target: string;
+      readonly params: string;
     };
 
 export interface Session {
@@ -373,6 +406,25 @@ export function createSession(options: SessionOptions): Session {
             from: effect.from,
             target: effect.target,
             pack: effect.pack,
+          });
+          break;
+        case 'xdcc-response':
+          events.emit({
+            kind: 'xdcc-response',
+            from: effect.from,
+            target: effect.target,
+            response: effect.response,
+          });
+          break;
+        case 'dcc-accept':
+          events.emit({ kind: 'dcc-accept', from: effect.from, accept: effect.accept });
+          break;
+        case 'dcc-unreadable':
+          events.emit({
+            kind: 'dcc-unreadable',
+            from: effect.from,
+            target: effect.target,
+            params: effect.params,
           });
           break;
       }
