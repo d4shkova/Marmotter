@@ -583,9 +583,19 @@ export interface ViewState {
   /**
    * Whether the monitor is actively collecting offers right now.
    *
-   * Separate from `userOptions.dccMonitorEnabled`: the panel's Stop button
-   * pauses collection without switching the whole feature off, so a burst of
-   * offers can be silenced without losing the folder and the toggle.
+   * Separate from `userOptions.dccMonitorEnabled`, which says the feature
+   * exists and where files go; this says somebody has asked it to watch. The
+   * panel's Stop button pauses collection without losing the folder and the
+   * toggle, and Start is the only thing that turns it back on.
+   *
+   * **Starts false, every time, and is deliberately not persisted.** Switching
+   * the feature on in settings used to start it watching there and then, and a
+   * restart brought it back watching, so the only way to have the panel without
+   * collecting anything was to press Stop again on every launch. That is the
+   * wrong default for a feature whose whole point is that it listens to what
+   * strangers send: watching is an action somebody takes, not a state they
+   * inherit from having once enabled it. It is also why this is not saved —
+   * remembering "watching" would put the restart problem straight back.
    */
   readonly dccActive: boolean;
   /** Files seen advertised over DCC this session, newest last. */
@@ -764,7 +774,9 @@ export const useView = create<ViewState>((set, get) => ({
   ctcp: DEFAULT_CTCP_POLICY,
   userOptions: DEFAULT_USER_OPTIONS,
   logging: DEFAULT_LOGGING,
-  dccActive: true,
+  // Off until asked. See the field's own note: enabling the feature shows the
+  // panel, and pressing Start is what makes it watch.
+  dccActive: false,
   dccOffers: [],
 
   select(ref) {

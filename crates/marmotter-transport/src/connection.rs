@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -19,6 +20,38 @@ use crate::tls::{client_config, ClientCertificate, Verification};
 
 /// Default time allowed to establish a connection, including the handshake.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the socket may be idle before the kernel probes the far end.
+///
+/// The client's own `PING` in `packages/client/src/keepalive.ts` is the primary
+/// answer to a half-open connection and this does not replace it: an IRC client
+/// has to notice a server that is reachable but no longer talking, which is a
+/// question only the protocol can ask. What this adds is the case the timers
+/// above cannot cover — a machine that suspends, or a webview whose timers the
+/// operating system has throttled to nothing. The kernel keeps probing either
+/// way, and when it gives up the socket closes for real, which is a close event
+/// arriving where otherwise there would be silence.
+///
+/// Two minutes rather than the system default of two hours, which is long
+/// enough to be indistinguishable from never.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(120);
+
+/// How long between probes once the far end has stopped answering.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Asks the kernel to probe an idle socket, and shrugs if it will not.
+///
+/// Best-effort on purpose. The knobs behind this are not portable — the retry
+/// count is unavailable on Windows, and a sandboxed platform may refuse the
+/// option outright — and none of it is load-bearing: the client's own `PING` is
+/// what actually decides a connection is dead. A refusal here should cost
+/// nothing, so it is not an error and is not reported as one.
+fn enable_tcp_keepalive(stream: &TcpStream) {
+    let keepalive = TcpKeepalive::new()
+        .with_time(KEEPALIVE_IDLE)
+        .with_interval(KEEPALIVE_INTERVAL);
+    let _ = SockRef::from(stream).set_tcp_keepalive(&keepalive);
+}
 
 /// How the socket is secured.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +167,7 @@ pub async fn connect(
     // Interactive traffic: a 200ms delay on every short line is very noticeable
     // in a chat client.
     let _ = stream.set_nodelay(true);
+    enable_tcp_keepalive(&stream);
 
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel();

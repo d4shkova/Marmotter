@@ -4,6 +4,7 @@ import { Listeners } from './listeners.js';
 import { TransportConnectError } from './connect-error.js';
 import {
   DEFAULT_BACKOFF,
+  STABLE_CONNECTION_MS,
   type ConnectionState,
   backoffDelay,
   createReconnectingTransport,
@@ -126,6 +127,7 @@ describe('createReconnectingTransport', () => {
       autoReconnect?: boolean;
       maxAttempts?: number;
       transports?: FakeTransport[];
+      now?: () => number;
     } = {},
   ) => {
     const clock = fakeClock();
@@ -146,6 +148,7 @@ describe('createReconnectingTransport', () => {
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
       random: () => 0.5,
+      ...(options.now === undefined ? {} : { now: options.now }),
     });
 
     const states: ConnectionState[] = [];
@@ -222,6 +225,10 @@ describe('createReconnectingTransport', () => {
   });
 
   it('backs off further with each consecutive failure', async () => {
+    // A connection that opens and falls straight over is a failed attempt, not
+    // a success: a server accepting a socket and dropping it — a full network,
+    // a load balancer in front of nothing — would otherwise reset the backoff
+    // every time and turn this into a connection attempt a second, forever.
     const { transport, clock, created } = build();
     await transport.connect();
 
@@ -230,8 +237,24 @@ describe('createReconnectingTransport', () => {
     await clock.runPending();
 
     created[1]?.closes.emit({ kind: 'server' });
-    // The attempt counter resets on a successful connect, so this is the first
-    // delay again rather than a longer one.
+    expect(clock.pendingDelays()[0]).toBeGreaterThan(first ?? 0);
+  });
+
+  it('starts the backoff over after a connection that lasted', async () => {
+    // The other half of the rule above. A connection that stood up for a while
+    // and then dropped is a fresh outage, and somebody on a flaky link should
+    // not be waiting five minutes because of something that happened this
+    // morning.
+    let at = 0;
+    const { transport, clock, created } = build({ now: () => at });
+    await transport.connect();
+
+    created[0]?.closes.emit({ kind: 'server' });
+    const first = clock.pendingDelays()[0];
+    await clock.runPending();
+
+    at += STABLE_CONNECTION_MS;
+    created[1]?.closes.emit({ kind: 'server' });
     expect(clock.pendingDelays()[0]).toBe(first);
   });
 
@@ -365,7 +388,9 @@ describe('createReconnectingTransport', () => {
 });
 
 describe('giving up, and saying so', () => {
-  const build = (options: { maxAttempts?: number; transports?: FakeTransport[] } = {}) => {
+  const build = (
+    options: { maxAttempts?: number; transports?: FakeTransport[]; now?: () => number } = {},
+  ) => {
     const clock = fakeClock();
     const created: FakeTransport[] = [];
     const queue = options.transports ?? [];
@@ -384,6 +409,7 @@ describe('giving up, and saying so', () => {
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
       random: () => 0.5,
+      ...(options.now === undefined ? {} : { now: options.now }),
     });
 
     const closes: CloseReason[] = [];
@@ -391,32 +417,74 @@ describe('giving up, and saying so', () => {
     return { transport, clock, created, closes };
   };
 
-  it('retries three times and then reports a close', async () => {
-    // Retrying forever is what a bouncer does. A desktop client that does it
-    // quietly looks connected while it is not, with nothing saying why.
+  it('keeps trying through an outage longer than a few seconds', async () => {
+    // This is the bug the default was: three attempts are spent one, two and
+    // four seconds after the drop, so the client gave up seven seconds into an
+    // outage and every drop became permanent.
     const { transport, clock, created, closes } = build();
 
     await transport.connect();
     expect(created).toHaveLength(1);
-    expect(closes).toHaveLength(0);
 
-    for (let round = 0; round < 3; round += 1) {
+    for (let round = 0; round < 12; round += 1) {
       await clock.runPending();
     }
 
-    expect(created).toHaveLength(4);
-    expect(closes).toHaveLength(1);
-    expect(transport.state.kind).toBe('stopped');
+    expect(created).toHaveLength(13);
+    expect(closes).toHaveLength(0);
+    expect(transport.state.kind).toBe('waiting');
   });
 
-  it('schedules nothing more once it has given up', async () => {
+  it('always has the next attempt scheduled while it is retrying', async () => {
     const { transport, clock } = build();
     await transport.connect();
-    for (let round = 0; round < 3; round += 1) {
+    for (let round = 0; round < 6; round += 1) {
       await clock.runPending();
     }
 
-    expect(clock.pendingDelays()).toEqual([]);
+    expect(clock.pendingDelays()).toHaveLength(1);
+  });
+
+  it('holds the delay at the ceiling rather than growing without bound', async () => {
+    const { transport, clock } = build();
+    await transport.connect();
+    for (let round = 0; round < 20; round += 1) {
+      await clock.runPending();
+    }
+
+    // Jitter at 0.5 with a fixed random of 0.5 lands exactly on the ceiling.
+    expect(clock.pendingDelays()[0]).toBe(DEFAULT_BACKOFF.maxMs);
+  });
+
+  it('brings the next attempt forward when asked', async () => {
+    // For the "Try again" in a notice, and for the operating system reporting
+    // the network back: sitting out a delay calculated before the cable went
+    // back in is the client looking broken for no reason.
+    const { transport, clock, created } = build();
+    await transport.connect();
+    await clock.runPending();
+
+    const waiting = created.length;
+    expect(transport.state.kind).toBe('waiting');
+    transport.retryNow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(created.length).toBe(waiting + 1);
+    // The wait it abandoned is not left behind to fire a second attempt.
+    expect(clock.pendingDelays()).toHaveLength(1);
+  });
+
+  it('ignores a request to retry when nothing is pending', async () => {
+    const first = new FakeTransport();
+    const { transport, created } = build({ transports: [first] });
+    await transport.connect();
+
+    transport.retryNow();
+    await Promise.resolve();
+
+    expect(created).toHaveLength(1);
+    expect(transport.state.kind).toBe('connected');
   });
 
   it('honours a limit of its own, for somebody pointing at their own bouncer', async () => {
@@ -428,19 +496,23 @@ describe('giving up, and saying so', () => {
     expect(transport.state.kind).toBe('stopped');
   });
 
-  it('starts counting again after a connection that worked', async () => {
-    // Three attempts per outage, not three for the life of the app. Somebody
-    // on a flaky link would otherwise be cut off for good by lunchtime.
+  it('starts counting again after a connection that lasted', async () => {
+    // An explicit limit is per outage, not for the life of the app. Somebody on
+    // a flaky link would otherwise be cut off for good by lunchtime.
+    let at = 0;
     const first = new FakeTransport();
-    const { transport, clock, created, closes } = build({ transports: [first] });
+    const { transport, clock, created, closes } = build({
+      maxAttempts: 2,
+      transports: [first],
+      now: () => at,
+    });
     await transport.connect();
 
+    at += STABLE_CONNECTION_MS;
     first.closes.emit({ kind: 'server' });
     await clock.runPending();
     expect(created.length).toBeGreaterThan(1);
 
-    // Two more failures is still inside the allowance for this outage.
-    await clock.runPending();
     expect(closes).toHaveLength(0);
   });
 });

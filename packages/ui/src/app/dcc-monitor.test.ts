@@ -43,6 +43,33 @@ describe('the DCC monitor store', () => {
     });
   });
 
+  it('does not watch until somebody starts it', () => {
+    // The store's own initial value, not the one this file's setup writes.
+    // Enabling the feature in settings used to start it collecting there and
+    // then, and a restart brought it back collecting, so the only way to have
+    // the panel without it watching was to press Stop on every launch.
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: useView.getInitialState().dccActive,
+      dccOffers: [],
+    });
+
+    expect(useView.getState().dccActive).toBe(false);
+    useView.getState().recordDccOffer(offer());
+    expect(useView.getState().dccOffers).toHaveLength(0);
+  });
+
+  it('collects once it is started, and stops again when told', () => {
+    useView.setState({ dccActive: false });
+    useView.getState().setDccActive(true);
+    useView.getState().recordDccOffer(offer());
+    expect(useView.getState().dccOffers).toHaveLength(1);
+
+    useView.getState().setDccActive(false);
+    useView.getState().recordDccOffer(offer({ send: { ...send, filename: 'other.zip' } }));
+    expect(useView.getState().dccOffers).toHaveLength(1);
+  });
+
   it('records an offer while switched on and collecting', () => {
     useView.getState().recordDccOffer(offer());
     expect(useView.getState().dccOffers).toHaveLength(1);

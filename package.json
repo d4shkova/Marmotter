@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "pnpm -r --filter=./packages/* build && pnpm -r --filter=./apps/* build",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm coverage && pnpm build",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",

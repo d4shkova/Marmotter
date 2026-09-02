@@ -11,6 +11,10 @@ unsafe_code = "forbid"
 
 [dependencies]
 thiserror = "2"
+# The OS-level TCP keepalive. Tokio exposes no way to set the idle time and
+# probe interval, and the system default of two hours is long enough to be
+# indistinguishable from never.
+socket2 = "0.5"
 # `fs` is the download's: it writes what arrives to a file. It was reaching the
 # crate only through the dev-dependency below, so the library built in a test
 # run and not on its own.
