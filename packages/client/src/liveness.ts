@@ -33,6 +33,12 @@
  *
  * Everything platform-shaped is injected, so this is testable without a DOM and
  * degrades to the clock check alone where there is no `window`.
+ *
+ * The browser types are declared here rather than pulled in from `lib.dom`.
+ * `packages/client` compiles without the DOM — it is the same package the Tauri
+ * shells use, and `websocket.ts` already describes the socket it needs as
+ * `WebSocketLike` for the same reason — so the globals are reached through
+ * `globalThis` and described by the two small shapes below.
  */
 
 /** Why the connection is being questioned. Carried for the raw log. */
@@ -56,11 +62,17 @@ export const CLOCK_TICK_MS = 10_000;
  */
 export const CLOCK_JUMP_MS = 30_000;
 
+/** The slice of the event API this needs. See the note above on the DOM. */
+export interface LivenessTarget {
+  addEventListener(type: string, handler: () => void): void;
+  removeEventListener(type: string, handler: () => void): void;
+}
+
 export interface LivenessOptions {
   /** Called when something suggests the connection may no longer be real. */
   readonly onSuspicion: (cause: SuspicionCause) => void;
   /** Injected for tests, and absent outside a browser. */
-  readonly target?: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | undefined;
+  readonly target?: LivenessTarget | undefined;
   /** Injected for tests. Reads `document.visibilityState` in a browser. */
   readonly isVisible?: (() => boolean) | undefined;
   readonly now?: () => number;
@@ -73,11 +85,20 @@ export interface LivenessOptions {
 /** Stops watching. */
 export type StopWatching = () => void;
 
-const browserTarget = (): LivenessOptions['target'] =>
-  typeof window === 'undefined' ? undefined : window;
+/** What a browser puts on the global object, where there is one. */
+interface BrowserGlobals {
+  readonly window?: LivenessTarget;
+  readonly document?: { readonly visibilityState?: string };
+}
 
-const browserVisibility = (): (() => boolean) | undefined =>
-  typeof document === 'undefined' ? undefined : () => document.visibilityState === 'visible';
+const browserGlobals = (): BrowserGlobals => globalThis as BrowserGlobals;
+
+const browserTarget = (): LivenessTarget | undefined => browserGlobals().window;
+
+const browserVisibility = (): (() => boolean) | undefined => {
+  const page = browserGlobals().document;
+  return page === undefined ? undefined : () => page.visibilityState === 'visible';
+};
 
 export function watchLiveness(options: LivenessOptions): StopWatching {
   const now = options.now ?? (() => Date.now());

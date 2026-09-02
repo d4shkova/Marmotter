@@ -33,20 +33,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Check formatting
-        run: pnpm format:check
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm coverage
-
-      - name: Build
-        run: pnpm build
+      - name: Verify
+        # One script, not five steps, so that what CI checks and what
+        # `pnpm verify` checks cannot drift apart. They had: the steps here
+        # ended with `pnpm build`, which compiles each package against its own
+        # `tsconfig.build.json`, while the only thing run before a push was
+        # `pnpm typecheck` against the root config — and the root config has
+        # `DOM` in `lib` because the UI package needs it. A `window` in a
+        # DOM-free package therefore passed everything locally and failed here.
+        # `eslint.config.js` now catches that particular one at lint time; this
+        # is what stops the next disagreement of the same shape.
+        run: pnpm verify
 
       - name: Build Storybook
         # BUILD_PLAN phase 4 acceptance: Storybook builds and covers every

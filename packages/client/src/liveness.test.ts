@@ -1,24 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLOCK_JUMP_MS, CLOCK_TICK_MS, type SuspicionCause, watchLiveness } from './liveness.js';
 
+type Handler = () => void;
+
 /** An event target the test fires by hand. */
 function fakeTarget() {
-  const handlers = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const handlers = new Map<string, Set<Handler>>();
 
   return {
     target: {
-      addEventListener(type: string, handler: EventListenerOrEventListenerObject): void {
+      addEventListener(type: string, handler: Handler): void {
         const set = handlers.get(type) ?? new Set();
         set.add(handler);
         handlers.set(type, set);
       },
-      removeEventListener(type: string, handler: EventListenerOrEventListenerObject): void {
+      removeEventListener(type: string, handler: Handler): void {
         handlers.get(type)?.delete(handler);
       },
     },
     fire(type: string): void {
       for (const handler of handlers.get(type) ?? []) {
-        (handler as EventListener)(new Event(type));
+        handler();
       }
     },
     count(type: string): number {
