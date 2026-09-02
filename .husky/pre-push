@@ -1,0 +1,12 @@
+# Everything CI's "Lint and test" job runs, before anything leaves the machine.
+#
+# The same script, not a copy of its steps: `pnpm verify` is what
+# .github/workflows/ci.yml runs, so this cannot pass while CI fails for a
+# reason that was checkable here. That is the specific hole it fills — the
+# pre-commit hook runs lint-staged and the tests, and neither of those compiles
+# a package against its own tsconfig.build.json, which is where the DOM-free
+# packages are actually held to being DOM-free.
+#
+# It takes a couple of minutes. `git push --no-verify` skips it for a push that
+# genuinely cannot wait; CI still has the last word either way.
+pnpm verify
