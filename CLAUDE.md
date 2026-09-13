@@ -520,6 +520,17 @@ Compact IRC-native lines, not chat bubbles.
   `+draft/reply`. No nested threading UI.
 - Own-message state: optimistic render, reconciled against `echo-message` where
   available, with a clear un-acknowledged indicator otherwise.
+- The list follows the conversation only while the reader is already at the
+  bottom, and a floating "Jump to latest" pill is the way back from anywhere
+  else. It appears on having scrolled up rather than on somebody speaking — a
+  person who scrolled up into a quiet channel needs the way down just as much —
+  and carries the count of what has been said since they left. That count is of
+  what people actually said: a netsplit still brings the pill back, because they
+  are scrolled up, but "3 new messages" that turns out to be three reconnections
+  is a button that teaches somebody not to trust it. A mention among them takes
+  the accent, which is the one interruption worth making, and never red. The
+  pill is a sibling of the scroll container rather than a child, or it scrolls
+  away with the content it exists to escape.
 - Timestamps from `server-time` when present, local clock otherwise, with the
   distinction visible on hover.
 - Link detection, with an inline unfurl that is **off by default** — unfurling

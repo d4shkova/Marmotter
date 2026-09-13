@@ -1,7 +1,12 @@
-import type { ChannelState, Message, NetworkState } from '@marmotter/client';
+import {
+  FOLDABLE_KINDS,
+  type ChannelState,
+  type Message,
+  type NetworkState,
+} from '@marmotter/client';
 import { fold } from '@marmotter/protocol';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
@@ -50,10 +55,37 @@ export interface MessageListProps {
  * they have scrolled up to read, and loading older history has to preserve the
  * scroll position or the page yanks away from what they were reading.
  *
+ * Not following the conversation is the right behaviour and it leaves a gap:
+ * somebody who has scrolled up has no way back but to drag, and no way to know
+ * anything has been said since. The jump button is that way back, and it is
+ * also the notice — it counts what has arrived since they left the bottom, and
+ * says when one of those was addressed to them, which is the one thing worth
+ * interrupting a person for.
+ *
  * The log is announced as a `log` region rather than a `feed`: a feed implies
  * articles a screen reader can page between, and these are lines of a
  * conversation.
  */
+/**
+ * What has been said since the reader left the bottom.
+ *
+ * Joins and parts are counted separately from what people actually said,
+ * because "3 new messages" that turns out to be three people reconnecting is a
+ * button that taught somebody not to trust it. A netsplit still brings the
+ * button back — they are scrolled up, and there has to be a way down — it just
+ * does not claim anybody spoke.
+ */
+interface Missed {
+  readonly messages: number;
+  /** Whether one of them was addressed to the reader. */
+  readonly mention: boolean;
+}
+
+const NOTHING_MISSED: Missed = { messages: 0, mention: false };
+
+/** How close to the end still counts as being at the end, in pixels. */
+const BOTTOM_SLACK = 40;
+
 export function MessageList({
   network,
   conversation,
@@ -75,6 +107,30 @@ export function MessageList({
   const scroller = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
   const previousHeight = useRef(0);
+
+  /**
+   * How much of the buffer had been seen when the reader was last at the
+   * bottom.
+   *
+   * A count rather than a message id because that is what the arithmetic below
+   * needs and because the buffer is trimmed from the front: an id held across a
+   * trim is an id that is no longer in the list, and the count is corrected by
+   * the same clamp that handles it.
+   */
+  const seen = useRef(conversation.messages.length);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [missed, setMissed] = useState<Missed>(NOTHING_MISSED);
+
+  /**
+   * Held in a ref so counting does not depend on its identity.
+   *
+   * The caller builds this inline — it closes over the user's nick and their
+   * highlight words — so it is a new function on every render. As a dependency
+   * it would re-run the count on every render of the window rather than when
+   * the buffer changes, which on a busy channel is most of them.
+   */
+  const highlights = useRef(isHighlight);
+  highlights.current = isHighlight;
 
   const rows = useMemo(
     () =>
@@ -112,13 +168,88 @@ export function MessageList({
     }
   }, [rows.length, virtualizer]);
 
+  const messages = conversation.messages;
+
+  /**
+   * What has arrived since the reader stopped following.
+   *
+   * Driven by the buffer rather than by the row list because a row list folds:
+   * eight people joining is one row and eight messages, and the reader is owed
+   * the honest count of what was said, which here is none of them.
+   */
+  useEffect(() => {
+    if (pinnedToBottom.current) {
+      seen.current = messages.length;
+      // Only when there is something to clear: this runs on every buffer change
+      // and an unconditional set would re-render the list on each one.
+      setMissed((current) =>
+        current.messages === 0 && !current.mention ? current : NOTHING_MISSED,
+      );
+      return;
+    }
+
+    // The buffer is trimmed from the front once a channel is busy enough, which
+    // moves every index down. Without the clamp the count goes negative and the
+    // button says nothing arrived while the list grows underneath it.
+    const from = Math.min(seen.current, messages.length);
+    const since = messages.slice(from);
+    const said = since.filter((message) => !FOLDABLE_KINDS.has(message.kind));
+    const mentions = highlights.current;
+    const mention = mentions !== undefined && said.some((message) => mentions(message));
+
+    setMissed((current) =>
+      current.messages === said.length && current.mention === mention
+        ? current
+        : { messages: said.length, mention },
+    );
+  }, [messages]);
+
+  /**
+   * A different conversation is a different place in a different list.
+   *
+   * Without this, opening a channel inherits the last one's position: the
+   * button arrives already counting messages nobody missed, on a list that was
+   * just rendered at its bottom.
+   */
+  useEffect(() => {
+    pinnedToBottom.current = true;
+    seen.current = conversation.messages.length;
+    setAwayFromBottom(false);
+    setMissed(NOTHING_MISSED);
+    // Deliberately keyed on which conversation this is rather than on its
+    // contents; the buffer changing is the case above, not this one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network.id, conversation.name]);
+
+  /** Back to the live end of the conversation, and following it again. */
+  const jumpToBottom = useCallback((): void => {
+    pinnedToBottom.current = true;
+    seen.current = conversation.messages.length;
+    setAwayFromBottom(false);
+    setMissed(NOTHING_MISSED);
+    if (rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
+    }
+  }, [conversation.messages.length, rows.length, virtualizer]);
+
   const onScroll = (): void => {
     const element = scroller.current;
     if (element === null) {
       return;
     }
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    pinnedToBottom.current = distance < 40;
+    const atBottom = distance < BOTTOM_SLACK;
+    pinnedToBottom.current = atBottom;
+
+    // Set only on the edge. This fires on every frame of a scroll, and a state
+    // write per frame would re-render a virtualized list mid-drag.
+    setAwayFromBottom((away) => (away === !atBottom ? away : !atBottom));
+    if (atBottom) {
+      seen.current = conversation.messages.length;
+      setMissed((current) =>
+        current.messages === 0 && !current.mention ? current : NOTHING_MISSED,
+      );
+    }
 
     // Reaching the top asks for the page before, once.
     if (element.scrollTop < 200 && onLoadOlder !== undefined) {
@@ -139,6 +270,9 @@ export function MessageList({
     );
     if (index >= 0) {
       pinnedToBottom.current = false;
+      // A jump to a hit three thousand lines up leaves the live tail, which is
+      // exactly the state the button exists for.
+      setAwayFromBottom(true);
       virtualizer.scrollToIndex(index, { align: 'center' });
     }
   }, [searchActiveId, rows, virtualizer]);
@@ -173,80 +307,147 @@ export function MessageList({
   }
 
   return (
-    <div
-      ref={scroller}
-      onScroll={onScroll}
-      className={cn('flex-1 overflow-y-auto overscroll-contain', className)}
-    >
+    // The scroller is wrapped rather than being the root, so the button can be
+    // positioned against the list's bottom edge. Inside the scroller it would
+    // be positioned against the content and would scroll away with it, which is
+    // the one thing it must not do.
+    <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div
-        role="log"
-        aria-label={`Messages in ${conversation.name}`}
-        aria-live="polite"
-        aria-relevant="additions"
-        style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}
+        ref={scroller}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
-        {conversation.historyPending !== undefined ? (
-          <div className="absolute inset-x-0 top-0 flex justify-center py-2">
-            <Spinner size="small" label="Loading earlier messages" />
+        <div
+          role="log"
+          aria-label={`Messages in ${conversation.name}`}
+          aria-live="polite"
+          aria-relevant="additions"
+          style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}
+        >
+          {conversation.historyPending !== undefined ? (
+            <div className="absolute inset-x-0 top-0 flex justify-center py-2">
+              <Spinner size="small" label="Loading earlier messages" />
+            </div>
+          ) : null}
+
+          {virtualizer.getVirtualItems().map((item) => {
+            const row = rows[item.index];
+            if (row === undefined) {
+              return null;
+            }
+            return (
+              <div
+                key={item.key}
+                ref={virtualizer.measureElement}
+                data-index={item.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${item.start}px)`,
+                }}
+              >
+                <MessageRow
+                  row={row}
+                  nickWidth={nickWidth}
+                  alignNicksRight={alignNicksRight}
+                  showTimestamps={showTimestamps}
+                  isMember={isMember}
+                  fold={foldNick}
+                  {...(onReply === undefined ? {} : { onReply })}
+                  {...(onNickClick === undefined ? {} : { onNickClick })}
+                  {...(onNickMenu === undefined ? {} : { onNickMenu })}
+                  {...(onOpenLink === undefined ? {} : { onOpenLink })}
+                  highlighted={
+                    row.kind === 'message' && isHighlight !== undefined
+                      ? isHighlight(row.message)
+                      : false
+                  }
+                  searchMatch={
+                    row.kind !== 'message'
+                      ? 'none'
+                      : row.message.id === searchActiveId
+                        ? 'active'
+                        : searchMatchIds?.has(row.message.id) === true
+                          ? 'match'
+                          : 'none'
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {conversation.historyGap ? (
+          <div className="flex justify-center py-3">
+            <Button variant="plain" size="small" onClick={onLoadOlder}>
+              Load the messages in between
+            </Button>
           </div>
         ) : null}
-
-        {virtualizer.getVirtualItems().map((item) => {
-          const row = rows[item.index];
-          if (row === undefined) {
-            return null;
-          }
-          return (
-            <div
-              key={item.key}
-              ref={virtualizer.measureElement}
-              data-index={item.index}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                transform: `translateY(${item.start}px)`,
-              }}
-            >
-              <MessageRow
-                row={row}
-                nickWidth={nickWidth}
-                alignNicksRight={alignNicksRight}
-                showTimestamps={showTimestamps}
-                isMember={isMember}
-                fold={foldNick}
-                {...(onReply === undefined ? {} : { onReply })}
-                {...(onNickClick === undefined ? {} : { onNickClick })}
-                {...(onNickMenu === undefined ? {} : { onNickMenu })}
-                {...(onOpenLink === undefined ? {} : { onOpenLink })}
-                highlighted={
-                  row.kind === 'message' && isHighlight !== undefined
-                    ? isHighlight(row.message)
-                    : false
-                }
-                searchMatch={
-                  row.kind !== 'message'
-                    ? 'none'
-                    : row.message.id === searchActiveId
-                      ? 'active'
-                      : searchMatchIds?.has(row.message.id) === true
-                        ? 'match'
-                        : 'none'
-                }
-              />
-            </div>
-          );
-        })}
       </div>
 
-      {conversation.historyGap ? (
-        <div className="flex justify-center py-3">
-          <Button variant="plain" size="small" onClick={onLoadOlder}>
-            Load the messages in between
-          </Button>
-        </div>
-      ) : null}
+      {awayFromBottom ? <JumpToLatest missed={missed} onJump={jumpToBottom} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The way back to the live end of the conversation.
+ *
+ * Shown whenever the reader has scrolled off the bottom, not only when
+ * something has arrived: having scrolled up is itself the state with no way
+ * back, and a button that appears only once somebody speaks leaves a person who
+ * scrolled up into a quiet channel dragging their way down.
+ *
+ * What it says changes with what it is reporting, which is the whole of the
+ * feature. With nothing new it is a way back and says so. With messages behind
+ * it, it is also the notice that they exist. And a mention takes the accent —
+ * the one interruption CLAUDE.md says is worth making — rather than red, which
+ * in this interface always means something went wrong.
+ *
+ * Not `aria-live`: the log above it already announces additions, and a region
+ * that re-read the running total on every message would talk over it.
+ */
+function JumpToLatest({ missed, onJump }: { missed: Missed; onJump: () => void }): ReactNode {
+  const { messages, mention } = missed;
+  const label =
+    messages === 0
+      ? 'Jump to latest'
+      : messages === 1
+        ? '1 new message'
+        : `${messages} new messages`;
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+      <button
+        type="button"
+        onClick={onJump}
+        // Named in full for a screen reader, which has no arrow to look at and
+        // no position on the screen to read the word "latest" against.
+        aria-label={
+          messages === 0
+            ? 'Jump to the latest messages'
+            : `Jump to the latest messages. ${label}${mention ? ', one mentions you' : ''}.`
+        }
+        className={cn(
+          'pointer-events-auto flex items-center gap-1.5 rounded-full py-1.5 pr-3.5 pl-3',
+          'text-footnote font-medium shadow-lg',
+          'border border-[var(--separator)] [backdrop-filter:var(--blur-vibrancy)]',
+          'transition-colors duration-[var(--duration-press)] ease-[var(--easing-press)]',
+          mention
+            ? 'border-transparent bg-[var(--accent)] text-[var(--on-accent)] hover:bg-[var(--accent-hover)]'
+            : 'bg-[var(--bg-elevated-2)] text-[var(--label-primary)] hover:bg-[var(--bg-elevated-3)]',
+        )}
+      >
+        <span aria-hidden="true">
+          <svg viewBox="0 0 16 16" className="size-3.5 fill-none stroke-current stroke-[1.75]">
+            <path d="M8 3v10M4 9l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span aria-hidden="true">{label}</span>
+      </button>
     </div>
   );
 }
