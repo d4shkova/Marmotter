@@ -3,7 +3,6 @@ import { cn } from '../lib/cn.js';
 import { Button } from '../primitives/Button.js';
 import { EmptyState } from '../primitives/EmptyState.js';
 import { SearchField } from '../primitives/SearchField.js';
-import { TextField } from '../primitives/TextField.js';
 import { Table, type Column } from '../primitives/Table.js';
 import { useBreakpoint } from './AppShell.js';
 import { formatAge, formatBytes } from './dcc.js';
@@ -107,14 +106,6 @@ export interface DccBrowserProps {
    */
   readonly onDismiss: (offer: DccOfferRecord) => void;
   /**
-   * Asks for a pack from a line pasted out of an XDCC index.
-   *
-   * Takes the text as typed rather than a parsed request, because what a person
-   * has on their clipboard is a whole line off a web page — a link, a message,
-   * or both — and deciding what it means is the client's job, not theirs.
-   */
-  readonly onRequestPack?: (text: string) => void;
-  /**
    * Whether a reverse (passive) offer can be taken on this device.
    *
    * False where the platform cannot listen for an incoming connection, and the
@@ -153,7 +144,6 @@ export function DccBrowser({
   onReveal,
   onClear,
   onDismiss,
-  onRequestPack,
   canFetchPassive = false,
   now,
   pageSize = CATALOGUE_PAGE,
@@ -162,7 +152,6 @@ export function DccBrowser({
   const ticking = useCoarseNow();
   const at = now ?? ticking;
   const [query, setQuery] = useState('');
-  const [pasted, setPasted] = useState('');
   const [sort, setSort] = useState<{ columnId: string; direction: 'asc' | 'desc' }>({
     columnId: 'received',
     direction: 'desc',
@@ -292,13 +281,19 @@ export function DccBrowser({
   );
 
   return (
-    <div className={className}>
-      {/* The search bar and the downloads tray are pinned to the top of the
-          scroll area together: a file window people scroll through a long
-          catalogue in, so both the way to narrow it and the files they actually
-          asked for have to stay in reach rather than scrolling off with the
-          first screenful. */}
-      <div className="sticky top-0 z-10 border-b border-[var(--separator)] bg-[var(--bg-base)]/90 [backdrop-filter:var(--blur-vibrancy)]">
+    <div className={cn('flex min-h-0 flex-col', className)}>
+      {/* Everything that is not a file: the search, the downloads tray, and
+          where files are being saved.
+          
+          Held out of the scroll area rather than stuck to the top of it. The
+          two read the same while a window sits still and come apart the moment
+          it is resized — a sticky header belongs to a scroll position, so a
+          window made shorter keeps whatever offset it had and the header is
+          somewhere in the middle of the list until somebody scrolls back up.
+          A row of the flex column cannot be scrolled away from at all, at any
+          size, which is what this pane needs: the only thing that moves is the
+          files. */}
+      <div className="shrink-0 border-b border-[var(--separator)] bg-[var(--bg-elevated)]">
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="flex-1">
             <SearchField
@@ -319,35 +314,6 @@ export function DccBrowser({
             Clear
           </Button>
         </div>
-
-        {onRequestPack === undefined ? null : (
-          // A whole line off an index site, taken as it comes. Sitting beside
-          // the search rather than behind a menu because for a lot of people it
-          // is the way in: they arrive holding the link, not browsing a channel.
-          <form
-            className="flex items-end gap-2 border-t border-[var(--separator)] px-4 py-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (pasted.trim() === '') {
-                return;
-              }
-              onRequestPack(pasted);
-              setPasted('');
-            }}
-          >
-            <TextField
-              label="Paste a pack request"
-              labelHidden
-              className="flex-1"
-              placeholder="irc://irc.example.net/files  /msg bot xdcc send #42"
-              value={pasted}
-              onChange={(event) => setPasted(event.target.value)}
-            />
-            <Button type="submit" size="small" variant="secondary" disabled={pasted.trim() === ''}>
-              Request
-            </Button>
-          </form>
-        )}
 
         {tracked.length === 0 ? null : (
           <section
@@ -389,11 +355,13 @@ export function DccBrowser({
             </ul>
           </section>
         )}
-      </div>
 
-      <div className="flex flex-col gap-3 px-4 py-4">
+        {/* Where files land. Part of the frame rather than the list: it is the
+            thing that decides whether any of the buttons below can do
+            anything, so it must not be a line somebody has to scroll up to
+            find. */}
         {downloadFolder === undefined ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-[var(--bg-elevated)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--separator)] px-4 py-2.5">
             <p className="text-footnote text-[var(--label-secondary)]">
               {onChooseFolder === undefined
                 ? 'Marmotter has nowhere it can save files on this device yet.'
@@ -406,12 +374,20 @@ export function DccBrowser({
             )}
           </div>
         ) : (
-          <p className="truncate text-caption-1 text-[var(--label-tertiary)]">
+          <p className="truncate border-t border-[var(--separator)] px-4 py-1.5 text-caption-1 text-[var(--label-tertiary)]">
             Saving to {downloadFolder}
           </p>
         )}
+      </div>
 
+      {/* The files, and the only thing in this pane that scrolls. `min-h-0` is
+          what makes that true: without it a flex child is floored at its
+          content height, the column grows past the window, and the whole pane
+          scrolls again — headers included. */}
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
         <Table
+          className="min-h-0 flex-1"
+          stickyHeader
           caption="Files offered over DCC"
           columns={shown}
           rows={filtered}

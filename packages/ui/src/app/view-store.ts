@@ -19,6 +19,12 @@ import {
   type XdccResponse,
 } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import {
+  DEFAULT_INTERFACE_FONT,
+  DEFAULT_MESSAGE_FONT,
+  type InterfaceFontId,
+  type MessageFontId,
+} from '../fonts.js';
 import { DEFAULT_THEME, type ThemeId } from '../themes.js';
 import { create } from 'zustand';
 
@@ -502,6 +508,22 @@ export interface Appearance {
    * and no second palette to keep in step.
    */
   readonly theme: ThemeId;
+  /**
+   * The face every label, button and settings row is set in.
+   *
+   * One custom property on the root element, the same shape as the theme: the
+   * stylesheet resolves all of its interface type through `--font-ui-stack`,
+   * so nothing below has to know a choice was made.
+   */
+  readonly interfaceFont: InterfaceFontId;
+  /**
+   * The face the nick column, the message body and the raw log are set in.
+   *
+   * Monospaced, and the list it is chosen from holds nothing else: the nick
+   * column is measured in characters and the raw log is read by lining fields
+   * up, both of which a proportional face silently breaks.
+   */
+  readonly messageFont: MessageFontId;
   /** Fixed nick column width, in characters. */
   readonly nickColumnWidth: number;
   /** Right-aligns nicks against the message text, as HexChat does. */
@@ -541,6 +563,8 @@ export interface Appearance {
 
 export const DEFAULT_APPEARANCE: Appearance = {
   theme: DEFAULT_THEME,
+  interfaceFont: DEFAULT_INTERFACE_FONT,
+  messageFont: DEFAULT_MESSAGE_FONT,
   nickColumnWidth: 12,
   alignNicksRight: true,
   foldEvents: true,

@@ -1,21 +1,24 @@
 /**
  * Choosing the colours.
  *
- * A dropdown rather than six rows of radio buttons, because Settings is already
+ * A dropdown rather than a column of radio buttons, because Settings is already
  * long and a theme is a one-line decision. What each one is called is not much
- * use on its own — nobody knows what "Nebula" looks like — so every row carries
- * a swatch of the theme's own surface, accent and text.
+ * use on its own — nobody knows what "Nebula" looks like — so what each row
+ * carries is a working miniature of the window — sidebar,
+ * conversation, composer — drawn in the theme it names, rather than a strip of
+ * its colours. Three chips say which colours a theme has; they cannot say
+ * whether a channel is readable in it, and that is the question being asked.
  *
- * Those swatches are the reason this is not a `select`. A native option cannot
+ * Those previews are the reason this is not a `select`. A native option cannot
  * hold anything but text, and a picker of theme names with no colours in it is
  * a list of guesses. What a `select` would have brought for free is put back by
  * hand: the panel traps focus, closes on Escape or a click outside, and its
- * options are radios, so it is announced as one choice among six.
+ * options are radios, so it is announced as one choice among the rest.
  *
  * The panel is positioned `fixed` and measured from the trigger rather than
  * laid out beside it. A settings group is a rounded card with
  * `overflow: hidden`, and an absolutely-positioned panel inside one is clipped
- * to the row it opened from — five of the six themes cut off at the edge.
+ * to the row it opened from — every theme but the first cut off at the edge.
  */
 
 import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -24,6 +27,7 @@ import { useDismissOnOutsideClick, useFocusTrap } from '../lib/focus.js';
 import { type Placement, fit } from '../lib/placement.js';
 import { Button } from '../primitives/Button.js';
 import { THEMES, type ThemeId } from '../themes.js';
+import { ThemePreview } from './ThemePreview.js';
 
 export interface ThemePickerProps {
   readonly value: ThemeId;
@@ -32,10 +36,12 @@ export interface ThemePickerProps {
 }
 
 /** How wide the panel is drawn, and what its placement is measured against. */
-const PANEL_WIDTH = 300;
+const PANEL_WIDTH = 340;
 
 /**
- * Three chips in a theme's own colours.
+ * Three chips in a theme's own colours: the closed trigger's form of the
+ * preview, where there is room for a reminder of the current theme and not for
+ * a window.
  *
  * `data-theme` on the wrapper is what makes this honest: the aliases below it
  * re-resolve against that theme's primitives, so a swatch cannot drift from the
@@ -147,7 +153,7 @@ export function ThemePicker({ value, onChange, className }: ThemePickerProps): R
                 theme.id === value && 'bg-[var(--accent-muted)]',
               )}
             >
-              <Swatch theme={theme.id} />
+              <ThemePreview theme={theme.id} />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-subhead text-[var(--label-primary)]">
                   {theme.name}

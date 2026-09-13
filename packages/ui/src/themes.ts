@@ -22,6 +22,8 @@ export const THEME_IDS = [
   'crepuscule',
   'orage',
   'brume',
+  'brume-dark',
+  'paper-dark',
 ] as const;
 
 export type ThemeId = (typeof THEME_IDS)[number];
@@ -101,6 +103,16 @@ export const THEMES: readonly ThemeInfo[] = [
     id: 'brume',
     name: 'Brume',
     description: 'Light, in blues that have faded.',
+  },
+  {
+    id: 'brume-dark',
+    name: 'Brume Nuit',
+    description: 'The same faded blues, after dark.',
+  },
+  {
+    id: 'paper-dark',
+    name: 'Paper Dark',
+    description: 'The red page, turned down for the night.',
   },
 ];
 

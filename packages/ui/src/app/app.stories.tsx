@@ -20,6 +20,7 @@ import { AccountMenu } from './AccountMenu.js';
 import { FirstRun } from './FirstRun.js';
 import { Launch } from './Launch.js';
 import { ThemePicker } from './ThemePicker.js';
+import { ThemePreview } from './ThemePreview.js';
 import { LogSearch } from './LogSearch.js';
 import { LoggingSettings } from './LoggingSettings.js';
 import { AccountPanel } from './AccountPanel.js';
@@ -56,7 +57,7 @@ import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
 import { buildRows } from './rows.js';
-import type { ThemeId } from '../themes.js';
+import { THEMES, type ThemeId } from '../themes.js';
 import type { Appearance, TargetRef, Unread } from './view-store.js';
 
 export default { title: 'Application' } satisfies Meta;
@@ -917,6 +918,8 @@ export const SettingsScreen: StoryObj = {
   render: function SettingsScreen() {
     const [appearance, setAppearance] = useState<Appearance>({
       theme: 'midnight',
+      interfaceFont: 'system',
+      messageFont: 'system-mono',
       nickColumnWidth: 12,
       alignNicksRight: true,
       foldEvents: true,
@@ -1194,6 +1197,39 @@ export const ChoosingATheme: StoryObj = {
     return (
       <div className="flex h-[28rem] items-start justify-center p-6">
         <ThemePicker value={theme} onChange={setTheme} />
+      </div>
+    );
+  },
+};
+
+/**
+ * Every theme, as the window it makes.
+ *
+ * The demo each row of the picker carries, laid out together at both the sizes
+ * it is drawn at. Nothing here names a colour: each one is the same markup with
+ * a different `data-theme` on it, which is the point — a preview that could
+ * disagree with the window it previews would be worse than no preview.
+ */
+export const EveryTheme: StoryObj = {
+  render: function EveryTheme() {
+    return (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-4 p-6">
+        {THEMES.map((theme) => (
+          <div key={theme.id} className="flex flex-col gap-2">
+            <ThemePreview theme={theme.id} size="panel" />
+            <div className="flex items-center gap-2">
+              <ThemePreview theme={theme.id} />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-subhead text-[var(--label-primary)]">
+                  {theme.name}
+                </span>
+                <span className="truncate text-caption-1 text-[var(--label-tertiary)]">
+                  {theme.description}
+                </span>
+              </span>
+            </div>
+          </div>
+        ))}
       </div>
     );
   },

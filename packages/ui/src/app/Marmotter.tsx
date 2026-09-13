@@ -104,6 +104,7 @@ import {
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
+import { interfaceFontStack, messageFontStack } from '../fonts.js';
 import { parseInput } from './commands.js';
 import { isAutojoined, toggleAutojoin } from './autojoin.js';
 import {
@@ -789,6 +790,26 @@ export function Marmotter({
   useEffect(() => {
     document.documentElement.dataset['theme'] = theme;
   }, [theme]);
+
+  /**
+   * Putting the chosen faces on the window.
+   *
+   * The same shape as the theme and for the same reason: the whole stylesheet
+   * resolves its type through these two properties, so setting them on the root
+   * element is the entire feature — no component branches on a font, and a
+   * sheet rendered through a portal is in the same type as everything else.
+   *
+   * Written as an inline style rather than a class because that is what
+   * outranks the `:root` rule in tokens.css that declares the defaults, which
+   * is exactly the relationship wanted: the stylesheet says what the type is
+   * until somebody chooses otherwise.
+   */
+  const { interfaceFont, messageFont } = view.appearance;
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--font-ui-stack', interfaceFontStack(interfaceFont));
+    root.style.setProperty('--font-mono-stack', messageFontStack(messageFont));
+  }, [interfaceFont, messageFont]);
 
   // Asked once. Probing writes to the keychain, so it is not a thing to do on
   // every render of a form.
@@ -2919,6 +2940,15 @@ export function Marmotter({
         session.send(parsed.line);
         return;
       case 'handled':
+        // A pack request pasted whole — a link, a `/msg bot xdcc send #42`, or
+        // both — which is how the indexes hand them out and so how most people
+        // arrive at one. It lives here rather than in the file monitor because
+        // a box asking for text of an unstated shape is a box nobody can fill
+        // in; the command bar documents what it takes as it is typed.
+        if (parsed.command.name === 'xdcc') {
+          requestPastedPack(parsed.args);
+          return;
+        }
         // Only /me reaches here with a target, and only when there is none.
         toast(`${parsed.command.name} needs a conversation to act on.`, 'error');
         return;
@@ -3191,7 +3221,10 @@ export function Marmotter({
         />
       ) : view.pane === 'dcc' ? (
         <DccBrowserPane
-          className="flex-1 overflow-y-auto"
+          // Not a scroll container: the pane lays itself out as a frame with
+          // one scrolling list inside it, so the height has to reach it rather
+          // than be spent here.
+          className="min-h-0 flex-1"
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
@@ -3199,7 +3232,6 @@ export function Marmotter({
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
-          onRequestPack={requestPastedPack}
           canFetchPassive={dcc?.receivePassive !== undefined}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (

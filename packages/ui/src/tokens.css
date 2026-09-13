@@ -759,6 +759,124 @@
   --speaker-7: #8a2f5c;
   --speaker-8: #4a5560;
 }
+
+/**
+ * Paper Dark — the same red page, after dark.
+ *
+ * Paper's trade runs in both directions, and this is the far end of it. On
+ * white, the accent is the brighter red and alarm the darker, heavier one;
+ * neither of those survives being moved onto near-black — a deep red is the
+ * first thing to disappear there. So the two swap jobs: the accent is the
+ * muted rose, dulled until it sits on a dark surface without glowing, and
+ * alarm is systemRed itself, which is now the louder of the two. Red still
+ * only ever means trouble when it is *that* red, and the test that holds the
+ * two apart is the same one it is held to on the light page.
+ */
+[data-theme='paper-dark'] {
+  --blue-050: #fdf0f1;
+  --blue-100: #f6dadd;
+  --blue-200: #ecb9be;
+  --blue-300: #df979f;
+  --blue-400: #d17d86;
+  --blue-500: #c9737d;
+  --blue-600: #a85a64;
+  --blue-700: #9c525b;
+  --blue-800: #67333a;
+  --blue-900: #452126;
+
+  /* Paper's neutral greys, inverted. Warm-free on purpose: the accent carries
+     all the warmth this theme has, and a warm grey under it reads as a stain. */
+  --ink-000: #121214;
+  --ink-900: #1a1a1e;
+  --ink-800: #232328;
+  --ink-700: #2e2e34;
+  --ink-600: #3b3b42;
+
+  --red-400: #ff6961;
+  --red-500: #ff3b30;
+  --red-900: #3a0f0c;
+
+  --label-strong: #f5f5f7;
+  --label-ink: #e6e6ea;
+  --fill-ink: #8c8c96;
+  --separator-ink: #55555e;
+  --knob-ink: #ffffff;
+  --on-accent-ink: #121214;
+  --scrim-ink: #000000;
+
+  --row-channel: #df979f;
+  --row-person: #b9b3ff;
+
+  --speaker-1: #e0959d;
+  --speaker-2: #e3b48f;
+  --speaker-3: #ccc47f;
+  --speaker-4: #8fd6b4;
+  --speaker-5: #7fc8e8;
+  --speaker-6: #a9b6ff;
+  --speaker-7: #dd9ad6;
+  --speaker-8: #b7bcc4;
+}
+
+/**
+ * Brume Dark — the same faded blues, at night.
+ *
+ * Brume is the light theme whose blues have had the colour washed out of them,
+ * and the obvious way to darken it — swap the ramp end for end — gets a navy
+ * theme rather than a faded one, because the pale steps a light theme writes
+ * its text in are the saturated ones here. So the fading is done again from
+ * the dark end instead: every step is pulled towards the grey of the surface
+ * it sits on, and the accent is a step that would have been a mid-tone on the
+ * light page. Alarm is the one thing not faded, which is what keeps it the
+ * single loud colour in a theme built on quiet ones.
+ */
+[data-theme='brume-dark'] {
+  --blue-050: #eaf2fb;
+  --blue-100: #d3e3f5;
+  --blue-200: #b6cfec;
+  --blue-300: #97b8e0;
+  --blue-400: #7ba3d4;
+  --blue-500: #8ab0dc;
+  --blue-600: #5a80b0;
+  --blue-700: #46648c;
+  --blue-800: #33486a;
+  --blue-900: #22304a;
+
+  /* Surfaces, from the night sky up. Blue-biased, as Midnight's are: a pure
+     grey under a washed-out blue accent is what makes the blue look like a
+     mistake rather than a choice. */
+  --ink-000: #0e141c;
+  --ink-900: #141c26;
+  --ink-800: #1c2632;
+  --ink-700: #26323f;
+  --ink-600: #33414f;
+
+  --red-400: #ff8a80;
+  --red-500: #ff5f52;
+  --red-900: #3a0f0c;
+
+  --label-strong: #eef4fb;
+  --label-ink: #dbe6f2;
+  --fill-ink: #7f97b5;
+  --separator-ink: #4a6079;
+  --knob-ink: #ffffff;
+  /* Dark text on the accent: the accent is pale enough here that white on it
+     is the pairing that cannot be read. */
+  --on-accent-ink: #0e141c;
+  --scrim-ink: #000000;
+
+  --row-channel: #97b8e0;
+  --row-person: #c3b6ff;
+
+  --speaker-1: #7fd8ef;
+  --speaker-2: #8ab0dc;
+  --speaker-3: #b9a8ff;
+  --speaker-4: #8fd0b8;
+  --speaker-5: #e0b98a;
+  --speaker-6: #e79ab4;
+  --speaker-7: #a9c4e8;
+  --speaker-8: #9fa9b5;
+}
+
 /* ===================================================== 2. semantic aliases */
 
 /**

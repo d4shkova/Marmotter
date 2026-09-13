@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { THEMES } from '../themes.js';
 import { ThemePicker } from './ThemePicker.js';
+import { ThemePreview } from './ThemePreview.js';
 
 afterEach(cleanup);
 
@@ -29,21 +30,49 @@ describe('choosing a theme', () => {
     const onChange = vi.fn();
     render(<ThemePicker value="midnight" onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /Midnight/ }));
-    fireEvent.click(screen.getByRole('radio', { name: /Paper/ }));
+    // Matched against the description too, because 'Paper' alone now names two
+    // themes — the light page and its dark twin — and a picker that offers both
+    // must not be tested by a pattern that cannot tell them apart.
+    fireEvent.click(screen.getByRole('radio', { name: /^PaperA white page/ }));
 
     expect(onChange).toHaveBeenCalledWith('paper');
     expect(screen.queryByRole('radiogroup')).toBeNull();
   });
 
-  // The swatch is drawn by putting the theme on the element and reading the
+  // The preview is drawn by putting the theme on the element and reading the
   // same aliases the window reads. Naming its colours here instead would be a
   // second copy of the palette, free to disagree with the first.
-  it('draws each swatch in the theme it names', () => {
+  it('draws each preview in the theme it names', () => {
     const { container } = render(<ThemePicker value="midnight" onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /Midnight/ }));
 
     for (const theme of THEMES) {
       expect(container.ownerDocument.querySelector(`[data-theme='${theme.id}']`)).not.toBeNull();
     }
+  });
+});
+
+describe('the demo window', () => {
+  // What the preview is for. Three chips say which colours a theme has; the
+  // question a person is actually asking is whether they can read a channel in
+  // it, and that needs the parts of the window they will be reading.
+  it('draws the window in the theme it names, at both sizes', () => {
+    for (const size of ['row', 'panel'] as const) {
+      const { container, unmount } = render(<ThemePreview theme="brume-dark" size={size} />);
+      const frame = container.querySelector("[data-theme='brume-dark']");
+      expect(frame, size).not.toBeNull();
+      // Every colour in it comes from that theme's own aliases. A literal here
+      // would be a palette that could disagree with the window.
+      expect(container.innerHTML, size).not.toMatch(/#[0-9a-f]{3,8}\b|\brgba?\(/i);
+      unmount();
+    }
+  });
+
+  // The row it sits in is already a radio carrying the theme's name and its
+  // description. A screen reader reading out a made-up channel after each one
+  // would be noise, and the names in it are not real people.
+  it('says nothing to a screen reader', () => {
+    const { container } = render(<ThemePreview theme="midnight" />);
+    expect(container.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
   });
 });

@@ -179,6 +179,16 @@ export const COMMANDS: readonly CommandSpec[] = [
     build: (args) => (rest(args) === '' ? 'QUIT' : `QUIT :${rest(args)}`),
   },
   {
+    name: 'xdcc',
+    params: '<link or message>',
+    summary: 'Asks a bot for a pack, from a line copied out of an XDCC index.',
+    alsoAt: 'Files',
+    // Handled by the app: the text is a whole line off a web page — an irc://
+    // link, a `/msg bot xdcc send #42`, or both — and working out which network
+    // and which bot it means is more than a line to send.
+    build: () => undefined,
+  },
+  {
     name: 'quote',
     params: '<line>',
     summary: 'Sends a line to the server exactly as typed.',

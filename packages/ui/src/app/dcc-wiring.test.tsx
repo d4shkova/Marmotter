@@ -532,6 +532,86 @@ describe('an offer nothing here asked for', () => {
   });
 });
 
+/**
+ * The pasted request, after the field that used to take it was removed.
+ *
+ * CLAUDE.md is explicit that a pack is pasted at least as often as it is
+ * browsed — every index hands out an `irc://` link and a literal
+ * `/msg Bot xdcc send #N` — so taking the box out of the file monitor had to
+ * move that path rather than end it. The command bar is where it went, because
+ * it documents what it takes as the command is being typed, which is the one
+ * thing the box could not do.
+ */
+describe('a pack request pasted into the command bar', () => {
+  it('asks the bot named in it, and matches the answer back to the row', async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+
+    await act(async () => {
+      useView.getState().setPane('chat');
+    });
+    await act(async () => {
+      typeCommand('/xdcc /msg [EWG]-[DELiSH xdcc send #26');
+    });
+
+    await waitFor(() =>
+      expect(transport.sent.some((line) => /xdcc send #26/i.test(line))).toBe(true),
+    );
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[DELiSH!bot@host PRIVMSG marmot :${DELIM}DCC SEND test.tar 3232235777 4000 1932735283${DELIM}`,
+      );
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
+    expect(shell.download.mock.calls[0]?.[0]).toMatchObject({ filename: 'test.tar', port: 4000 });
+  });
+
+  it('says so rather than sending anything when the line is not a request', async () => {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+    const before = transport.sent.length;
+
+    await act(async () => {
+      useView.getState().setPane('chat');
+    });
+    await act(async () => {
+      typeCommand('/xdcc what goes in here');
+    });
+
+    expect(await screen.findByText(/doesn't look like a pack request/)).toBeTruthy();
+    expect(transport.sent).toHaveLength(before);
+  });
+});
+
+/**
+ * The two faces, put on the window.
+ *
+ * The same shape as the theme: one property on the root element, which the
+ * whole stylesheet resolves its type through.
+ */
+describe('the chosen type', () => {
+  it('reaches the document, and follows a change', async () => {
+    const shell = fakeShell();
+    await connected(shell);
+
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue('--font-ui-stack')).toContain('-apple-system');
+    expect(root.style.getPropertyValue('--font-mono-stack')).toContain('SF Mono');
+
+    await act(async () => {
+      useView.getState().updateAppearance({ interfaceFont: 'serif', messageFont: 'courier' });
+    });
+
+    expect(root.style.getPropertyValue('--font-ui-stack')).toContain('Georgia');
+    expect(root.style.getPropertyValue('--font-mono-stack')).toContain('Courier New');
+    // Still a monospace stack, whichever face was picked: the nick column is
+    // measured in characters and the raw log is read by lining fields up.
+    expect(root.style.getPropertyValue('--font-mono-stack')).toMatch(/monospace$/);
+  });
+});
+
 describe('a bot that advertises an address only it can reach', () => {
   it('says the sender is misconfigured rather than blaming the connection', async () => {
     const shell = fakeShell();

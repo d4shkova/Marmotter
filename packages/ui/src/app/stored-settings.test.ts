@@ -27,6 +27,8 @@ describe('settings through the file and back', () => {
     const chosen: StoredSettings = {
       appearance: {
         theme: 'paper',
+        interfaceFont: 'serif',
+        messageFont: 'courier',
         nickColumnWidth: 18,
         alignNicksRight: false,
         foldEvents: false,
@@ -159,6 +161,29 @@ describe('reading a settings file somebody has edited', () => {
       readStoredSettings({ appearance: { highlightWords: ['marmot', 3, '', null, 'burrow'] } })
         .appearance.highlightWords,
     ).toEqual(['marmot', 'burrow']);
+  });
+
+  // A settings document travels between devices on different releases more
+  // often than not, so a face this build has never heard of is the ordinary
+  // case rather than a corrupt file. It costs that one setting.
+  it('reads an unknown face as the default rather than passing it on', () => {
+    const read = readStoredSettings({
+      appearance: { interfaceFont: 'papyrus', messageFont: 'wingdings', theme: 'brume-dark' },
+    });
+    expect(read.appearance.interfaceFont).toBe(DEFAULT_SETTINGS.appearance.interfaceFont);
+    expect(read.appearance.messageFont).toBe(DEFAULT_SETTINGS.appearance.messageFont);
+    // And only that setting: the theme beside it is untouched.
+    expect(read.appearance.theme).toBe('brume-dark');
+  });
+
+  // The two lists are not interchangeable. A proportional face in the message
+  // slot is a broken nick column, not a different-looking one.
+  it('will not take a message face as an interface one, or the reverse', () => {
+    const read = readStoredSettings({
+      appearance: { interfaceFont: 'courier', messageFont: 'serif' },
+    });
+    expect(read.appearance.interfaceFont).toBe(DEFAULT_SETTINGS.appearance.interfaceFont);
+    expect(read.appearance.messageFont).toBe(DEFAULT_SETTINGS.appearance.messageFont);
   });
 
   it('reads an unknown logging format as the default rather than passing it on', () => {
