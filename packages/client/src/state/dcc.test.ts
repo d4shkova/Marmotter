@@ -38,6 +38,11 @@ describe('a DCC offer', () => {
           secure: false,
           turbo: false,
         },
+        // Carried alongside the offer because it is the one address we know
+        // reaches the sender — the connection this offer arrived over goes
+        // there. The monitor falls back to it when the advertised address, as
+        // here, is one that never leaves the sender's own network.
+        senderHost: 'host.example',
       },
     ]);
   });

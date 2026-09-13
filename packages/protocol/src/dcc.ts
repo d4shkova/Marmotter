@@ -450,3 +450,75 @@ export function isPrivateAddress(host: string): boolean {
     (a === 100 && b >= 64 && b <= 127)
   );
 }
+
+/**
+ * Whether a host is worth opening a socket to at all.
+ *
+ * The question this exists to answer is whether the hostmask a sender carries
+ * on IRC can stand in for the address they advertised, and most of the time on
+ * a modern network it cannot: a cloak — `user/bob`, `Rizon/staff/alice` — is a
+ * label the ircd made up to hide the real host, and it resolves to nothing. It
+ * is told apart by the slash, which no hostname may contain.
+ *
+ * What is left is either an address or something shaped like a name that could
+ * be looked up, which is as far as this can reason without doing the lookup.
+ * A hashed cloak (`4a1f2b.users.example.net`) passes and will usually fail to
+ * resolve, and that is the right trade: this is a last resort taken after the
+ * offer's own address has already failed, and one failed lookup buys a much
+ * better sentence for the person reading it than not trying at all.
+ */
+export function isDialableHost(host: string): boolean {
+  if (host === '' || /[\s/@!*?]/.test(host)) {
+    return false;
+  }
+  // An address, of either family.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+    return true;
+  }
+  // Otherwise a name with at least one dot in it — a bare label is a LAN name
+  // and means as little to us as the private address we are replacing.
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host);
+}
+
+/**
+ * A reachable stand-in for an address only the sender's own network can reach.
+ *
+ * A serving bot behind a router that has not been told its public address
+ * advertises the one it knows, and every receiver outside that network is given
+ * a `DCC SEND` naming something like `192.168.1.50`. The offer is well-formed,
+ * the port is real, and the only wrong part is the address — so the thing to
+ * try is the same port at an address that does reach the sender.
+ *
+ * The sender's own hostmask is that address, when it is one at all. We are
+ * already talking to them at it: the IRC connection to that host is what
+ * carried the offer, so there is no new disclosure in dialling it, and for a
+ * bot whose file server sits on the same machine it is exactly right.
+ *
+ * Returns nothing when there is nothing better to try — which includes the
+ * case that matters most for not being annoying: an offer whose address is
+ * already public has nothing wrong with it that this can fix, and a transfer
+ * that failed for some other reason must not be retried somewhere else and
+ * reported as though the address had been the problem.
+ *
+ * This is a guess, and it is only worth making after the advertised address has
+ * been tried and failed. It cannot fix a sender whose router forwards nothing,
+ * because no address can.
+ */
+export function publicAddressFor(
+  offered: string,
+  senderHost: string | undefined,
+): string | undefined {
+  if (!isPrivateAddress(offered)) {
+    return undefined;
+  }
+  if (senderHost === undefined || !isDialableHost(senderHost)) {
+    return undefined;
+  }
+  // A sender whose hostmask is itself private is on the same footing as the
+  // address they advertised: both are the sender's own network, and swapping
+  // one for the other is a second attempt at the same unreachable place.
+  if (isPrivateAddress(senderHost) || senderHost === offered) {
+    return undefined;
+  }
+  return senderHost;
+}

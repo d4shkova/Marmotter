@@ -639,3 +639,148 @@ describe('a bot that advertises an address only it can reach', () => {
     expect(useView.getState().dccOffers[0]?.error).toContain('only works on its own network');
   });
 });
+
+/**
+ * The common failure, and the one thing that can be done about it.
+ *
+ * A serving bot behind a router that has not been told its public address
+ * advertises the address it knows about, and every receiver outside that
+ * network is handed something like `192.168.1.103`. The offer is well-formed
+ * and the port is real; only the address is wrong. The address that is right
+ * is the one the offer itself arrived over — the bot's own host on IRC — so
+ * that is what gets tried, at the same port, once the advertised one fails.
+ *
+ * 3232235879 is 192.168.1.103; 3405803783 is 203.0.113.7.
+ */
+describe('a bot behind a router that has not been told its address', () => {
+  /** A transfer that fails, and one that works, in call order. */
+  const failThen = (outcomes: readonly ('fail' | 'ok')[]) => {
+    let call = 0;
+    return () => {
+      const outcome = outcomes[call] ?? 'fail';
+      call += 1;
+      return outcome === 'ok'
+        ? { done: Promise.resolve('/tmp/dl/test.mp4'), cancel: () => {} }
+        : { done: Promise.reject(new Error('connection refused')), cancel: () => {} };
+    };
+  };
+
+  const offer = (transport: FakeTransport, host = 'files.example.net'): void => {
+    transport.deliver(
+      `:[EWG]-[YOLOx0!~YOLx@${host} PRIVMSG marmot :${DELIM}DCC SEND test.mp4 3232235879 45859 2091954352${DELIM}`,
+    );
+  };
+
+  it("falls back to the bot's own address, at the same port", async () => {
+    const shell = fakeShell();
+    shell.download.mockImplementation(failThen(['fail', 'ok']));
+    const transport = await connected(shell);
+
+    await act(async () => offer(transport));
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(2));
+    // The advertised address first: a receiver on the bot's own network can
+    // reach it, and that attempt should win where it can.
+    expect(shell.download.mock.calls[0]?.[0]).toMatchObject({
+      host: '192.168.1.103',
+      port: 45859,
+    });
+    // Then the address the offer arrived over, at the same port — the port was
+    // never the part that was wrong.
+    expect(shell.download.mock.calls[1]?.[0]).toMatchObject({
+      host: 'files.example.net',
+      port: 45859,
+      filename: 'test.mp4',
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('downloaded'));
+  });
+
+  it('tries it once, not in a loop', async () => {
+    const shell = fakeShell();
+    shell.download.mockImplementation(failThen(['fail', 'fail']));
+    const transport = await connected(shell);
+
+    await act(async () => offer(transport));
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    expect(shell.download).toHaveBeenCalledTimes(2);
+
+    // Both addresses named, and the remaining option said out loud rather than
+    // leaving somebody to check a firewall that is not the problem.
+    const error = useView.getState().dccOffers[0]?.error ?? '';
+    expect(error).toContain('files.example.net');
+    expect(error).toContain('another bot');
+  });
+
+  // The important half: an address that is publicly routable has nothing wrong
+  // with it that a different address would fix, and a transfer that failed for
+  // some other reason must not be retried elsewhere and blamed on the address.
+  it('does not retry an offer whose address was fine', async () => {
+    const shell = fakeShell();
+    shell.download.mockImplementation(failThen(['fail', 'ok']));
+    const transport = await connected(shell);
+
+    await act(async () => {
+      transport.deliver(
+        `:[EWG]-[YOLOx0!~YOLx@files.example.net PRIVMSG marmot :${DELIM}DCC SEND test.mp4 3405803783 45859 2091954352${DELIM}`,
+      );
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    expect(shell.download).toHaveBeenCalledTimes(1);
+  });
+
+  // A cloak resolves to nothing, so there is no second address to try and the
+  // row says what it said before: the sender is misconfigured.
+  it('has nothing to fall back to behind a cloak', async () => {
+    const shell = fakeShell();
+    shell.download.mockImplementation(failThen(['fail', 'ok']));
+    const transport = await connected(shell);
+
+    await act(async () => offer(transport, 'Rizon/user/YOLOx0'));
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    expect(shell.download).toHaveBeenCalledTimes(1);
+    expect(useView.getState().dccOffers[0]?.error).toContain('only works on its own network');
+  });
+
+  // Pressing Retry is a fresh pair of attempts, not one: the row remembers that
+  // its fallback was spent, and a person who asks again is asking for both.
+  it('gives Retry a fresh pair of attempts', async () => {
+    const shell = fakeShell();
+    shell.download.mockImplementation(failThen(['fail', 'fail', 'fail', 'ok']));
+    const transport = await connected(shell);
+
+    await act(async () => offer(transport));
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    expect(shell.download).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Retry' })[0]?.click();
+    });
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(4));
+    expect(shell.download.mock.calls[2]?.[0]).toMatchObject({ host: '192.168.1.103' });
+    expect(shell.download.mock.calls[3]?.[0]).toMatchObject({ host: 'files.example.net' });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('downloaded'));
+  });
+});

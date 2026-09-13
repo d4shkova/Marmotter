@@ -417,6 +417,33 @@ export interface DccOfferRecord {
   readonly turbo?: boolean;
   /** The address to connect to, for a direct DCC offer. */
   readonly host?: string;
+  /**
+   * Where the sender is reached on IRC, from their hostmask.
+   *
+   * Kept against the row so a transfer that failed on a private address has
+   * something to fall back to: the address the offer itself carried is the
+   * sender's idea of where they are, and this is where we already know they
+   * actually are. Absent for a sender the network gave no host for.
+   */
+  readonly senderHost?: string;
+  /**
+   * The address the offer itself advertised.
+   *
+   * Separate from {@link host}, which is wherever the transfer is being dialled
+   * right now and is what the row shows while it connects. Once a fallback
+   * attempt has moved `host` to the sender's own address, this is the only
+   * remaining record of what was offered — and Retry needs it, or asking again
+   * would quietly start from the fallback and try one address where the first
+   * attempt tried two.
+   */
+  readonly offeredHost?: string;
+  /**
+   * Whether this row has already been retried at {@link senderHost}.
+   *
+   * One retry, not a loop: the second failure is the answer, and a row that
+   * kept swapping addresses would spend a bot's connection limit finding it out.
+   */
+  readonly triedSenderHost?: boolean;
   /** The port to connect to, for a direct DCC offer. */
   readonly port?: number;
   /** The pack number, for an XDCC offer. */
@@ -670,6 +697,8 @@ export interface ViewState {
     readonly from: string;
     readonly target: string;
     readonly send: DccSend;
+    /** Where the sender is reached on IRC, for the private-address fallback. */
+    readonly senderHost?: string;
     readonly at: number;
   }): void;
   /**
@@ -736,6 +765,18 @@ export interface ViewState {
       /** The address the transfer is being made to, once one is known. */
       host?: string;
       port?: number;
+      /**
+       * Where the sender is reached on IRC.
+       *
+       * Set when a bot answers a pack request: the row was made from a
+       * catalogue line in a channel and had no sender address until the
+       * answering `DCC SEND` arrived with one.
+       */
+      senderHost?: string;
+      /** What the offer advertised, as opposed to where it is being dialled. */
+      offeredHost?: string;
+      /** Marks the row as having spent its one retry at the sender's address. */
+      triedSenderHost?: boolean;
     },
   ): void;
   /**
@@ -924,6 +965,7 @@ export const useView = create<ViewState>((set, get) => ({
         filename: offer.send.filename,
         host: offer.send.host,
         port: offer.send.port,
+        ...(offer.senderHost === undefined ? {} : { senderHost: offer.senderHost }),
         ...(offer.send.size === undefined ? {} : { size: offer.send.size }),
         passive: offer.send.passive,
         ...(offer.send.token === undefined ? {} : { token: offer.send.token }),
@@ -1065,6 +1107,11 @@ export const useView = create<ViewState>((set, get) => ({
           // thing on the row when a transfer does not start.
           ...(patch.host === undefined ? {} : { host: patch.host }),
           ...(patch.port === undefined ? {} : { port: patch.port }),
+          ...(patch.senderHost === undefined ? {} : { senderHost: patch.senderHost }),
+          ...(patch.offeredHost === undefined ? {} : { offeredHost: patch.offeredHost }),
+          ...(patch.triedSenderHost === undefined
+            ? {}
+            : { triedSenderHost: patch.triedSenderHost }),
         };
       }),
     }));

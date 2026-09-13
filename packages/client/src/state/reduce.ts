@@ -118,6 +118,16 @@ export type Effect =
       readonly from: string;
       readonly target: string;
       readonly send: DccSend;
+      /**
+       * The sender's host, as their hostmask on this network gives it.
+       *
+       * Carried because it is the one address we know reaches them: it is where
+       * the connection that delivered this offer goes. A sender behind a router
+       * that has not been told its public address advertises a private one in
+       * the offer itself, and this is what the file monitor falls back to when
+       * that address turns out to reach nothing.
+       */
+      readonly senderHost: string | undefined;
     }
   /**
    * A bot advertised a file over XDCC in a channel. Raised so the file monitor
@@ -999,7 +1009,15 @@ function applyMessage(state: NetworkState, msg: IrcMessage, context: ReduceConte
             return result(
               { ...state, serverNotices: [...state.serverNotices, notice] },
               [],
-              [{ kind: 'dcc-offer', from: sender, target: conversation, send }],
+              [
+                {
+                  kind: 'dcc-offer',
+                  from: sender,
+                  target: conversation,
+                  send,
+                  senderHost: msg.source?.host,
+                },
+              ],
             );
           }
 

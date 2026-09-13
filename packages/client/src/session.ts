@@ -151,6 +151,14 @@ export type SessionEvent =
       readonly from: string;
       readonly target: string;
       readonly send: DccSend;
+      /**
+       * Where the sender is reached on IRC, from their hostmask.
+       *
+       * The fallback for an offer that advertises an address only the sender's
+       * own network can reach. Absent where the network gave no host, and a
+       * cloak is not one that can be dialled — the monitor decides that.
+       */
+      readonly senderHost: string | undefined;
     }
   /**
    * A bot advertised a file over XDCC in a channel. Raised so the file monitor
@@ -414,6 +422,7 @@ export function createSession(options: SessionOptions): Session {
             from: effect.from,
             target: effect.target,
             send: effect.send,
+            senderHost: effect.senderHost,
           });
           break;
         case 'xdcc-offer':

@@ -20,6 +20,7 @@ import {
   type XdccResponse,
   type DccAccept,
   isPrivateAddress,
+  publicAddressFor,
   parsePackRequest,
   buildDccResume,
   buildPassiveAccept,
@@ -1184,6 +1185,7 @@ export function Marmotter({
             sessionEvent.from,
             sessionEvent.target,
             sessionEvent.send,
+            sessionEvent.senderHost,
           );
         } else if (sessionEvent.kind === 'xdcc-offer') {
           handleXdccOffer.current(
@@ -1544,7 +1546,21 @@ export function Marmotter({
    * which direction the connection went would be a bug rather than a feature.
    */
   const trackTransfer = useCallback(
-    (offerId: string, filename: string, transfer: DccTransfer): void => {
+    (
+      offerId: string,
+      filename: string,
+      transfer: DccTransfer,
+      /**
+       * What to try instead, once, when the advertised address turns out to
+       * reach nothing.
+       *
+       * Supplied only for an offer whose address is one that cannot leave the
+       * sender's own network. A transfer that failed for any other reason has
+       * nowhere better to go, and retrying it somewhere else would report the
+       * wrong cause for the wrong failure.
+       */
+      fallback?: { readonly host: string; readonly retry: () => void },
+    ): void => {
       transfers.current.set(offerId, transfer);
       transfer.done
         .then((savedPath) => {
@@ -1562,17 +1578,42 @@ export function Marmotter({
           if (cancelledOffers.current.delete(offerId)) {
             return;
           }
+          const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+          const host = row?.host;
+
+          // The advertised address was one that never leaves the sender's own
+          // network, and we know another address that reaches them: the one
+          // this very offer arrived over. A bot behind a router that has not
+          // been told its public address is the common case here, and its file
+          // server is usually the same machine the bot is on, so the same port
+          // at that address is very often the transfer that works.
+          //
+          // Tried only after the advertised address has failed, because a
+          // receiver on the sender's own network can reach it and that is the
+          // attempt that should win when it can.
+          if (fallback !== undefined && !(row?.triedSenderHost ?? false)) {
+            fallback.retry();
+            return;
+          }
+
           // An address only the sender's own network can reach is the one
           // failure worth explaining rather than reporting: the offer is
           // well-formed, nothing here is broken, and no amount of retrying
           // will help. Said plainly, because "connection refused" sends a
           // person looking at their own firewall for something that is not
-          // there.
-          const host = useView.getState().dccOffers.find((row) => row.id === offerId)?.host;
+          // there — and it now says what else was tried, so the sentence is
+          // not asking somebody to check a thing already checked.
+          const sender = row?.from ?? 'The sender';
+          const offered = row?.offeredHost ?? host;
           const reason =
-            host !== undefined && isPrivateAddress(host)
-              ? `The sender gave ${host}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
-              : describe(error);
+            // The fuller sentence first: where the fallback has been spent,
+            // saying only that the advertised address was private would leave
+            // somebody about to suggest the very thing already tried.
+            row?.triedSenderHost === true && row.senderHost !== undefined
+              ? `${sender} gave ${offered ?? 'an address'}, which only works on its own network, and ${row.senderHost} did not answer either. Nothing here can fix that — another bot offering the same file is the way round it.`
+              : offered !== undefined && isPrivateAddress(offered)
+                ? `${sender} gave ${offered}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
+                : describe(error);
           useView.getState().setDccOfferStatus(offerId, { status: 'failed', error: reason });
           // Keyed to the row, not the wording: a serving bot re-offers a pack
           // every few seconds and each re-offer is another attempt, so one file
@@ -1607,6 +1648,11 @@ export function Marmotter({
   // is visibly in progress rather than an unresponsive button. Shared by the
   // Download button on a direct offer and by the XDCC path, which lands here
   // once the bot answers a request with a real DCC SEND.
+  /** Set immediately below; see the note where it is assigned. */
+  const fetchIntoFolderRef = useRef<
+    (offerId: string, source: Parameters<typeof fetchIntoFolder>[1]) => void
+  >(() => {});
+
   const fetchIntoFolder = useCallback(
     (
       offerId: string,
@@ -1618,6 +1664,17 @@ export function Marmotter({
         secure?: boolean;
         turbo?: boolean;
         resumeFrom?: number;
+        /** Where the sender is reached on IRC, for the private-address fallback. */
+        senderHost?: string;
+        /**
+         * Whether this is the fallback attempt at the sender's own address.
+         *
+         * Stated rather than inferred from the row, so that pressing Retry on a
+         * failed row is a fresh pair of attempts rather than one: the row
+         * remembers that its fallback was spent, and only a call that *is* the
+         * fallback should set that.
+         */
+        fallbackAttempt?: boolean;
       },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
@@ -1639,7 +1696,22 @@ export function Marmotter({
         filename: source.filename,
         host: source.host,
         port: source.port,
+        ...(source.senderHost === undefined ? {} : { senderHost: source.senderHost }),
+        // A first attempt clears the mark and records what was advertised, so
+        // Retry on a failed row tries the advertised address and then the
+        // sender's again rather than giving up after one.
+        triedSenderHost: source.fallbackAttempt === true,
+        ...(source.fallbackAttempt === true ? {} : { offeredHost: source.host }),
       });
+
+      // Worked out before the transfer starts, because it depends on the
+      // address being dialled now rather than on whatever the row says by the
+      // time it fails. Undefined for any address that is publicly routable:
+      // there is nothing wrong with those that a different address would fix.
+      const senderHost =
+        source.senderHost ??
+        useView.getState().dccOffers.find((entry) => entry.id === offerId)?.senderHost;
+      const reachable = publicAddressFor(source.host, senderHost);
       const transfer = dcc.download(
         {
           host: source.host,
@@ -1653,10 +1725,33 @@ export function Marmotter({
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
-      trackTransfer(offerId, source.filename, transfer);
+      trackTransfer(
+        offerId,
+        source.filename,
+        transfer,
+        reachable === undefined
+          ? undefined
+          : {
+              host: reachable,
+              // The same transfer in every respect but where it is dialled —
+              // the port, the name, the size and the resume position all still
+              // belong to the offer that was made.
+              retry: () =>
+                fetchIntoFolderRef.current(offerId, {
+                  ...source,
+                  host: reachable,
+                  ...(senderHost === undefined ? {} : { senderHost }),
+                  fallbackAttempt: true,
+                }),
+            },
+      );
     },
     [dcc, toast, trackTransfer],
   );
+
+  // Self-reference, so the fallback above can start the same transfer again at
+  // a different address without this callback depending on itself.
+  fetchIntoFolderRef.current = fetchIntoFolder;
 
   /**
    * Receiving a passive (reverse) transfer, where we open the socket.
@@ -1823,6 +1918,14 @@ export function Marmotter({
             readonly size?: number;
             readonly secure?: boolean;
             readonly turbo?: boolean;
+            /**
+             * Where the sender is reached on IRC, for the fallback below.
+             *
+             * Carried on the plan rather than read off the row because a pack
+             * row was built from a catalogue line in a channel and has no
+             * sender address until this answering offer brings one.
+             */
+            readonly senderHost?: string;
           }
         | {
             readonly kind: 'passive';
@@ -1844,6 +1947,7 @@ export function Marmotter({
             ...(plan.size === undefined ? {} : { size: plan.size }),
             ...(plan.secure === undefined ? {} : { secure: plan.secure }),
             ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+            ...(plan.senderHost === undefined ? {} : { senderHost: plan.senderHost }),
             ...(resumeFrom === undefined ? {} : { resumeFrom }),
           });
           return;
@@ -2268,9 +2372,16 @@ export function Marmotter({
   // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
   // that row and downloads; otherwise it is an unsolicited offer of its own.
   const handleDccOffer = useRef<
-    (networkId: string, networkName: string, from: string, target: string, send: DccSend) => void
+    (
+      networkId: string,
+      networkName: string,
+      from: string,
+      target: string,
+      send: DccSend,
+      senderHost: string | undefined,
+    ) => void
   >(() => {});
-  handleDccOffer.current = (networkId, networkName, from, target, send) => {
+  handleDccOffer.current = (networkId, networkName, from, target, send, senderHost) => {
     const key = pendingKey(networkId, from);
     const queue = pendingXdcc.current.get(key) ?? [];
     // Every row this same bot advertised, which is what an answer is matched
@@ -2317,6 +2428,7 @@ export function Marmotter({
         ...(send.size === undefined ? {} : { size: send.size }),
         secure: send.secure,
         turbo: send.turbo,
+        ...(senderHost === undefined ? {} : { senderHost }),
       });
     };
 
@@ -2376,9 +2488,15 @@ export function Marmotter({
       case 'ignore':
         return;
       case 'record':
-        useView
-          .getState()
-          .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
+        useView.getState().recordDccOffer({
+          networkId,
+          networkName,
+          from,
+          target,
+          send,
+          ...(senderHost === undefined ? {} : { senderHost }),
+          at: Date.now(),
+        });
         return;
     }
   };
@@ -2448,7 +2566,10 @@ export function Marmotter({
         kind: 'active',
         networkId: offer.networkId,
         from: offer.from,
-        host: offer.host,
+        // What was advertised, where the row still remembers it: `host` is
+        // wherever the last attempt was dialled, which after a fallback is the
+        // sender's own address. Asking again asks for the whole sequence.
+        host: offer.offeredHost ?? offer.host,
         port: offer.port,
         filename: offer.filename,
         ...(offer.size === undefined ? {} : { size: offer.size }),

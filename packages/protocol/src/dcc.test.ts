@@ -3,9 +3,11 @@ import { decodeCtcp } from './ctcp.js';
 import {
   buildDccResume,
   buildPassiveAccept,
+  isDialableHost,
   isPrivateAddress,
   parseDccAccept,
   parseDccSend,
+  publicAddressFor,
   sanitizeDccFilename,
   type DccSend,
 } from './dcc.js';
@@ -286,5 +288,59 @@ describe('isPrivateAddress', () => {
     expect(isPrivateAddress('8.8.8.8')).toBe(false);
     expect(isPrivateAddress('2001:db8::1')).toBe(false);
     expect(isPrivateAddress('dcc.example.net')).toBe(false);
+  });
+});
+
+describe('a sender that advertised an address only its own network can reach', () => {
+  it("offers the sender's own host as the address to try instead", () => {
+    expect(publicAddressFor('192.168.1.50', 'bot.example.net')).toBe('bot.example.net');
+    expect(publicAddressFor('10.0.0.4', '203.0.113.25')).toBe('203.0.113.25');
+    expect(publicAddressFor('172.16.3.9', 'files.example.org')).toBe('files.example.org');
+  });
+
+  // The important half. An offer whose address is publicly routable has nothing
+  // wrong with it that a different address would fix, and a transfer that failed
+  // for some other reason must not be retried elsewhere and then reported as
+  // though the address had been the problem.
+  it('leaves a publicly routable offer alone', () => {
+    expect(publicAddressFor('203.0.113.25', 'bot.example.net')).toBeUndefined();
+    expect(publicAddressFor('example.net', 'bot.example.net')).toBeUndefined();
+  });
+
+  // A cloak is a label the ircd made up to hide the real host. It resolves to
+  // nothing, and dialling it is a lookup that cannot succeed.
+  it.each(['user/bot', 'Rizon/staff/alice', 'unaffiliated/somebody'])(
+    'will not dial the cloak %s',
+    (cloak) => {
+      expect(isDialableHost(cloak)).toBe(false);
+      expect(publicAddressFor('192.168.1.50', cloak)).toBeUndefined();
+    },
+  );
+
+  // Both addresses being on the sender's own network is one unreachable place,
+  // not two — swapping them is a second attempt at the same failure.
+  it('will not swap one private address for another', () => {
+    expect(publicAddressFor('192.168.1.50', '10.0.0.1')).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '192.168.1.50')).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '127.0.0.1')).toBeUndefined();
+  });
+
+  it('has nothing to offer when the network gave no host', () => {
+    expect(publicAddressFor('192.168.1.50', undefined)).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '')).toBeUndefined();
+  });
+
+  // A bare label is a name on the sender's own network and means exactly as
+  // little to us as the private address it would be replacing.
+  it('will not dial a bare label with no domain on it', () => {
+    expect(isDialableHost('fileserver')).toBe(false);
+    expect(publicAddressFor('192.168.1.50', 'fileserver')).toBeUndefined();
+  });
+
+  it('takes an address or a name that could be looked up', () => {
+    expect(isDialableHost('203.0.113.25')).toBe(true);
+    expect(isDialableHost('bot.example.net')).toBe(true);
+    expect(isDialableHost('2001:db8::1')).toBe(true);
+    expect(isDialableHost('a-b.example.co.uk')).toBe(true);
   });
 });
