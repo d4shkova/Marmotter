@@ -452,28 +452,56 @@ export function isPrivateAddress(host: string): boolean {
 }
 
 /**
+ * The shapes an ircd's invented hostname takes.
+ *
+ * A cloak hides a user's real host behind something the network made up, and
+ * the made-up part resolves to nothing. Telling them apart matters because the
+ * hostmask is the only fallback address a DCC offer has: dialling a cloak
+ * spends a lookup that cannot succeed and, worse, ends with the interface
+ * blaming an address that was never real.
+ *
+ * These are the forms seen in the wild rather than a guess at the space:
+ *
+ * - `user/bob`, `Rizon/staff/alice` — the slash form, which no hostname may
+ *   contain at all.
+ * - `863933A7.7304A9F.C6F98C0D.IP` — UnrealIRCd's, hex labels under a `.IP`
+ *   pseudo-domain.
+ * - `Rizon-B5D54D46.cust.smartspb.net` — the network's name and a hash spliced
+ *   over the real leading label. The domain under it is genuine, which is what
+ *   makes this one worth naming: it looks completely ordinary otherwise.
+ */
+const CLOAK_SHAPES: readonly RegExp[] = [
+  /\//,
+  /\.ip$/i,
+  /^[A-Za-z][A-Za-z0-9]*-[0-9A-Fa-f]{6,}\./,
+  /^[0-9A-Fa-f]{6,}\./,
+];
+
+/**
  * Whether a host is worth opening a socket to at all.
  *
  * The question this exists to answer is whether the hostmask a sender carries
- * on IRC can stand in for the address they advertised, and most of the time on
- * a modern network it cannot: a cloak — `user/bob`, `Rizon/staff/alice` — is a
- * label the ircd made up to hide the real host, and it resolves to nothing. It
- * is told apart by the slash, which no hostname may contain.
+ * on IRC can stand in for the address they advertised. On a network that cloaks
+ * — which is most of them now — it cannot, and {@link CLOAK_SHAPES} is what
+ * says so.
  *
- * What is left is either an address or something shaped like a name that could
- * be looked up, which is as far as this can reason without doing the lookup.
- * A hashed cloak (`4a1f2b.users.example.net`) passes and will usually fail to
- * resolve, and that is the right trade: this is a last resort taken after the
- * offer's own address has already failed, and one failed lookup buys a much
- * better sentence for the person reading it than not trying at all.
+ * What is left is either an address or a name that could plausibly be looked
+ * up, which is as far as this can reason without doing the lookup. It errs
+ * towards refusing: a hostname that merely looks like a cloak and was real
+ * costs one fallback nobody was promised, while a cloak treated as an address
+ * costs a wait and then a wrong explanation of what went wrong.
  */
 export function isDialableHost(host: string): boolean {
-  if (host === '' || /[\s/@!*?]/.test(host)) {
+  if (host === '' || /[\s@!*?]/.test(host)) {
     return false;
   }
-  // An address, of either family.
+  // An address, of either family. Checked before the cloak shapes, since no
+  // ircd invents one of these.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
     return true;
+  }
+  if (CLOAK_SHAPES.some((shape) => shape.test(host))) {
+    return false;
   }
   // Otherwise a name with at least one dot in it — a bare label is a LAN name
   // and means as little to us as the private address we are replacing.

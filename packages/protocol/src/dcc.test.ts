@@ -344,3 +344,38 @@ describe('a sender that advertised an address only its own network can reach', (
     expect(isDialableHost('a-b.example.co.uk')).toBe(true);
   });
 });
+
+/**
+ * The hostmasks two real serving bots were wearing, neither of which is an
+ * address.
+ *
+ * Both looked perfectly dialable to a check that only refused a slash, and both
+ * resolve to nothing: the fallback spent a lookup that could not succeed and
+ * then blamed a hostname the network had invented.
+ */
+describe('a hostmask that is a cloak rather than a host', () => {
+  it.each([
+    ['Rizon-B5D54D46.cust.smartspb.net', 'a network name spliced over the real leading label'],
+    ['863933A7.7304A9F.C6F98C0D.IP', 'hex labels under a .IP pseudo-domain'],
+    ['user/bot', 'the slash form'],
+    ['Rizon/staff/alice', 'the slash form, nested'],
+  ])('will not dial %s (%s)', (cloak) => {
+    expect(isDialableHost(cloak)).toBe(false);
+    expect(publicAddressFor('192.168.0.200', cloak)).toBeUndefined();
+  });
+
+  // The domain under a Rizon cloak is genuine, which is what makes that shape
+  // worth naming: everything but the leading label reads as an ordinary host.
+  it('still dials an ordinary name on the same kind of domain', () => {
+    expect(isDialableHost('files.cust.smartspb.net')).toBe(true);
+    expect(publicAddressFor('192.168.0.200', 'files.cust.smartspb.net')).toBe(
+      'files.cust.smartspb.net',
+    );
+  });
+
+  it('still dials a plain address or an ordinary hostname', () => {
+    expect(isDialableHost('203.0.113.9')).toBe(true);
+    expect(isDialableHost('bot.example.net')).toBe(true);
+    expect(isDialableHost('files.example.co.uk')).toBe(true);
+  });
+});

@@ -947,3 +947,70 @@ describe('a bot re-offering while a resume is being negotiated', () => {
     expect(transport.sent.filter((line) => /DCC RESUME/.test(line))).toHaveLength(0);
   });
 });
+
+/**
+ * A bot that holds one transfer at a time, and what a dead one costs.
+ *
+ * From a real session. The advertised address was 192.168.0.200 — the bot's own
+ * LAN, so nothing outside it can connect — and the bot's hostmask was a Rizon
+ * cloak, which resolves to nothing, so there was no second address to try
+ * either. That transfer was never going to happen.
+ *
+ * What made it worse than one failed download is that the bot kept holding the
+ * slot for its full three-minute timeout, so the next request bounced off it:
+ *
+ *   ** HEH. You can only have 1 transfer at a time, Added you to the main queue
+ *      for pack 16 … in position 1.
+ *
+ * Telling the bot the transfer is dead is what turns three wasted minutes into
+ * none, and it is what the bot's own reminder asks for.
+ */
+describe('a bot holding a transfer nobody can connect to', () => {
+  const BOT = '[EWG]-[ik0n]-';
+  /** A Rizon cloak: an invented leading label over a real domain. */
+  const HOST = '~wdff@Rizon-B5D54D46.cust.smartspb.net';
+  const FILE = 'Cake.2014.German.AC3.BDRip.x264-DHARMA.tar';
+  const PACK = 16;
+  const ADVERT = `:${BOT}!${HOST} PRIVMSG #ELITEWAREZ :#${PACK}  1x [31M] ${FILE}`;
+  /** 3232235720 is 192.168.0.200 — the bot's own network, and nowhere else's. */
+  const SEND = `:${BOT}!${HOST} PRIVMSG marmot :${DELIM}DCC SEND ${FILE} 3232235720 41808 31984860${DELIM}`;
+
+  async function failedTransfer() {
+    const shell = fakeShell();
+    shell.download.mockImplementation(() => ({
+      done: Promise.reject(new Error('could not connect to 192.168.0.200:41808')),
+      cancel: () => {},
+    }));
+    const transport = await connected(shell);
+
+    await act(async () => {
+      transport.deliver(ADVERT);
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+    await act(async () => {
+      transport.deliver(SEND);
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    return { shell, transport };
+  }
+
+  it('hands the slot back rather than leaving it held until the timeout', async () => {
+    const { transport } = await failedTransfer();
+    expect(transport.sent.some((line) => /XDCC CANCEL/.test(line))).toBe(true);
+  });
+
+  // There is no second address behind a cloak, so the one attempt is the whole
+  // story and the row must not claim a hostname was tried.
+  it('does not dial the cloak, and does not blame it', async () => {
+    const { shell } = await failedTransfer();
+    expect(shell.download).toHaveBeenCalledTimes(1);
+
+    const error = useView.getState().dccOffers[0]?.error ?? '';
+    expect(error).toContain('192.168.0.200');
+    expect(error).toContain('only works on its own network');
+    expect(error).not.toContain('smartspb');
+  });
+});

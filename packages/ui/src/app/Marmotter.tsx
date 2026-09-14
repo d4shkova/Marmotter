@@ -1567,6 +1567,15 @@ export function Marmotter({
    * they are the same transfer, and a row that ends differently depending on
    * which direction the connection went would be a bug rather than a feature.
    */
+  /**
+   * Withdraws a request from a bot that is still holding a transfer for it.
+   *
+   * A ref because the failure handler below is built long before the thing that
+   * does the withdrawing, and rebuilding it around that would rebuild every
+   * transfer's callbacks with it.
+   */
+  const releaseTransferSlot = useRef<(offer: DccOfferRecord) => void>(() => {});
+
   const trackTransfer = useCallback(
     (
       offerId: string,
@@ -1637,6 +1646,34 @@ export function Marmotter({
                 ? `${sender} gave ${offered}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
                 : describe(error);
           useView.getState().setDccOfferStatus(offerId, { status: 'failed', error: reason });
+
+          /**
+           * Handing the bot back the slot it is holding for us.
+           *
+           * A serving bot opens one transfer at a time and holds it for its own
+           * timeout — three minutes is usual — waiting to be connected to. A
+           * transfer that has failed here is one nobody is going to connect to,
+           * and until the bot is told so, every further request bounces off it:
+           *
+           *   ** HEH. You can only have 1 transfer at a time, Added you to the
+           *      main queue for pack 16 … in position 1.
+           *
+           * So one dead transfer used to cost three minutes of that bot, and a
+           * person retrying spent the whole time queued behind their own last
+           * attempt. Withdrawing is what the bot's own reminder tells you to
+           * type, and it is the difference between the next attempt going out
+           * now and going out after the timeout.
+           *
+           * Only once the failure is final: the fallback attempt above still
+           * needs the slot the bot is holding.
+           */
+          // The row as it was before the line above marked it failed: what the
+          // bot is holding is decided by the state the transfer was in, and a
+          // row already reading `failed` is one the withdrawal would skip.
+          if (row !== undefined) {
+            releaseTransferSlot.current(row);
+          }
+
           // Keyed to the row, not the wording: a serving bot re-offers a pack
           // every few seconds and each re-offer is another attempt, so one file
           // that will not come is one notice that keeps count, not a tower of
@@ -2204,6 +2241,10 @@ export function Marmotter({
     },
     [registry],
   );
+
+  // A failed transfer releases the bot's slot through the same withdrawal the
+  // dismiss button uses; the bot is holding the same thing either way.
+  releaseTransferSlot.current = cancelPackRequest;
 
   /**
    * Taking a row off the list, whatever state it is in.
