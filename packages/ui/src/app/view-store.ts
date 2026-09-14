@@ -13,6 +13,7 @@
 
 import {
   DEFAULT_CTCP_POLICY,
+  isPrivateAddress,
   type CtcpPolicy,
   type DccSend,
   type XdccPack,
@@ -107,6 +108,47 @@ export function sameFilename(a: string, b: string): boolean {
   const reduce = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, '');
   const left = reduce(a);
   return left !== '' && left === reduce(b);
+}
+
+/**
+ * How a sender is named across rows: the network it is on and its nick.
+ *
+ * Not case-folded, because the rows being compared all came from the same
+ * source spelling it the same way, and the store has no ISUPPORT to fold with.
+ */
+export function senderKey(offer: Pick<DccOfferRecord, 'networkId' | 'from'>): string {
+  return `${offer.networkId} ${offer.from}`;
+}
+
+/**
+ * The senders already known to advertise an address nothing outside their own
+ * network can reach.
+ *
+ * A bot behind a router that has not been told its public address hands out
+ * something like `192.168.0.200` to everyone, so it is not one bad transfer —
+ * it is every file that bot offers, to every person asking. Somebody working
+ * through a packlist finds that out three minutes at a time, once per file,
+ * and nothing on the list distinguishes the bot that cannot work from the one
+ * that can.
+ *
+ * Derived from the rows rather than recorded separately, because the rows
+ * already hold it: a failed transfer keeps the address that was advertised.
+ * That also means it clears itself when the list is cleared, which is right —
+ * this is an observation about what happened in this session, not a verdict on
+ * the bot for ever.
+ */
+export function unreachableSenders(offers: readonly DccOfferRecord[]): ReadonlySet<string> {
+  const found = new Set<string>();
+  for (const offer of offers) {
+    if (
+      offer.status === 'failed' &&
+      offer.offeredHost !== undefined &&
+      isPrivateAddress(offer.offeredHost)
+    ) {
+      found.add(senderKey(offer));
+    }
+  }
+  return found;
 }
 
 /**

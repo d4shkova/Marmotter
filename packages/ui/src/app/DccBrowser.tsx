@@ -6,7 +6,13 @@ import { SearchField } from '../primitives/SearchField.js';
 import { Table, type Column } from '../primitives/Table.js';
 import { useBreakpoint } from './AppShell.js';
 import { formatAge, formatBytes } from './dcc.js';
-import { isTrackedTransfer, isTransferInFlight, type DccOfferRecord } from './view-store.js';
+import {
+  isTrackedTransfer,
+  isTransferInFlight,
+  senderKey,
+  unreachableSenders,
+  type DccOfferRecord,
+} from './view-store.js';
 
 /**
  * Where each state sits in the downloads tray.
@@ -188,6 +194,17 @@ export function DccBrowser({
   // row, so the table below is usually handed exactly what it already had.
   const filtered = useStableList(matching);
 
+  /**
+   * Bots that have already proved unreachable in this session.
+   *
+   * One failed transfer from such a bot condemns every other file it is
+   * offering, because the address it hands out is the same one every time. The
+   * row still keeps its Download button — the reader may be on that network, or
+   * the owner may have fixed it since — but it no longer looks like every other
+   * row on the list.
+   */
+  const unreachable = useMemo(() => unreachableSenders(offers), [offers]);
+
   // A phone is about a third the width of the window this table was laid out
   // for, and seven columns on it is six of them off the side. The same rows,
   // with everything that was a column of its own folded under the name — which
@@ -201,8 +218,18 @@ export function DccBrowser({
         header: 'Name',
         mono: true,
         compare: (a, b) => a.filename.localeCompare(b.filename),
-        render: (offer) =>
-          narrow ? (
+        render: (offer) => {
+          // Only where it is still a decision. A row that has already failed
+          // says why on itself, and one downloading has plainly connected.
+          const warn = offer.status === 'available' && unreachable.has(senderKey(offer));
+          const note = warn ? (
+            <span className="font-sans text-caption-2 text-[var(--danger)]">
+              {offer.from} gave an address only its own network can reach. This will probably not
+              download.
+            </span>
+          ) : null;
+
+          return narrow ? (
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="break-all">{offer.filename}</span>
               <span className="font-sans text-caption-2 text-[var(--label-tertiary)]">
@@ -210,10 +237,15 @@ export function DccBrowser({
                 {offer.pack === undefined ? '' : ` · #${offer.pack}`} · {offer.networkName} ·{' '}
                 {formatAge(offer.receivedAt, at)}
               </span>
+              {note}
             </span>
           ) : (
-            <span className="break-all">{offer.filename}</span>
-          ),
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="break-all">{offer.filename}</span>
+              {note}
+            </span>
+          );
+        },
       },
       {
         id: 'size',
@@ -270,7 +302,7 @@ export function DccBrowser({
         ),
       },
     ],
-    [at, canFetchPassive, downloadFolder, narrow, onCancel, onDownload, onReveal],
+    [at, canFetchPassive, downloadFolder, narrow, onCancel, onDownload, onReveal, unreachable],
   );
 
   // Name and action on a phone; every column on anything wider.
