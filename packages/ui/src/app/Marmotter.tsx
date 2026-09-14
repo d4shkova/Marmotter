@@ -2145,13 +2145,23 @@ export function Marmotter({
           });
 
           const key = resumeKey(plan.networkId, plan.from, plan.filename);
-          // Whatever is held here is this same row's, by the guard above, and
-          // its deadline is the one that counts. The timer is set once per
-          // attempt and never pushed back, so the dial happens on time however
-          // often the bot re-offers in the meantime.
           const held = pendingResumes.current.get(key);
-          if (held !== undefined) {
+          if (held?.offerId === offerId) {
+            // This row's own negotiation, reached again because the shell's
+            // answer raced a re-offer. Its deadline is the one that counts, so
+            // the timer is left where it is and only the address is refreshed.
             pendingResumes.current.set(key, { ...held, start });
+            return;
+          }
+          if (held !== undefined) {
+            // Another row negotiating the same filename with the same bot — two
+            // packs listing one file, or a direct offer beside a pack. The key
+            // cannot tell them apart and neither could the `DCC ACCEPT` that
+            // answers, so this one takes the file from the beginning rather
+            // than joining a handshake that is not its own. Slower than a
+            // resume; the alternative was one row stuck asking for ever while
+            // its timer started the other row's transfer.
+            start();
             return;
           }
           const timer = window.setTimeout(() => {

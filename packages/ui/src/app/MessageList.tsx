@@ -83,6 +83,36 @@ interface Missed {
 
 const NOTHING_MISSED: Missed = { messages: 0, mention: false };
 
+/**
+ * The messages that arrived after the one the reader had last seen.
+ *
+ * By identity, not by position, because a position does not survive the buffer
+ * it indexes. History backfill splices older messages in by timestamp — ahead
+ * of the mark, shifting everything after it — and the buffer is trimmed from
+ * the front once a channel is busy enough. Counting from an index therefore
+ * reported lines somebody had already read as new, and the case that triggers
+ * it is the very one this exists for: the scroll handler that notices the
+ * reader has left the bottom is the same one that asks for older history.
+ *
+ * Searched from the end, where the mark almost always is, since this runs on
+ * every change to the buffer while the reader is away from the bottom.
+ */
+function messagesAfter(
+  messages: readonly Message[],
+  lastSeen: string | undefined,
+): readonly Message[] {
+  if (lastSeen === undefined) {
+    return messages;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.id === lastSeen) {
+      return messages.slice(index + 1);
+    }
+  }
+  // Trimmed out from under us: everything still held arrived after it.
+  return messages;
+}
+
 /** How close to the end still counts as being at the end, in pixels. */
 const BOTTOM_SLACK = 40;
 
@@ -109,15 +139,14 @@ export function MessageList({
   const previousHeight = useRef(0);
 
   /**
-   * How much of the buffer had been seen when the reader was last at the
-   * bottom.
+   * The last message the reader had seen when they were last at the bottom.
    *
-   * A count rather than a message id because that is what the arithmetic below
-   * needs and because the buffer is trimmed from the front: an id held across a
-   * trim is an id that is no longer in the list, and the count is corrected by
-   * the same clamp that handles it.
+   * An id rather than a count: the buffer is spliced into by history backfill
+   * and trimmed from the front, so a position stops meaning what it meant. An
+   * id that has been trimmed away is handled where it is read, and reads as
+   * "everything here is newer", which is true.
    */
-  const seen = useRef(conversation.messages.length);
+  const seen = useRef<string | undefined>(conversation.messages.at(-1)?.id);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [missed, setMissed] = useState<Missed>(NOTHING_MISSED);
 
@@ -179,7 +208,7 @@ export function MessageList({
    */
   useEffect(() => {
     if (pinnedToBottom.current) {
-      seen.current = messages.length;
+      seen.current = messages.at(-1)?.id;
       // Only when there is something to clear: this runs on every buffer change
       // and an unconditional set would re-render the list on each one.
       setMissed((current) =>
@@ -188,11 +217,7 @@ export function MessageList({
       return;
     }
 
-    // The buffer is trimmed from the front once a channel is busy enough, which
-    // moves every index down. Without the clamp the count goes negative and the
-    // button says nothing arrived while the list grows underneath it.
-    const from = Math.min(seen.current, messages.length);
-    const since = messages.slice(from);
+    const since = messagesAfter(messages, seen.current);
     const said = since.filter((message) => !FOLDABLE_KINDS.has(message.kind));
     const mentions = highlights.current;
     const mention = mentions !== undefined && said.some((message) => mentions(message));
@@ -213,9 +238,18 @@ export function MessageList({
    */
   useEffect(() => {
     pinnedToBottom.current = true;
-    seen.current = conversation.messages.length;
+    seen.current = conversation.messages.at(-1)?.id;
     setAwayFromBottom(false);
     setMissed(NOTHING_MISSED);
+    // And actually put it there. Saying the list is at the bottom does not make
+    // it so: the scroll container is reused across conversations, and the
+    // effect that follows the tail only fires when the row count changes — so
+    // opening a channel with as many rows as the last one showed it at the
+    // previous channel's offset, claiming to be at the bottom, with no pill to
+    // get back.
+    if (rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
+    }
     // Deliberately keyed on which conversation this is rather than on its
     // contents; the buffer changing is the case above, not this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,13 +258,13 @@ export function MessageList({
   /** Back to the live end of the conversation, and following it again. */
   const jumpToBottom = useCallback((): void => {
     pinnedToBottom.current = true;
-    seen.current = conversation.messages.length;
+    seen.current = conversation.messages.at(-1)?.id;
     setAwayFromBottom(false);
     setMissed(NOTHING_MISSED);
     if (rows.length > 0) {
       virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
     }
-  }, [conversation.messages.length, rows.length, virtualizer]);
+  }, [conversation.messages, rows.length, virtualizer]);
 
   const onScroll = (): void => {
     const element = scroller.current;
@@ -245,7 +279,7 @@ export function MessageList({
     // write per frame would re-render a virtualized list mid-drag.
     setAwayFromBottom((away) => (away === !atBottom ? away : !atBottom));
     if (atBottom) {
-      seen.current = conversation.messages.length;
+      seen.current = conversation.messages.at(-1)?.id;
       setMissed((current) =>
         current.messages === 0 && !current.mention ? current : NOTHING_MISSED,
       );

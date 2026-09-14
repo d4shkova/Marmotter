@@ -7,10 +7,24 @@ import {
 } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { MessageList } from './MessageList.js';
 
 afterEach(cleanup);
+
+/**
+ * Let the virtualizer's own timer run out before the file ends.
+ *
+ * Asking it to scroll schedules a debounced notification 150ms later, and
+ * unmounting does not cancel it. Vitest tears the environment down per file, so
+ * a run that finishes inside that window leaves the callback to fire against a
+ * page where `window` no longer exists — an unhandled `ReferenceError`
+ * attributed to whichever test happened to be last rather than to the scroll
+ * that caused it. One wait at the end drains every test's.
+ */
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
 
 const support = applyISupport(DEFAULT_ISUPPORT, ['CHANTYPES=#', 'CASEMAPPING=rfc1459']);
 
@@ -210,5 +224,81 @@ describe('finding the way back to the live conversation', () => {
     for (let node = button?.parentElement ?? null; node !== null; node = node.parentElement) {
       expect(node.className.toString()).not.toContain('overflow-y-auto');
     }
+  });
+});
+
+/**
+ * The counting, against a buffer that does not hold still.
+ *
+ * These are the two ways the message buffer moves under a mark: history
+ * backfill splices older messages in ahead of it, and a busy channel trims from
+ * the front. Counting from a position survived neither, and the case that
+ * triggers the first is the very one the pill exists for — the scroll handler
+ * that notices the reader has left the bottom is the same one that asks for
+ * older history.
+ */
+describe('counting new messages while the buffer shifts', () => {
+  it('does not count backfilled history as new', () => {
+    const { container, rerender } = render(list(channel(opening)));
+    act(() => scrollTo(scrollerOf(container), 'top'));
+
+    // Older history arrives ahead of everything already held, which is what
+    // loading earlier messages does.
+    const older = Array.from({ length: 20 }, (_, i) => message(`old${i}`, `earlier ${i}`));
+    rerender(list(channel([...older, ...opening])));
+
+    // Nothing was said; the list simply grew upwards.
+    expect(jumpButton()).not.toBeNull();
+    expect(screen.getByText('Jump to latest')).toBeTruthy();
+  });
+
+  it('still counts what arrives after a backfill', () => {
+    const { container, rerender } = render(list(channel(opening)));
+    act(() => scrollTo(scrollerOf(container), 'top'));
+
+    const older = Array.from({ length: 20 }, (_, i) => message(`old${i}`, `earlier ${i}`));
+    rerender(list(channel([...older, ...opening])));
+    rerender(list(channel([...older, ...opening, message('n1', 'hello')])));
+
+    expect(screen.getByText('1 new message')).toBeTruthy();
+  });
+
+  // The mark itself can be trimmed away on a busy channel. Everything still
+  // held is then newer than the last thing the reader saw, which is true.
+  it('survives the mark being trimmed out of the buffer', () => {
+    const { container, rerender } = render(list(channel(opening)));
+    act(() => scrollTo(scrollerOf(container), 'top'));
+
+    const fresh = Array.from({ length: 30 }, (_, i) => message(`f${i}`, `fresh ${i}`));
+    rerender(list(channel(fresh)));
+
+    expect(screen.getByText('30 new messages')).toBeTruthy();
+  });
+});
+
+/**
+ * Opening a different conversation.
+ *
+ * The scroll container is reused, and the effect that follows the tail only
+ * fires when the row count changes — so a channel with as many rows as the last
+ * one used to open at the previous channel's offset while claiming to be at the
+ * bottom, with no pill to get back down.
+ */
+describe('switching to a conversation of the same length', () => {
+  it("opens at the bottom rather than at the last one's offset", () => {
+    const { container, rerender } = render(list(channel(opening)));
+    const scroller = scrollerOf(container);
+    act(() => scrollTo(scroller, 'top'));
+    expect(jumpButton()).not.toBeNull();
+
+    // Same number of messages, different channel.
+    const elsewhere = opening.map((_, i) => message(`e${i}`, `elsewhere ${i}`));
+    rerender(list(channel(elsewhere, '#elsewhere')));
+
+    // jsdom measures every element as zero high, so the virtualizer's own
+    // scroll cannot be observed here — what is checked is the state the pill
+    // reads, which is what went wrong: the list used to claim it was at the
+    // bottom of a channel it had never scrolled.
+    expect(jumpButton()).toBeNull();
   });
 });

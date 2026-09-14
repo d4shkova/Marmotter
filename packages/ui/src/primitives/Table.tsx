@@ -110,12 +110,20 @@ export function Table<Row>({
                         : 'none'
                   }
                   className={cn(
-                    'border-b border-[var(--separator)] px-3 py-2',
-                    'text-footnote font-medium text-[var(--label-tertiary)]',
+                    'px-3 py-2 text-footnote font-medium text-[var(--label-tertiary)]',
+                    // The rule under the headings. Drawn as a border normally,
+                    // but as an inset shadow once the header is sticky: a
+                    // collapsed border belongs to the table's grid rather than
+                    // to the cell, so it stays behind at the top of the table
+                    // while the heading it underlines scrolls away with the
+                    // rest of the sticky row.
+                    stickyHeader
+                      ? 'sticky top-0 z-10 shadow-[inset_0_-1px_0_var(--separator)]'
+                      : 'border-b border-[var(--separator)]',
                     // Opaque rather than translucent: rows slide underneath
                     // these, and a header you can read the data through is
                     // worse than no header at all.
-                    stickyHeader && 'sticky top-0 z-10 bg-[var(--bg-base)]',
+                    stickyHeader && 'bg-[var(--bg-base)]',
                   )}
                 >
                   {sortable ? (
