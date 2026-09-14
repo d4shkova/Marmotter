@@ -214,13 +214,6 @@ export function reconnectingText(name: string, delayMs: number): string {
  * shows up only as a modal nobody can dismiss for good.
  */
 /**
- * A promise, or a fallback once the wait has gone on too long.
- *
- * For the answers a transfer waits on that are supposed to be instant. A
- * rejection is the same as a slow answer here: both mean there is nothing to
- * continue, and both must let the dial go ahead rather than stopping it.
- */
-/**
  * How long a bot is given to say anything at all about a request.
  *
  * Generous on purpose. A queue place of half an hour is ordinary on a busy
@@ -230,6 +223,14 @@ export function reconnectingText(name: string, delayMs: number): string {
  */
 const REQUEST_SILENCE_MS = 15 * 60_000;
 
+/**
+ * A promise, or a fallback once the wait has gone on too long.
+ *
+ * For the answers a transfer waits on that are supposed to be instant. A
+ * rejection is the same as a slow answer here: both mean there is nothing to
+ * continue, and both must let the dial go ahead rather than stopping it — so
+ * this never rejects, and a caller has nothing left to catch.
+ */
 async function withDeadline(answer: Promise<number>, ms: number): Promise<number> {
   return await new Promise<number>((resolve) => {
     const timer = setTimeout(() => resolve(0), ms);
@@ -2114,19 +2115,15 @@ export function Marmotter({
        * on a different port, and that is the one it is now listening on — while
        * the deadline stays where the first offer put it.
        */
-      const negotiating = pendingResumes.current.get(
-        resumeKey(plan.networkId, plan.from, plan.filename),
-      );
-      if (negotiating !== undefined && negotiating.offerId === offerId) {
-        pendingResumes.current.set(resumeKey(plan.networkId, plan.from, plan.filename), {
-          ...negotiating,
-          start,
-        });
+      const key = resumeKey(plan.networkId, plan.from, plan.filename);
+      const negotiating = pendingResumes.current.get(key);
+      if (negotiating?.offerId === offerId) {
+        pendingResumes.current.set(key, { ...negotiating, start });
         return;
       }
 
-      void withDeadline(ask.call(dcc, folder, plan.filename), RESUMABLE_ANSWER_MS)
-        .then((already) => {
+      void withDeadline(ask.call(dcc, folder, plan.filename), RESUMABLE_ANSWER_MS).then(
+        (already) => {
           // Nothing to continue, or a part-file already as long as the whole
           // thing — which is not a resume, it is a file to start again and let
           // the size check catch.
@@ -2144,7 +2141,6 @@ export function Marmotter({
             note: 'Asking to continue where it left off.',
           });
 
-          const key = resumeKey(plan.networkId, plan.from, plan.filename);
           const held = pendingResumes.current.get(key);
           if (held?.offerId === offerId) {
             // This row's own negotiation, reached again because the shell's
@@ -2183,10 +2179,8 @@ export function Marmotter({
               }),
             )}`,
           );
-        })
-        .catch(() => {
-          start();
-        });
+        },
+      );
     },
     [dcc, fetchIntoFolder, fetchPassively, forgetRequestWatchdog, registry, resumeKey],
   );
@@ -3520,6 +3514,7 @@ export function Marmotter({
           onAddNetwork={() => setAdding(true)}
           onExportConfig={() => setExportingConfig(true)}
           onImportConfig={() => setImportingConfig(true)}
+          onOpenLink={(href) => setLinkToOpen(href)}
           onResetSettings={() => {
             view.resetSettings();
             toast('Settings are back to their defaults. Your networks are untouched.');

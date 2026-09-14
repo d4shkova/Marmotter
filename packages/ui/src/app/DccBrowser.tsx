@@ -78,6 +78,9 @@ function useStableList<T>(list: readonly T[]): readonly T[] {
 /** Hoisted so the table is handed the same function on every render. */
 const rowKey = (offer: DccOfferRecord): string => offer.id;
 
+/** The empty starting point for the unreachable-sender set below. */
+const NO_SENDERS: ReadonlySet<string> = new Set<string>();
+
 function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
@@ -203,7 +206,21 @@ export function DccBrowser({
    * the owner may have fixed it since — but it no longer looks like every other
    * row on the list.
    */
-  const unreachable = useMemo(() => unreachableSenders(offers), [offers]);
+  const unreachableHeld = useRef<ReadonlySet<string>>(NO_SENDERS);
+  const unreachable = useMemo(() => {
+    const found = unreachableSenders(offers);
+    // Identity matters here, not just contents: this feeds the column
+    // definitions, and a new set on every progress report would rebuild them
+    // several times a second — which re-sorts and re-renders a catalogue that
+    // can run to thousands of rows, for the whole of every download. Which is
+    // exactly what `useStableList` above exists to prevent.
+    const held = unreachableHeld.current;
+    if (held.size === found.size && [...found].every((key) => held.has(key))) {
+      return held;
+    }
+    unreachableHeld.current = found;
+    return found;
+  }, [offers]);
 
   // A phone is about a third the width of the window this table was laid out
   // for, and seven columns on it is six of them off the side. The same rows,

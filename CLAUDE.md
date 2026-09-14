@@ -267,6 +267,15 @@ Importing replaces the networks and every setting on the screen, registers each
 profile **without connecting it** — the same reasoning as a restart — and says
 what it is about to do before it does it.
 
+Settings ends with **About**: what Marmotter is, the version this build was
+made at, and the address of the source. The address is written on the row
+rather than hidden behind the words "Source code", because a build with no way
+to open a link — a browser tab, a shell with no opener — still has to be able
+to tell somebody where the source is, and a link that only works by being
+clicked cannot be read out or copied. Opening it goes through the same
+confirmation every other link in the app goes through rather than through a
+second path of its own.
+
 ## Logging and retention
 
 Model this on mIRC and HexChat: the user owns their logs, stored locally, in

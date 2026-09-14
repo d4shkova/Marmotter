@@ -171,33 +171,48 @@ export const MESSAGE_FONTS: readonly FontInfo<MessageFontId>[] = [
  * on disk, or a settings document from a newer release that has a face this one
  * has never heard of. Either way it is the default rather than an interface
  * with no font named at all.
+ *
+ * One reader for both roles, because the rule is the same for both and a rule
+ * written twice is a rule that gets changed once.
  */
+function readFontId<Id extends string>(ids: readonly Id[], fallback: Id, value: unknown): Id {
+  return ids.includes(value as Id) ? (value as Id) : fallback;
+}
+
 export function readInterfaceFontId(value: unknown): InterfaceFontId {
-  return INTERFACE_FONT_IDS.includes(value as InterfaceFontId)
-    ? (value as InterfaceFontId)
-    : DEFAULT_INTERFACE_FONT;
+  return readFontId(INTERFACE_FONT_IDS, DEFAULT_INTERFACE_FONT, value);
 }
 
 export function readMessageFontId(value: unknown): MessageFontId {
-  return MESSAGE_FONT_IDS.includes(value as MessageFontId)
-    ? (value as MessageFontId)
-    : DEFAULT_MESSAGE_FONT;
+  return readFontId(MESSAGE_FONT_IDS, DEFAULT_MESSAGE_FONT, value);
+}
+
+/**
+ * The `font-family` value for a chosen face.
+ *
+ * The id is validated on the way in by `readFontId`, so the only way to miss
+ * here is a table with no row for an id its own type lists — which is the
+ * default's row being absent too, and a reason to say so rather than to invent
+ * a stack.
+ */
+function fontStack<Id extends string>(
+  fonts: readonly FontInfo<Id>[],
+  id: Id,
+  fallback: Id,
+): string {
+  const found = fonts.find((font) => font.id === id) ?? fonts.find((font) => font.id === fallback);
+  if (found === undefined) {
+    throw new Error(`no font named ${id}`);
+  }
+  return found.stack;
 }
 
 /** The `font-family` value for a chosen interface face. */
 export function interfaceFontStack(id: InterfaceFontId): string {
-  return (
-    INTERFACE_FONTS.find((font) => font.id === id)?.stack ??
-    INTERFACE_FONTS[0]?.stack ??
-    'system-ui, sans-serif'
-  );
+  return fontStack(INTERFACE_FONTS, id, DEFAULT_INTERFACE_FONT);
 }
 
 /** The `font-family` value for a chosen message face. */
 export function messageFontStack(id: MessageFontId): string {
-  return (
-    MESSAGE_FONTS.find((font) => font.id === id)?.stack ??
-    MESSAGE_FONTS[0]?.stack ??
-    'ui-monospace, monospace'
-  );
+  return fontStack(MESSAGE_FONTS, id, DEFAULT_MESSAGE_FONT);
 }

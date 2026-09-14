@@ -21,6 +21,7 @@ import { ListGroup } from '../layout/ListGroup.js';
 import { connectionStatus, connectionStatusText } from './network-status.js';
 import { LoggingSettings, type LoggingSettingsProps } from './LoggingSettings.js';
 import { ThemePicker } from './ThemePicker.js';
+import { APP_VERSION } from './version.js';
 import { ThemePreview } from './ThemePreview.js';
 import {
   TOAST_SECONDS_RANGE,
@@ -28,6 +29,22 @@ import {
   type Appearance,
   type UserOptions,
 } from './view-store.js';
+
+/**
+ * The two font pickers' option lists.
+ *
+ * Built once rather than per render: the tables behind them are module
+ * constants and this screen re-renders on every keystroke in any of its fields.
+ */
+const INTERFACE_FONT_OPTIONS = INTERFACE_FONTS.map((font) => ({
+  value: font.id,
+  label: `${font.name} — ${font.description}`,
+}));
+
+const MESSAGE_FONT_OPTIONS = MESSAGE_FONTS.map((font) => ({
+  value: font.id,
+  label: `${font.name} — ${font.description}`,
+}));
 
 export interface SettingsProps {
   readonly networks: readonly NetworkState[];
@@ -88,6 +105,16 @@ export interface SettingsProps {
   readonly onExportConfig: () => void;
   /** Takes settings exported from another Marmotter. */
   readonly onImportConfig: () => void;
+  /**
+   * Opens a link outside Marmotter — the repository, from About.
+   *
+   * Handed in rather than opened here, so it goes through the same confirmation
+   * every other link in the app goes through and there is one place that knows
+   * how to reach a browser from each platform. Absent, the row is still shown
+   * with the address on it: knowing where the source is does not depend on
+   * being able to click through to it.
+   */
+  readonly onOpenLink?: (url: string) => void;
   readonly className?: string;
 }
 
@@ -123,6 +150,7 @@ export function Settings({
   onResetSettings,
   onExportConfig,
   onImportConfig,
+  onOpenLink,
   className,
 }: SettingsProps): ReactNode {
   // Two steps, like deleting the logs: it undoes every choice on this screen at
@@ -291,10 +319,7 @@ export function Settings({
                     label="Interface font"
                     hint="Labels, buttons and settings."
                     value={appearance.interfaceFont}
-                    options={INTERFACE_FONTS.map((font) => ({
-                      value: font.id,
-                      label: `${font.name} — ${font.description}`,
-                    }))}
+                    options={INTERFACE_FONT_OPTIONS}
                     onChange={(event) =>
                       onAppearanceChange({
                         interfaceFont: readInterfaceFontId(event.target.value),
@@ -315,10 +340,7 @@ export function Settings({
                     label="Message font"
                     hint="Names, messages and the raw log. Monospaced, so the name column lines up."
                     value={appearance.messageFont}
-                    options={MESSAGE_FONTS.map((font) => ({
-                      value: font.id,
-                      label: `${font.name} — ${font.description}`,
-                    }))}
+                    options={MESSAGE_FONT_OPTIONS}
                     onChange={(event) =>
                       onAppearanceChange({ messageFont: readMessageFontId(event.target.value) })
                     }
@@ -648,12 +670,48 @@ export function Settings({
                 />
               </ListGroup>
             )}
+
+            {!shown('about') ? null : (
+              <ListGroup
+                header="About"
+                footer="Marmotter is free software. Nothing you do in it is reported anywhere, and no server of ours ever sees your messages."
+              >
+                <ListRow
+                  title="Marmotter"
+                  subtitle="A modern IRC client for people who would rather not read a manual."
+                />
+                <ListRow
+                  title="Version"
+                  trailing={
+                    <span className="font-mono text-footnote text-[var(--label-secondary)]">
+                      {APP_VERSION ?? 'Development build'}
+                    </span>
+                  }
+                />
+                <ListRow
+                  title="Source code"
+                  subtitle={REPOSITORY_URL}
+                  {...(onOpenLink === undefined
+                    ? {}
+                    : { onClick: () => onOpenLink(REPOSITORY_URL) })}
+                />
+              </ListGroup>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+/**
+ * Where the source lives.
+ *
+ * Written here rather than read from anywhere, because it is the one fact in
+ * the interface that has to be true of the project rather than of the build:
+ * a fork's own About should name the fork, and that is a change to this line.
+ */
+const REPOSITORY_URL = 'https://github.com/d4shkova/Marmotter';
 
 /** Which group of settings the rail is showing. */
 /**
@@ -681,7 +739,8 @@ function FontSample({ stack, text }: { stack: string; text: string }): ReactNode
   );
 }
 
-type SectionId = 'networks' | 'appearance' | 'notifications' | 'privacy' | 'logging' | 'advanced';
+type SectionId =
+  'networks' | 'appearance' | 'notifications' | 'privacy' | 'logging' | 'advanced' | 'about';
 
 /**
  * The rail, in the order somebody reaches for these.
@@ -702,6 +761,7 @@ const SECTIONS: readonly { readonly id: SectionId; readonly label: string }[] = 
   { id: 'privacy', label: 'Privacy' },
   { id: 'logging', label: 'Logging' },
   { id: 'advanced', label: 'Advanced' },
+  { id: 'about', label: 'About' },
 ];
 
 /**

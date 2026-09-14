@@ -1,6 +1,6 @@
 {
   "name": "@marmotter/android",
-  "version": "1.3.0",
+  "version": "1.3.5",
   "private": true,
   "type": "module",
   "description": "Marmotter Android build, on Tauri v2 mobile.",

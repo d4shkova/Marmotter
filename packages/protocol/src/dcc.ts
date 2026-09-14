@@ -107,6 +107,18 @@ const MAX_IPV4_INTEGER = 0xffffffff;
  * bracketed IPv6 literal, so all three are accepted. An address that is none of
  * these is rejected rather than guessed at.
  */
+/**
+ * What a legal host looks like, written once.
+ *
+ * Both the offer reader and the fallback check below ask the same question of
+ * the same strings, and two spellings of this grammar would eventually disagree
+ * about one — an address an offer was built on that the fallback then refuses,
+ * silently. Kept here so a change to either rule is a change to both.
+ */
+const DOTTED_QUAD = /^\d{1,3}(\.\d{1,3}){3}$/;
+const HOSTNAME =
+  /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
 function parseAddress(raw: string): string | undefined {
   if (raw === '') {
     return undefined;
@@ -136,7 +148,7 @@ function parseAddress(raw: string): string | undefined {
   }
 
   // A dotted quad passes through unchanged.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+  if (DOTTED_QUAD.test(raw)) {
     return raw;
   }
 
@@ -146,9 +158,7 @@ function parseAddress(raw: string): string | undefined {
   // in the interface can explain. It is resolved where the socket is opened —
   // the same place the address form would have been dialled — so nothing here
   // has to do a lookup to decide whether an offer is readable.
-  if (
-    /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(raw)
-  ) {
+  if (HOSTNAME.test(raw)) {
     return raw;
   }
 
@@ -497,7 +507,7 @@ export function isDialableHost(host: string): boolean {
   }
   // An address, of either family. Checked before the cloak shapes, since no
   // ircd invents one of these.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+  if (DOTTED_QUAD.test(host) || host.includes(':')) {
     return true;
   }
   if (CLOAK_SHAPES.some((shape) => shape.test(host))) {
@@ -505,7 +515,7 @@ export function isDialableHost(host: string): boolean {
   }
   // Otherwise a name with at least one dot in it — a bare label is a LAN name
   // and means as little to us as the private address we are replacing.
-  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host);
+  return HOSTNAME.test(host);
 }
 
 /**

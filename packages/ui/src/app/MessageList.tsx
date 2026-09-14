@@ -100,7 +100,7 @@ const NOTHING_MISSED: Missed = { messages: 0, mention: false };
 function messagesAfter(
   messages: readonly Message[],
   lastSeen: string | undefined,
-): readonly Message[] {
+): readonly Message[] | undefined {
   if (lastSeen === undefined) {
     return messages;
   }
@@ -109,8 +109,11 @@ function messagesAfter(
       return messages.slice(index + 1);
     }
   }
-  // Trimmed out from under us: everything still held arrived after it.
-  return messages;
+  // Trimmed out from under us. Said so rather than assumed, because the two
+  // callers want different things of it: the mark being gone means everything
+  // still held is newer, while the running tally being gone means the tally
+  // has to be rebuilt rather than added to.
+  return undefined;
 }
 
 /** How close to the end still counts as being at the end, in pixels. */
@@ -147,6 +150,17 @@ export function MessageList({
    * "everything here is newer", which is true.
    */
   const seen = useRef<string | undefined>(conversation.messages.at(-1)?.id);
+  /**
+   * How far the count below has already got, and what it has counted.
+   *
+   * Separate from the mark because the mark stays put while the reader is away
+   * and this moves with the buffer: it is what makes the count incremental. A
+   * reader parked a few hundred lines up would otherwise have every message
+   * they have missed re-counted — and re-tested against their highlight words,
+   * which compiles a pattern per message — on each new line that arrives.
+   */
+  const counted = useRef<string | undefined>(conversation.messages.at(-1)?.id);
+  const tally = useRef<Missed>(NOTHING_MISSED);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [missed, setMissed] = useState<Missed>(NOTHING_MISSED);
 
@@ -188,6 +202,33 @@ export function MessageList({
     overscan: 12,
   });
 
+  /**
+   * Everything up to here has been seen, and nothing is outstanding.
+   *
+   * One place, because the mark, the running tally and the pill's count are
+   * three things that have to be reset together and were being reset apart in
+   * four.
+   */
+  const markSeen = useCallback((): void => {
+    const last = conversation.messages.at(-1)?.id;
+    seen.current = last;
+    counted.current = last;
+    tally.current = NOTHING_MISSED;
+    // Only when there is something to clear: this runs on every buffer change
+    // and an unconditional set would re-render the list on each one.
+    setMissed((current) => (current.messages === 0 && !current.mention ? current : NOTHING_MISSED));
+  }, [conversation.messages]);
+
+  /** Back to the live end of the conversation, and following it again. */
+  const jumpToBottom = useCallback((): void => {
+    pinnedToBottom.current = true;
+    markSeen();
+    setAwayFromBottom(false);
+    if (rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
+    }
+  }, [markSeen, rows.length, virtualizer]);
+
   // Follow the conversation only while the reader is already at the bottom.
   // Scrolling them away from what they are reading is the single most
   // annoying thing a chat client can do.
@@ -208,26 +249,38 @@ export function MessageList({
    */
   useEffect(() => {
     if (pinnedToBottom.current) {
-      seen.current = messages.at(-1)?.id;
-      // Only when there is something to clear: this runs on every buffer change
-      // and an unconditional set would re-render the list on each one.
-      setMissed((current) =>
-        current.messages === 0 && !current.mention ? current : NOTHING_MISSED,
-      );
+      markSeen();
       return;
     }
 
-    const since = messagesAfter(messages, seen.current);
-    const said = since.filter((message) => !FOLDABLE_KINDS.has(message.kind));
-    const mentions = highlights.current;
-    const mention = mentions !== undefined && said.some((message) => mentions(message));
+    // The part of the buffer nothing has counted yet, falling back to a full
+    // rebuild from the mark when the buffer has moved out from under the
+    // running tally.
+    const fresh = messagesAfter(messages, counted.current);
+    const since = fresh ?? messagesAfter(messages, seen.current) ?? messages;
+    const previous = fresh === undefined ? NOTHING_MISSED : tally.current;
 
+    const mentions = highlights.current;
+    let said = previous.messages;
+    let mention = previous.mention;
+    for (const message of since) {
+      if (FOLDABLE_KINDS.has(message.kind)) {
+        continue;
+      }
+      said += 1;
+      // Once it is true it cannot become false without a reset, and the test
+      // is the expensive part of this loop.
+      if (!mention && mentions !== undefined && mentions(message)) {
+        mention = true;
+      }
+    }
+
+    counted.current = messages.at(-1)?.id;
+    tally.current = { messages: said, mention };
     setMissed((current) =>
-      current.messages === said.length && current.mention === mention
-        ? current
-        : { messages: said.length, mention },
+      current.messages === said && current.mention === mention ? current : tally.current,
     );
-  }, [messages]);
+  }, [messages, markSeen]);
 
   /**
    * A different conversation is a different place in a different list.
@@ -237,34 +290,17 @@ export function MessageList({
    * just rendered at its bottom.
    */
   useEffect(() => {
-    pinnedToBottom.current = true;
-    seen.current = conversation.messages.at(-1)?.id;
-    setAwayFromBottom(false);
-    setMissed(NOTHING_MISSED);
-    // And actually put it there. Saying the list is at the bottom does not make
-    // it so: the scroll container is reused across conversations, and the
-    // effect that follows the tail only fires when the row count changes — so
-    // opening a channel with as many rows as the last one showed it at the
-    // previous channel's offset, claiming to be at the bottom, with no pill to
-    // get back.
-    if (rows.length > 0) {
-      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
-    }
+    // The same thing pressing the pill does — including actually scrolling.
+    // Saying the list is at the bottom does not put it there: the scroll
+    // container is reused across conversations, and the effect that follows the
+    // tail only fires when the row count changes, so opening a channel with as
+    // many rows as the last one showed it at the previous channel's offset,
+    // claiming to be at the bottom, with no pill to get back.
+    jumpToBottom();
     // Deliberately keyed on which conversation this is rather than on its
     // contents; the buffer changing is the case above, not this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network.id, conversation.name]);
-
-  /** Back to the live end of the conversation, and following it again. */
-  const jumpToBottom = useCallback((): void => {
-    pinnedToBottom.current = true;
-    seen.current = conversation.messages.at(-1)?.id;
-    setAwayFromBottom(false);
-    setMissed(NOTHING_MISSED);
-    if (rows.length > 0) {
-      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
-    }
-  }, [conversation.messages, rows.length, virtualizer]);
 
   const onScroll = (): void => {
     const element = scroller.current;
@@ -279,10 +315,7 @@ export function MessageList({
     // write per frame would re-render a virtualized list mid-drag.
     setAwayFromBottom((away) => (away === !atBottom ? away : !atBottom));
     if (atBottom) {
-      seen.current = conversation.messages.at(-1)?.id;
-      setMissed((current) =>
-        current.messages === 0 && !current.mention ? current : NOTHING_MISSED,
-      );
+      markSeen();
     }
 
     // Reaching the top asks for the page before, once.

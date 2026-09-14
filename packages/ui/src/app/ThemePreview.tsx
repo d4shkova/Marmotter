@@ -21,6 +21,7 @@
 
 import type { ReactNode } from 'react';
 import { cn } from '../lib/cn.js';
+import { nickColorVar } from '../lib/nick-color.js';
 import type { ThemeId } from '../themes.js';
 
 /**
@@ -28,14 +29,24 @@ import type { ThemeId } from '../themes.js';
  *
  * Names rather than lorem, because what a person is judging is whether eight
  * hashed nick colours read as eight people — and that needs names in different
- * colours sitting next to each other, which is exactly what a channel is.
+ * colours sitting next to each other, which is exactly what a channel is. The
+ * colours are hashed by the same function the message list hashes with rather
+ * than assigned here, so the preview shows the mapping it is previewing.
  */
-const LINES: readonly { readonly nick: string; readonly tone: string; readonly text: string }[] = [
-  { nick: 'tamsin', tone: 'var(--nick-1)', text: 'morning all' },
-  { nick: 'rook', tone: 'var(--nick-4)', text: 'is the build green yet' },
-  { nick: 'iris', tone: 'var(--nick-6)', text: 'just went green' },
-  { nick: 'tamsin', tone: 'var(--nick-1)', text: 'nice' },
+const LINES: readonly { readonly nick: string; readonly text: string }[] = [
+  { nick: 'tamsin', text: 'morning all' },
+  { nick: 'rook', text: 'is the build green yet' },
+  { nick: 'iris', text: 'just went green' },
+  { nick: 'tamsin', text: 'nice' },
 ];
+
+/**
+ * The three lines the picker row has room for.
+ *
+ * A module constant rather than a slice taken per render: the row variant is
+ * drawn once per theme every time the dropdown opens.
+ */
+const ROW_LINES = LINES.slice(0, 3);
 
 export interface ThemePreviewProps {
   readonly theme: ThemeId;
@@ -49,7 +60,7 @@ export interface ThemePreviewProps {
 
 export function ThemePreview({ theme, size = 'row', className }: ThemePreviewProps): ReactNode {
   const panel = size === 'panel';
-  const lines = panel ? LINES : LINES.slice(0, 3);
+  const lines = panel ? LINES : ROW_LINES;
 
   return (
     <div
@@ -105,7 +116,7 @@ export function ThemePreview({ theme, size = 'row', className }: ThemePreviewPro
                 <>
                   <span
                     className="shrink-0 truncate text-right font-mono text-caption-2"
-                    style={{ color: line.tone, width: 44 }}
+                    style={{ color: `var(${nickColorVar(line.nick)})`, width: 44 }}
                   >
                     {line.nick}
                   </span>
@@ -119,7 +130,7 @@ export function ThemePreview({ theme, size = 'row', className }: ThemePreviewPro
                 <>
                   <span
                     className="block h-[3px] shrink-0 rounded-full"
-                    style={{ background: line.tone, width: 16 }}
+                    style={{ background: `var(${nickColorVar(line.nick)})`, width: 16 }}
                   />
                   <span
                     className="block h-[3px] min-w-0 flex-1 rounded-full bg-[var(--label-primary)]"
