@@ -213,6 +213,28 @@ export function reconnectingText(name: string, delayMs: number): string {
  * Pure and exported because losing this is invisible in every unit test and
  * shows up only as a modal nobody can dismiss for good.
  */
+/**
+ * A promise, or a fallback once the wait has gone on too long.
+ *
+ * For the answers a transfer waits on that are supposed to be instant. A
+ * rejection is the same as a slow answer here: both mean there is nothing to
+ * continue, and both must let the dial go ahead rather than stopping it.
+ */
+async function withDeadline(answer: Promise<number>, ms: number): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    const timer = setTimeout(() => resolve(0), ms);
+    answer
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(0);
+      });
+  });
+}
+
 export function shouldAskForIdentity(identity: DefaultIdentity, canRemember: boolean): boolean {
   return identity.nick === '' && canRemember;
 }
@@ -1886,6 +1908,17 @@ export function Marmotter({
   /** How long a sender is given to answer a resume before the file starts over. */
   const RESUME_ANSWER_MS = 8_000;
 
+  /**
+   * How long the shell is given to say whether there is anything to continue.
+   *
+   * Every dial waits on this answer, so a shell that never gives one is a
+   * transfer that never starts — and on the other end of that is a bot holding
+   * a listening socket open for three minutes and then giving up. Two seconds
+   * is far longer than reading one file's length takes; past that, starting the
+   * file from the beginning is enormously better than not starting it.
+   */
+  const RESUMABLE_ANSWER_MS = 2_000;
+
   const resumeKey = useCallback(
     (networkId: string, from: string, filename: string): string =>
       `${pendingKey(networkId, from)} ${filename.toLowerCase()}`,
@@ -1972,8 +2005,36 @@ export function Marmotter({
         return;
       }
 
-      void ask
-        .call(dcc, folder, plan.filename)
+      /**
+       * A negotiation already running for this very row.
+       *
+       * A serving bot re-offers a pack every few seconds until somebody
+       * connects, and each of those used to arrive here and begin the
+       * negotiation again — asking the shell afresh, sending another
+       * `DCC RESUME`, and, fatally, replacing the timer that gives up waiting
+       * for the answer. A bot re-offering every five seconds against an
+       * eight-second deadline meant the deadline could never be reached: the
+       * client sat asking to resume, the bot sat holding a socket nobody
+       * dialled, and three minutes later the bot closed it. That is a livelock,
+       * and it is the one thing the transfer cannot recover from on its own.
+       *
+       * So a re-offer joins the attempt in flight rather than restarting it.
+       * The address is taken from the newer offer — a bot is free to re-offer
+       * on a different port, and that is the one it is now listening on — while
+       * the deadline stays where the first offer put it.
+       */
+      const negotiating = pendingResumes.current.get(
+        resumeKey(plan.networkId, plan.from, plan.filename),
+      );
+      if (negotiating !== undefined && negotiating.offerId === offerId) {
+        pendingResumes.current.set(resumeKey(plan.networkId, plan.from, plan.filename), {
+          ...negotiating,
+          start,
+        });
+        return;
+      }
+
+      void withDeadline(ask.call(dcc, folder, plan.filename), RESUMABLE_ANSWER_MS)
         .then((already) => {
           // Nothing to continue, or a part-file already as long as the whole
           // thing — which is not a resume, it is a file to start again and let
@@ -1993,10 +2054,20 @@ export function Marmotter({
           });
 
           const key = resumeKey(plan.networkId, plan.from, plan.filename);
-          window.clearTimeout(pendingResumes.current.get(key)?.timer);
+          // Whatever is held here is this same row's, by the guard above, and
+          // its deadline is the one that counts. The timer is set once per
+          // attempt and never pushed back, so the dial happens on time however
+          // often the bot re-offers in the meantime.
+          const held = pendingResumes.current.get(key);
+          if (held !== undefined) {
+            pendingResumes.current.set(key, { ...held, start });
+            return;
+          }
           const timer = window.setTimeout(() => {
+            const current = pendingResumes.current.get(key);
             pendingResumes.current.delete(key);
-            start();
+            // The newest offer's address, which a re-offer may have replaced.
+            (current?.start ?? start)();
           }, RESUME_ANSWER_MS);
           pendingResumes.current.set(key, { offerId, start, timer });
 

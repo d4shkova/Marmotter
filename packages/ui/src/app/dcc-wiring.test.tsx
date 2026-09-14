@@ -784,3 +784,166 @@ describe('a bot behind a router that has not been told its address', () => {
     await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('downloaded'));
   });
 });
+
+/**
+ * A bot that re-offers while we are still asking to resume.
+ *
+ * Reconstructed from a real failed download, and the reason it is here rather
+ * than in a unit test: every part worked on its own. The pack parsed, the row
+ * was right, the offer carried a public address, the shell dialled when it was
+ * called. What went wrong was between them, over time.
+ *
+ * A serving bot re-offers a pack every few seconds until somebody connects. If
+ * there is a part-file from an earlier attempt, the client first asks the
+ * sender to continue it, and gives the answer a deadline. Each re-offer used to
+ * start that negotiation again and replace the deadline — so a bot re-offering
+ * every five seconds against an eight-second deadline meant the deadline could
+ * never arrive. The client asked to resume, over and over; the bot held a
+ * socket nobody dialled; three minutes later it gave up:
+ *
+ *   ** You have a DCC pending, Set your client to receive the transfer.
+ *   ** Closing Connection: DCC Timeout (180 Sec Timeout)
+ *
+ * The file never arrived and nothing in the interface was wrong, which is the
+ * worst shape a bug can take.
+ */
+describe('a bot re-offering while a resume is being negotiated', () => {
+  const BOT = '[EWG]-B-XTREM';
+  const HOST = '~shh@863933A7.7304A9F.C6F98C0D.IP';
+  const FILE = '9-1-1.S06E14.Performance.Anxiety.1080p.WEBRip.10bit.EAC3.5.1.x265-iVy.mkv';
+  /** The bold the bot wraps its pack numbers in, as it really sends them. */
+  const B = '\u0002';
+  // Composed rather than written out: a hash followed by three digits reads as
+  // a hex colour to the token-discipline check, which scans every source file.
+  const PACK = 530;
+  const ADVERT = `:${BOT}!${HOST} PRIVMSG #ELITEWAREZ :${B}#${PACK}${B}  1x [744M] ${FILE}`;
+  /** 100542678 is 5.254.40.214 — a public address, so nothing else applies. */
+  const SEND = `:${BOT}!${HOST} PRIVMSG marmot :${DELIM}DCC SEND ${FILE} 100542678 49267 780321177${DELIM}`;
+
+  /** Advertises the pack and presses Download, as the user did. */
+  async function requested(shell: ReturnType<typeof fakeShell>) {
+    const transport = await connected(shell);
+    await act(async () => {
+      transport.deliver(ADVERT);
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+    await waitFor(() =>
+      expect(transport.sent.some((line) => line.includes(`XDCC SEND #${PACK}`))).toBe(true),
+    );
+    return transport;
+  }
+
+  /** Replays the bot re-offering every five seconds for the given span. */
+  async function reoffering(transport: FakeTransport, ms: number, line = SEND): Promise<void> {
+    for (let elapsed = 0; elapsed < ms; elapsed += 5_000) {
+      await act(async () => {
+        transport.deliver(line);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('dials rather than asking to resume for ever', async () => {
+    const shell = fakeShell();
+    // An earlier attempt left part of the file, which is what puts this
+    // transfer down the resume path at all — and retrying a download that
+    // failed is exactly how somebody gets there.
+    shell.resumable.bytes = 50_000_000;
+    const transport = await requested(shell);
+
+    // The three minutes the bot holds the transfer open for.
+    await reoffering(transport, 180_000);
+
+    expect(shell.download).toHaveBeenCalledTimes(1);
+    expect(useView.getState().dccOffers[0]?.status).toBe('downloading');
+  });
+
+  // The other half of the same bug, and the part a serving bot notices: one
+  // request per attempt, not one per re-offer. Thirty-six DCC RESUMEs in three
+  // minutes is a flood aimed at a bot that is already trying to send the file.
+  it('asks the sender to continue exactly once', async () => {
+    const shell = fakeShell();
+    shell.resumable.bytes = 50_000_000;
+    const transport = await requested(shell);
+
+    await reoffering(transport, 180_000);
+
+    expect(transport.sent.filter((line) => /DCC RESUME/.test(line))).toHaveLength(1);
+  });
+
+  // A re-offer is the same transfer being advertised again, so its address is
+  // the newer one — a bot is free to listen somewhere else — but it is not a
+  // reason to start the wait over.
+  it('dials the newest address the bot offered', async () => {
+    const shell = fakeShell();
+    shell.resumable.bytes = 50_000_000;
+    const transport = await requested(shell);
+
+    await act(async () => {
+      transport.deliver(SEND);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    // The same pack, now on a different port.
+    await act(async () => {
+      transport.deliver(
+        `:${BOT}!${HOST} PRIVMSG marmot :${DELIM}DCC SEND ${FILE} 100542678 51000 780321177${DELIM}`,
+      );
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(shell.download).toHaveBeenCalledTimes(1);
+    expect(shell.download.mock.calls[0]?.[0]).toMatchObject({ port: 51000 });
+  });
+
+  // Every dial waits on the shell saying whether there is anything to continue.
+  // A shell that never answers used to be a transfer that never started, with
+  // nothing on screen to say so.
+  it('dials anyway when the shell never says what is on disk', async () => {
+    const shell = fakeShell();
+    shell.capability.resumableBytes = () => new Promise<number>(() => {});
+    const transport = await requested(shell);
+
+    await act(async () => {
+      transport.deliver(SEND);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(shell.download).toHaveBeenCalledTimes(1);
+    // Started from the beginning, which is the right answer when what is on
+    // disk is unknown: nothing is asked of the sender and no position is sent.
+    expect(shell.download.mock.calls[0]?.[0]).not.toHaveProperty('resumeFrom');
+    expect(transport.sent.filter((line) => /DCC RESUME/.test(line))).toHaveLength(0);
+  });
+
+  // The ordinary case has to keep working: nothing on disk means no handshake
+  // at all, and the dial happens on the first offer.
+  it('dials at once when there is nothing to continue', async () => {
+    const shell = fakeShell();
+    const transport = await requested(shell);
+
+    await act(async () => {
+      transport.deliver(SEND);
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
+    expect(transport.sent.filter((line) => /DCC RESUME/.test(line))).toHaveLength(0);
+  });
+});
