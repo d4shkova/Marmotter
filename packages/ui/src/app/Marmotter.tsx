@@ -220,6 +220,16 @@ export function reconnectingText(name: string, delayMs: number): string {
  * rejection is the same as a slow answer here: both mean there is nothing to
  * continue, and both must let the dial go ahead rather than stopping it.
  */
+/**
+ * How long a bot is given to say anything at all about a request.
+ *
+ * Generous on purpose. A queue place of half an hour is ordinary on a busy
+ * bot, and some say nothing while you hold it, so this is not "how long until
+ * the file arrives" — it is how long a bot may stay completely silent before
+ * the row stops claiming to be waiting on something.
+ */
+const REQUEST_SILENCE_MS = 15 * 60_000;
+
 async function withDeadline(answer: Promise<number>, ms: number): Promise<number> {
   return await new Promise<number>((resolve) => {
     const timer = setTimeout(() => resolve(0), ms);
@@ -1911,6 +1921,48 @@ export function Marmotter({
     [dcc, registry, trackTransfer],
   );
 
+  /** Rows waiting on a bot that has not spoken yet, by row. */
+  const requestWatchdogs = useRef(new Map<string, number>());
+
+  /**
+   * Gives up on a request no bot ever answered.
+   *
+   * A row asked for and never spoken to sat at "Requested" with a spinner for
+   * the rest of the session: the one control on it was the bin, and nothing
+   * ever said that waiting was pointless. Both of the HexChat add-ons this was
+   * compared against have the same hole — one of them also leaks its concurrency
+   * slot doing it — so the row simply spins.
+   *
+   * The clock is reset by anything the bot says, because a bot narrating a queue
+   * position is a bot that has heard us; only total silence counts. And nothing
+   * is withdrawn when it fires: a bot that never spoke probably never queued us,
+   * and if it does answer later the offer is matched back to this row and
+   * fetched exactly as it would have been. Giving up here is about what the row
+   * claims, not about closing a door.
+   */
+  const watchRequest = useCallback((offerId: string): void => {
+    window.clearTimeout(requestWatchdogs.current.get(offerId));
+    requestWatchdogs.current.set(
+      offerId,
+      window.setTimeout(() => {
+        requestWatchdogs.current.delete(offerId);
+        const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+        if (row?.status !== 'requested') {
+          return;
+        }
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: `${row.from} never answered. It may be offline or not serving this pack — asking again is the way to find out.`,
+        });
+      }, REQUEST_SILENCE_MS),
+    );
+  }, []);
+
+  const forgetRequestWatchdog = useCallback((offerId: string): void => {
+    window.clearTimeout(requestWatchdogs.current.get(offerId));
+    requestWatchdogs.current.delete(offerId);
+  }, []);
+
   /**
    * Transfers waiting on a sender's agreement to continue a file, by bot and
    * name, each with the timer that gives up on the answer.
@@ -2008,6 +2060,8 @@ export function Marmotter({
             readonly turbo?: boolean;
           },
     ): void => {
+      forgetRequestWatchdog(offerId);
+
       const start = (resumeFrom?: number): void => {
         if (plan.kind === 'active') {
           fetchIntoFolder(offerId, {
@@ -2124,7 +2178,7 @@ export function Marmotter({
           start();
         });
     },
-    [dcc, fetchIntoFolder, fetchPassively, registry, resumeKey],
+    [dcc, fetchIntoFolder, fetchPassively, forgetRequestWatchdog, registry, resumeKey],
   );
 
   /**
@@ -2190,19 +2244,23 @@ export function Marmotter({
    * it. Forgotten, a late answer is simply an unsolicited offer, which is what
    * it now is.
    */
-  const forgetPendingRequest = useCallback((offerId: string): void => {
-    for (const [key, queue] of pendingXdcc.current) {
-      const rest = queue.filter((id) => id !== offerId);
-      if (rest.length === queue.length) {
-        continue;
+  const forgetPendingRequest = useCallback(
+    (offerId: string): void => {
+      forgetRequestWatchdog(offerId);
+      for (const [key, queue] of pendingXdcc.current) {
+        const rest = queue.filter((id) => id !== offerId);
+        if (rest.length === queue.length) {
+          continue;
+        }
+        if (rest.length === 0) {
+          pendingXdcc.current.delete(key);
+        } else {
+          pendingXdcc.current.set(key, rest);
+        }
       }
-      if (rest.length === 0) {
-        pendingXdcc.current.delete(key);
-      } else {
-        pendingXdcc.current.set(key, rest);
-      }
-    }
-  }, []);
+    },
+    [forgetRequestWatchdog],
+  );
 
   /**
    * Telling a bot to drop a pack we are no longer waiting for.
@@ -2478,7 +2536,10 @@ export function Marmotter({
     });
     if (outcome.settled) {
       forgetPendingRequest(targetId);
+      return;
     }
+    // The bot has heard us, whatever it said. Only silence counts against it.
+    watchRequest(targetId);
   };
 
   // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
@@ -2640,6 +2701,7 @@ export function Marmotter({
         ]);
         session.send(`PRIVMSG ${offer.from} :XDCC SEND #${offer.pack}`);
         useView.getState().setDccOfferStatus(offer.id, { status: 'requested' });
+        watchRequest(offer.id);
         announceDownload({
           key: 'dcc-requested',
           text: (requested) =>
@@ -2689,7 +2751,7 @@ export function Marmotter({
         ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
-    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey],
+    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey, watchRequest],
   );
 
   /**
@@ -2725,8 +2787,9 @@ export function Marmotter({
       const key = pendingKey(networkId, nick);
       pendingXdcc.current.set(key, [...(pendingXdcc.current.get(key) ?? []), id]);
       useView.getState().setDccOfferStatus(id, { status: 'requested' });
+      watchRequest(id);
     },
-    [pendingKey, registry],
+    [pendingKey, registry, watchRequest],
   );
 
   /**

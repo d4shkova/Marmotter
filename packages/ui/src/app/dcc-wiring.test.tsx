@@ -1014,3 +1014,122 @@ describe('a bot holding a transfer nobody can connect to', () => {
     expect(error).not.toContain('smartspb');
   });
 });
+
+/**
+ * A bot that never says anything back.
+ *
+ * A pack asked for and never answered used to sit at "Requested" with a spinner
+ * for the rest of the session — the only control on it was the bin, and nothing
+ * ever said that waiting was pointless. Both HexChat add-ons this was compared
+ * against have the same hole, and one of them leaks a concurrency slot doing it.
+ *
+ * The clock is generous and is reset by anything the bot says, because a bot
+ * narrating a queue position is a bot that has heard us. Only silence counts.
+ */
+describe('a request a bot never answers', () => {
+  const BOT = '[EWG]-B-XTREM';
+  const HOST = '~shh@Rizon-B5D54D46.cust.smartspb.net';
+  const FILE = 'Cake.2014.German.AC3.BDRip.x264-DHARMA.tar';
+  const PACK = 16;
+  const ADVERT = `:${BOT}!${HOST} PRIVMSG #ELITEWAREZ :#${PACK}  1x [31M] ${FILE}`;
+  const QUEUED = `:${BOT}!${HOST} NOTICE marmot :** All Slots Full, Added you to the main queue in position 4. Estimated wait: 30m.`;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Lets fake time pass without the connection dying of boredom.
+   *
+   * The client pings an idle link after a minute and gives up thirty seconds
+   * later, so winding the clock forward in one jump takes the session down and
+   * anything delivered afterwards lands nowhere. Real time never looks like
+   * that: a connection carries traffic. So the clock moves in slices with a
+   * line arriving in each, which is what a live link does and what keeps this
+   * measuring the watchdog rather than the keepalive.
+   */
+  async function passes(transport: FakeTransport, ms: number, line?: string): Promise<void> {
+    for (let elapsed = 0; elapsed < ms; elapsed += 45_000) {
+      await act(async () => {
+        transport.deliver(line ?? ':irc.example.net PING :keepalive');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45_000);
+      });
+    }
+  }
+
+  async function asked(shell: ReturnType<typeof fakeShell>) {
+    const transport = await connected(shell);
+    await act(async () => {
+      transport.deliver(ADVERT);
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('requested'));
+    return transport;
+  }
+
+  it('gives up eventually, and says what to do about it', async () => {
+    const shell = fakeShell();
+    const transport = await asked(shell);
+
+    await passes(transport, 16 * 60_000);
+
+    expect(useView.getState().dccOffers[0]?.status).toBe('failed');
+    expect(useView.getState().dccOffers[0]?.error).toContain('never answered');
+  });
+
+  it('keeps waiting while the bot is still talking', async () => {
+    const shell = fakeShell();
+    const transport = await asked(shell);
+
+    // Twenty minutes of the bot narrating its queue — past the deadline twice
+    // over. A clock that counted from the request would have given up.
+    await passes(transport, 20 * 60_000, QUEUED);
+
+    expect(useView.getState().dccOffers[0]?.status).toBe('requested');
+    expect(useView.getState().dccOffers[0]?.note).toContain('position 4');
+  });
+
+  // A long wait is not a reason to take the file when it finally arrives away
+  // from somebody: the offer is matched back to the row and fetched, which is
+  // why giving up here withdraws nothing from the bot.
+  it('still takes the file if the bot answers after all', async () => {
+    const shell = fakeShell();
+    const transport = await asked(shell);
+
+    await passes(transport, 16 * 60_000);
+    expect(useView.getState().dccOffers[0]?.status).toBe('failed');
+
+    await act(async () => {
+      transport.deliver(
+        `:${BOT}!${HOST} PRIVMSG marmot :${DELIM}DCC SEND ${FILE} 3405803783 41808 31984860${DELIM}`,
+      );
+    });
+
+    await waitFor(() => expect(shell.download).toHaveBeenCalledTimes(1));
+  });
+
+  it('stops watching once the transfer has started', async () => {
+    const shell = fakeShell();
+    const transport = await asked(shell);
+
+    await act(async () => {
+      transport.deliver(
+        `:${BOT}!${HOST} PRIVMSG marmot :${DELIM}DCC SEND ${FILE} 3405803783 41808 31984860${DELIM}`,
+      );
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('downloading'));
+
+    await passes(transport, 16 * 60_000);
+
+    // Still downloading: the watchdog was about the request, not the transfer.
+    expect(useView.getState().dccOffers[0]?.status).toBe('downloading');
+  });
+});
