@@ -3,9 +3,11 @@ import { decodeCtcp } from './ctcp.js';
 import {
   buildDccResume,
   buildPassiveAccept,
+  isDialableHost,
   isPrivateAddress,
   parseDccAccept,
   parseDccSend,
+  publicAddressFor,
   sanitizeDccFilename,
   type DccSend,
 } from './dcc.js';
@@ -286,5 +288,94 @@ describe('isPrivateAddress', () => {
     expect(isPrivateAddress('8.8.8.8')).toBe(false);
     expect(isPrivateAddress('2001:db8::1')).toBe(false);
     expect(isPrivateAddress('dcc.example.net')).toBe(false);
+  });
+});
+
+describe('a sender that advertised an address only its own network can reach', () => {
+  it("offers the sender's own host as the address to try instead", () => {
+    expect(publicAddressFor('192.168.1.50', 'bot.example.net')).toBe('bot.example.net');
+    expect(publicAddressFor('10.0.0.4', '203.0.113.25')).toBe('203.0.113.25');
+    expect(publicAddressFor('172.16.3.9', 'files.example.org')).toBe('files.example.org');
+  });
+
+  // The important half. An offer whose address is publicly routable has nothing
+  // wrong with it that a different address would fix, and a transfer that failed
+  // for some other reason must not be retried elsewhere and then reported as
+  // though the address had been the problem.
+  it('leaves a publicly routable offer alone', () => {
+    expect(publicAddressFor('203.0.113.25', 'bot.example.net')).toBeUndefined();
+    expect(publicAddressFor('example.net', 'bot.example.net')).toBeUndefined();
+  });
+
+  // A cloak is a label the ircd made up to hide the real host. It resolves to
+  // nothing, and dialling it is a lookup that cannot succeed.
+  it.each(['user/bot', 'Rizon/staff/alice', 'unaffiliated/somebody'])(
+    'will not dial the cloak %s',
+    (cloak) => {
+      expect(isDialableHost(cloak)).toBe(false);
+      expect(publicAddressFor('192.168.1.50', cloak)).toBeUndefined();
+    },
+  );
+
+  // Both addresses being on the sender's own network is one unreachable place,
+  // not two — swapping them is a second attempt at the same failure.
+  it('will not swap one private address for another', () => {
+    expect(publicAddressFor('192.168.1.50', '10.0.0.1')).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '192.168.1.50')).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '127.0.0.1')).toBeUndefined();
+  });
+
+  it('has nothing to offer when the network gave no host', () => {
+    expect(publicAddressFor('192.168.1.50', undefined)).toBeUndefined();
+    expect(publicAddressFor('192.168.1.50', '')).toBeUndefined();
+  });
+
+  // A bare label is a name on the sender's own network and means exactly as
+  // little to us as the private address it would be replacing.
+  it('will not dial a bare label with no domain on it', () => {
+    expect(isDialableHost('fileserver')).toBe(false);
+    expect(publicAddressFor('192.168.1.50', 'fileserver')).toBeUndefined();
+  });
+
+  it('takes an address or a name that could be looked up', () => {
+    expect(isDialableHost('203.0.113.25')).toBe(true);
+    expect(isDialableHost('bot.example.net')).toBe(true);
+    expect(isDialableHost('2001:db8::1')).toBe(true);
+    expect(isDialableHost('a-b.example.co.uk')).toBe(true);
+  });
+});
+
+/**
+ * The hostmasks two real serving bots were wearing, neither of which is an
+ * address.
+ *
+ * Both looked perfectly dialable to a check that only refused a slash, and both
+ * resolve to nothing: the fallback spent a lookup that could not succeed and
+ * then blamed a hostname the network had invented.
+ */
+describe('a hostmask that is a cloak rather than a host', () => {
+  it.each([
+    ['Rizon-B5D54D46.cust.smartspb.net', 'a network name spliced over the real leading label'],
+    ['863933A7.7304A9F.C6F98C0D.IP', 'hex labels under a .IP pseudo-domain'],
+    ['user/bot', 'the slash form'],
+    ['Rizon/staff/alice', 'the slash form, nested'],
+  ])('will not dial %s (%s)', (cloak) => {
+    expect(isDialableHost(cloak)).toBe(false);
+    expect(publicAddressFor('192.168.0.200', cloak)).toBeUndefined();
+  });
+
+  // The domain under a Rizon cloak is genuine, which is what makes that shape
+  // worth naming: everything but the leading label reads as an ordinary host.
+  it('still dials an ordinary name on the same kind of domain', () => {
+    expect(isDialableHost('files.cust.smartspb.net')).toBe(true);
+    expect(publicAddressFor('192.168.0.200', 'files.cust.smartspb.net')).toBe(
+      'files.cust.smartspb.net',
+    );
+  });
+
+  it('still dials a plain address or an ordinary hostname', () => {
+    expect(isDialableHost('203.0.113.9')).toBe(true);
+    expect(isDialableHost('bot.example.net')).toBe(true);
+    expect(isDialableHost('files.example.co.uk')).toBe(true);
   });
 });

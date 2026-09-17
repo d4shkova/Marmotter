@@ -107,6 +107,18 @@ const MAX_IPV4_INTEGER = 0xffffffff;
  * bracketed IPv6 literal, so all three are accepted. An address that is none of
  * these is rejected rather than guessed at.
  */
+/**
+ * What a legal host looks like, written once.
+ *
+ * Both the offer reader and the fallback check below ask the same question of
+ * the same strings, and two spellings of this grammar would eventually disagree
+ * about one — an address an offer was built on that the fallback then refuses,
+ * silently. Kept here so a change to either rule is a change to both.
+ */
+const DOTTED_QUAD = /^\d{1,3}(\.\d{1,3}){3}$/;
+const HOSTNAME =
+  /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
 function parseAddress(raw: string): string | undefined {
   if (raw === '') {
     return undefined;
@@ -136,7 +148,7 @@ function parseAddress(raw: string): string | undefined {
   }
 
   // A dotted quad passes through unchanged.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+  if (DOTTED_QUAD.test(raw)) {
     return raw;
   }
 
@@ -146,9 +158,7 @@ function parseAddress(raw: string): string | undefined {
   // in the interface can explain. It is resolved where the socket is opened —
   // the same place the address form would have been dialled — so nothing here
   // has to do a lookup to decide whether an offer is readable.
-  if (
-    /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(raw)
-  ) {
+  if (HOSTNAME.test(raw)) {
     return raw;
   }
 
@@ -449,4 +459,104 @@ export function isPrivateAddress(host: string): boolean {
     (a === 169 && b === 254) ||
     (a === 100 && b >= 64 && b <= 127)
   );
+}
+
+/**
+ * The shapes an ircd's invented hostname takes.
+ *
+ * A cloak hides a user's real host behind something the network made up, and
+ * the made-up part resolves to nothing. Telling them apart matters because the
+ * hostmask is the only fallback address a DCC offer has: dialling a cloak
+ * spends a lookup that cannot succeed and, worse, ends with the interface
+ * blaming an address that was never real.
+ *
+ * These are the forms seen in the wild rather than a guess at the space:
+ *
+ * - `user/bob`, `Rizon/staff/alice` — the slash form, which no hostname may
+ *   contain at all.
+ * - `863933A7.7304A9F.C6F98C0D.IP` — UnrealIRCd's, hex labels under a `.IP`
+ *   pseudo-domain.
+ * - `Rizon-B5D54D46.cust.smartspb.net` — the network's name and a hash spliced
+ *   over the real leading label. The domain under it is genuine, which is what
+ *   makes this one worth naming: it looks completely ordinary otherwise.
+ */
+const CLOAK_SHAPES: readonly RegExp[] = [
+  /\//,
+  /\.ip$/i,
+  /^[A-Za-z][A-Za-z0-9]*-[0-9A-Fa-f]{6,}\./,
+  /^[0-9A-Fa-f]{6,}\./,
+];
+
+/**
+ * Whether a host is worth opening a socket to at all.
+ *
+ * The question this exists to answer is whether the hostmask a sender carries
+ * on IRC can stand in for the address they advertised. On a network that cloaks
+ * — which is most of them now — it cannot, and {@link CLOAK_SHAPES} is what
+ * says so.
+ *
+ * What is left is either an address or a name that could plausibly be looked
+ * up, which is as far as this can reason without doing the lookup. It errs
+ * towards refusing: a hostname that merely looks like a cloak and was real
+ * costs one fallback nobody was promised, while a cloak treated as an address
+ * costs a wait and then a wrong explanation of what went wrong.
+ */
+export function isDialableHost(host: string): boolean {
+  if (host === '' || /[\s@!*?]/.test(host)) {
+    return false;
+  }
+  // An address, of either family. Checked before the cloak shapes, since no
+  // ircd invents one of these.
+  if (DOTTED_QUAD.test(host) || host.includes(':')) {
+    return true;
+  }
+  if (CLOAK_SHAPES.some((shape) => shape.test(host))) {
+    return false;
+  }
+  // Otherwise a name with at least one dot in it — a bare label is a LAN name
+  // and means as little to us as the private address we are replacing.
+  return HOSTNAME.test(host);
+}
+
+/**
+ * A reachable stand-in for an address only the sender's own network can reach.
+ *
+ * A serving bot behind a router that has not been told its public address
+ * advertises the one it knows, and every receiver outside that network is given
+ * a `DCC SEND` naming something like `192.168.1.50`. The offer is well-formed,
+ * the port is real, and the only wrong part is the address — so the thing to
+ * try is the same port at an address that does reach the sender.
+ *
+ * The sender's own hostmask is that address, when it is one at all. We are
+ * already talking to them at it: the IRC connection to that host is what
+ * carried the offer, so there is no new disclosure in dialling it, and for a
+ * bot whose file server sits on the same machine it is exactly right.
+ *
+ * Returns nothing when there is nothing better to try — which includes the
+ * case that matters most for not being annoying: an offer whose address is
+ * already public has nothing wrong with it that this can fix, and a transfer
+ * that failed for some other reason must not be retried somewhere else and
+ * reported as though the address had been the problem.
+ *
+ * This is a guess, and it is only worth making after the advertised address has
+ * been tried and failed. It cannot fix a sender whose router forwards nothing,
+ * because no address can.
+ */
+export function publicAddressFor(
+  offered: string,
+  senderHost: string | undefined,
+): string | undefined {
+  if (!isPrivateAddress(offered)) {
+    return undefined;
+  }
+  if (senderHost === undefined || !isDialableHost(senderHost)) {
+    return undefined;
+  }
+  // A sender whose hostmask is itself private is on the same footing as the
+  // address they advertised: both are the sender's own network, and swapping
+  // one for the other is a second attempt at the same unreachable place.
+  if (isPrivateAddress(senderHost) || senderHost === offered) {
+    return undefined;
+  }
+  return senderHost;
 }

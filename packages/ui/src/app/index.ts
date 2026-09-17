@@ -47,5 +47,6 @@ export * from './Sidebar.js';
 export * from './suggest.js';
 export * from './TextPrompt.js';
 export * from './ThemePicker.js';
+export * from './ThemePreview.js';
 export * from './view-store.js';
 export * from './WhoisCard.js';

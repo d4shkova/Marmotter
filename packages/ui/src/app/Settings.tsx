@@ -2,9 +2,18 @@ import type { NetworkState } from '@marmotter/client';
 import { DEFAULT_VERSION_TEXT, type CtcpPolicy } from '@marmotter/protocol';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { cn } from '../lib/cn.js';
+import {
+  INTERFACE_FONTS,
+  MESSAGE_FONTS,
+  interfaceFontStack,
+  messageFontStack,
+  readInterfaceFontId,
+  readMessageFontId,
+} from '../fonts.js';
 import { StatusDot } from '../primitives/Badge.js';
 import { Button } from '../primitives/Button.js';
 import { ListRow } from '../primitives/ListRow.js';
+import { Select } from '../primitives/Select.js';
 import { Stepper } from '../primitives/Stepper.js';
 import { TextField } from '../primitives/TextField.js';
 import { Toggle } from '../primitives/Toggle.js';
@@ -12,12 +21,30 @@ import { ListGroup } from '../layout/ListGroup.js';
 import { connectionStatus, connectionStatusText } from './network-status.js';
 import { LoggingSettings, type LoggingSettingsProps } from './LoggingSettings.js';
 import { ThemePicker } from './ThemePicker.js';
+import { APP_VERSION } from './version.js';
+import { ThemePreview } from './ThemePreview.js';
 import {
   TOAST_SECONDS_RANGE,
   clampToastSeconds,
   type Appearance,
   type UserOptions,
 } from './view-store.js';
+
+/**
+ * The two font pickers' option lists.
+ *
+ * Built once rather than per render: the tables behind them are module
+ * constants and this screen re-renders on every keystroke in any of its fields.
+ */
+const INTERFACE_FONT_OPTIONS = INTERFACE_FONTS.map((font) => ({
+  value: font.id,
+  label: `${font.name} — ${font.description}`,
+}));
+
+const MESSAGE_FONT_OPTIONS = MESSAGE_FONTS.map((font) => ({
+  value: font.id,
+  label: `${font.name} — ${font.description}`,
+}));
 
 export interface SettingsProps {
   readonly networks: readonly NetworkState[];
@@ -78,6 +105,16 @@ export interface SettingsProps {
   readonly onExportConfig: () => void;
   /** Takes settings exported from another Marmotter. */
   readonly onImportConfig: () => void;
+  /**
+   * Opens a link outside Marmotter — the repository, from About.
+   *
+   * Handed in rather than opened here, so it goes through the same confirmation
+   * every other link in the app goes through and there is one place that knows
+   * how to reach a browser from each platform. Absent, the row is still shown
+   * with the address on it: knowing where the source is does not depend on
+   * being able to click through to it.
+   */
+  readonly onOpenLink?: (url: string) => void;
   readonly className?: string;
 }
 
@@ -113,6 +150,7 @@ export function Settings({
   onResetSettings,
   onExportConfig,
   onImportConfig,
+  onOpenLink,
   className,
 }: SettingsProps): ReactNode {
   // Two steps, like deleting the logs: it undoes every choice on this screen at
@@ -260,6 +298,58 @@ export function Settings({
                     />
                   }
                 />
+                {/* The chosen theme, at the size that shows what it does to a
+                    conversation rather than what colours are in it. Under the
+                    row rather than inside it: this is the answer to "what will
+                    this look like", and a person checks it after choosing as
+                    well as before. */}
+                <div className="px-4 pt-1 pb-3">
+                  <ThemePreview theme={appearance.theme} size="panel" />
+                </div>
+              </ListGroup>
+            )}
+
+            {!shown('appearance') ? null : (
+              <ListGroup
+                header="Type"
+                footer="Marmotter uses two faces: one for the interface, one for what people say. Nothing is downloaded — a face this device doesn't have falls back to one it does."
+              >
+                <div className="flex flex-col gap-2 px-4 py-2.5">
+                  <Select
+                    label="Interface font"
+                    hint="Labels, buttons and settings."
+                    value={appearance.interfaceFont}
+                    options={INTERFACE_FONT_OPTIONS}
+                    onChange={(event) =>
+                      onAppearanceChange({
+                        interfaceFont: readInterfaceFontId(event.target.value),
+                      })
+                    }
+                  />
+                  {/* A line of the real thing. A native option cannot be drawn
+                      in the face it names, and a font chosen from a list of
+                      names alone is a font chosen blind. */}
+                  <FontSample
+                    stack={interfaceFontStack(appearance.interfaceFont)}
+                    text="Join channel · Ban · #marmotter"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2 px-4 py-2.5">
+                  <Select
+                    label="Message font"
+                    hint="Names, messages and the raw log. Monospaced, so the name column lines up."
+                    value={appearance.messageFont}
+                    options={MESSAGE_FONT_OPTIONS}
+                    onChange={(event) =>
+                      onAppearanceChange({ messageFont: readMessageFontId(event.target.value) })
+                    }
+                  />
+                  <FontSample
+                    stack={messageFontStack(appearance.messageFont)}
+                    text="      tamsin | is the build green yet"
+                  />
+                </div>
               </ListGroup>
             )}
 
@@ -580,6 +670,33 @@ export function Settings({
                 />
               </ListGroup>
             )}
+
+            {!shown('about') ? null : (
+              <ListGroup
+                header="About"
+                footer="Marmotter is free software. Nothing you do in it is reported anywhere, and no server of ours ever sees your messages."
+              >
+                <ListRow
+                  title="Marmotter"
+                  subtitle="A modern IRC client for people who would rather not read a manual."
+                />
+                <ListRow
+                  title="Version"
+                  trailing={
+                    <span className="font-mono text-footnote text-[var(--label-secondary)]">
+                      {APP_VERSION ?? 'Development build'}
+                    </span>
+                  }
+                />
+                <ListRow
+                  title="Source code"
+                  subtitle={REPOSITORY_URL}
+                  {...(onOpenLink === undefined
+                    ? {}
+                    : { onClick: () => onOpenLink(REPOSITORY_URL) })}
+                />
+              </ListGroup>
+            )}
           </div>
         </div>
       </div>
@@ -587,8 +704,43 @@ export function Settings({
   );
 }
 
+/**
+ * Where the source lives.
+ *
+ * Written here rather than read from anywhere, because it is the one fact in
+ * the interface that has to be true of the project rather than of the build:
+ * a fork's own About should name the fork, and that is a change to this line.
+ */
+const REPOSITORY_URL = 'https://github.com/d4shkova/Marmotter';
+
 /** Which group of settings the rail is showing. */
-type SectionId = 'networks' | 'appearance' | 'notifications' | 'privacy' | 'logging' | 'advanced';
+/**
+ * One line set in the face the row above it names.
+ *
+ * The reason the font rows are not just two selects: a native `option` cannot
+ * be drawn in the family it names — the platform draws the popup — so a person
+ * choosing from the list alone is choosing a font by its reputation. The line
+ * under it is the font, at the size it will be read at, saying the kind of
+ * thing that face will actually be setting.
+ *
+ * Hidden from assistive technology: the select beside it already announces the
+ * name and the description, and this adds nothing but a second reading of a
+ * sample sentence.
+ */
+function FontSample({ stack, text }: { stack: string; text: string }): ReactNode {
+  return (
+    <p
+      aria-hidden="true"
+      style={{ fontFamily: stack }}
+      className="truncate rounded-control bg-[var(--bg-elevated-2)] px-3 py-2 text-callout text-[var(--label-secondary)]"
+    >
+      {text}
+    </p>
+  );
+}
+
+type SectionId =
+  'networks' | 'appearance' | 'notifications' | 'privacy' | 'logging' | 'advanced' | 'about';
 
 /**
  * The rail, in the order somebody reaches for these.
@@ -609,6 +761,7 @@ const SECTIONS: readonly { readonly id: SectionId; readonly label: string }[] = 
   { id: 'privacy', label: 'Privacy' },
   { id: 'logging', label: 'Logging' },
   { id: 'advanced', label: 'Advanced' },
+  { id: 'about', label: 'About' },
 ];
 
 /**

@@ -495,6 +495,8 @@ describe('every component passes axe', () => {
         networks={[networkFixture()]}
         appearance={{
           theme: 'midnight',
+          interfaceFont: 'system',
+          messageFont: 'system-mono',
           nickColumnWidth: 12,
           alignNicksRight: true,
           foldEvents: true,
@@ -700,6 +702,8 @@ describe('the settings sections', () => {
       networks={[networkFixture()]}
       appearance={{
         theme: 'midnight',
+        interfaceFont: 'system',
+        messageFont: 'system-mono',
         nickColumnWidth: 12,
         alignNicksRight: true,
         foldEvents: true,

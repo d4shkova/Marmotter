@@ -20,6 +20,7 @@ import {
   type XdccResponse,
   type DccAccept,
   isPrivateAddress,
+  publicAddressFor,
   parsePackRequest,
   buildDccResume,
   buildPassiveAccept,
@@ -104,6 +105,7 @@ import {
 import { Sidebar } from './Sidebar.js';
 import { TextPrompt } from './TextPrompt.js';
 import { WhoisCard } from './WhoisCard.js';
+import { interfaceFontStack, messageFontStack } from '../fonts.js';
 import { parseInput } from './commands.js';
 import { isAutojoined, toggleAutojoin } from './autojoin.js';
 import {
@@ -211,6 +213,39 @@ export function reconnectingText(name: string, delayMs: number): string {
  * Pure and exported because losing this is invisible in every unit test and
  * shows up only as a modal nobody can dismiss for good.
  */
+/**
+ * How long a bot is given to say anything at all about a request.
+ *
+ * Generous on purpose. A queue place of half an hour is ordinary on a busy
+ * bot, and some say nothing while you hold it, so this is not "how long until
+ * the file arrives" — it is how long a bot may stay completely silent before
+ * the row stops claiming to be waiting on something.
+ */
+const REQUEST_SILENCE_MS = 15 * 60_000;
+
+/**
+ * A promise, or a fallback once the wait has gone on too long.
+ *
+ * For the answers a transfer waits on that are supposed to be instant. A
+ * rejection is the same as a slow answer here: both mean there is nothing to
+ * continue, and both must let the dial go ahead rather than stopping it — so
+ * this never rejects, and a caller has nothing left to catch.
+ */
+async function withDeadline(answer: Promise<number>, ms: number): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    const timer = setTimeout(() => resolve(0), ms);
+    answer
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(0);
+      });
+  });
+}
+
 export function shouldAskForIdentity(identity: DefaultIdentity, canRemember: boolean): boolean {
   return identity.nick === '' && canRemember;
 }
@@ -790,6 +825,26 @@ export function Marmotter({
     document.documentElement.dataset['theme'] = theme;
   }, [theme]);
 
+  /**
+   * Putting the chosen faces on the window.
+   *
+   * The same shape as the theme and for the same reason: the whole stylesheet
+   * resolves its type through these two properties, so setting them on the root
+   * element is the entire feature — no component branches on a font, and a
+   * sheet rendered through a portal is in the same type as everything else.
+   *
+   * Written as an inline style rather than a class because that is what
+   * outranks the `:root` rule in tokens.css that declares the defaults, which
+   * is exactly the relationship wanted: the stylesheet says what the type is
+   * until somebody chooses otherwise.
+   */
+  const { interfaceFont, messageFont } = view.appearance;
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--font-ui-stack', interfaceFontStack(interfaceFont));
+    root.style.setProperty('--font-mono-stack', messageFontStack(messageFont));
+  }, [interfaceFont, messageFont]);
+
   // Asked once. Probing writes to the keychain, so it is not a thing to do on
   // every render of a form.
   useEffect(() => {
@@ -1163,6 +1218,7 @@ export function Marmotter({
             sessionEvent.from,
             sessionEvent.target,
             sessionEvent.send,
+            sessionEvent.senderHost,
           );
         } else if (sessionEvent.kind === 'xdcc-offer') {
           handleXdccOffer.current(
@@ -1522,8 +1578,31 @@ export function Marmotter({
    * they are the same transfer, and a row that ends differently depending on
    * which direction the connection went would be a bug rather than a feature.
    */
+  /**
+   * Withdraws a request from a bot that is still holding a transfer for it.
+   *
+   * A ref because the failure handler below is built long before the thing that
+   * does the withdrawing, and rebuilding it around that would rebuild every
+   * transfer's callbacks with it.
+   */
+  const releaseTransferSlot = useRef<(offer: DccOfferRecord) => void>(() => {});
+
   const trackTransfer = useCallback(
-    (offerId: string, filename: string, transfer: DccTransfer): void => {
+    (
+      offerId: string,
+      filename: string,
+      transfer: DccTransfer,
+      /**
+       * What to try instead, once, when the advertised address turns out to
+       * reach nothing.
+       *
+       * Supplied only for an offer whose address is one that cannot leave the
+       * sender's own network. A transfer that failed for any other reason has
+       * nowhere better to go, and retrying it somewhere else would report the
+       * wrong cause for the wrong failure.
+       */
+      fallback?: { readonly host: string; readonly retry: () => void },
+    ): void => {
       transfers.current.set(offerId, transfer);
       transfer.done
         .then((savedPath) => {
@@ -1541,18 +1620,71 @@ export function Marmotter({
           if (cancelledOffers.current.delete(offerId)) {
             return;
           }
+          const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+          const host = row?.host;
+
+          // The advertised address was one that never leaves the sender's own
+          // network, and we know another address that reaches them: the one
+          // this very offer arrived over. A bot behind a router that has not
+          // been told its public address is the common case here, and its file
+          // server is usually the same machine the bot is on, so the same port
+          // at that address is very often the transfer that works.
+          //
+          // Tried only after the advertised address has failed, because a
+          // receiver on the sender's own network can reach it and that is the
+          // attempt that should win when it can.
+          if (fallback !== undefined && !(row?.triedSenderHost ?? false)) {
+            fallback.retry();
+            return;
+          }
+
           // An address only the sender's own network can reach is the one
           // failure worth explaining rather than reporting: the offer is
           // well-formed, nothing here is broken, and no amount of retrying
           // will help. Said plainly, because "connection refused" sends a
           // person looking at their own firewall for something that is not
-          // there.
-          const host = useView.getState().dccOffers.find((row) => row.id === offerId)?.host;
+          // there — and it now says what else was tried, so the sentence is
+          // not asking somebody to check a thing already checked.
+          const sender = row?.from ?? 'The sender';
+          const offered = row?.offeredHost ?? host;
           const reason =
-            host !== undefined && isPrivateAddress(host)
-              ? `The sender gave ${host}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
-              : describe(error);
+            // The fuller sentence first: where the fallback has been spent,
+            // saying only that the advertised address was private would leave
+            // somebody about to suggest the very thing already tried.
+            row?.triedSenderHost === true && row.senderHost !== undefined
+              ? `${sender} gave ${offered ?? 'an address'}, which only works on its own network, and ${row.senderHost} did not answer either. Nothing here can fix that — another bot offering the same file is the way round it.`
+              : offered !== undefined && isPrivateAddress(offered)
+                ? `${sender} gave ${offered}, an address that only works on its own network. Its file server is misconfigured, and nobody outside it can connect.`
+                : describe(error);
           useView.getState().setDccOfferStatus(offerId, { status: 'failed', error: reason });
+
+          /**
+           * Handing the bot back the slot it is holding for us.
+           *
+           * A serving bot opens one transfer at a time and holds it for its own
+           * timeout — three minutes is usual — waiting to be connected to. A
+           * transfer that has failed here is one nobody is going to connect to,
+           * and until the bot is told so, every further request bounces off it:
+           *
+           *   ** HEH. You can only have 1 transfer at a time, Added you to the
+           *      main queue for pack 16 … in position 1.
+           *
+           * So one dead transfer used to cost three minutes of that bot, and a
+           * person retrying spent the whole time queued behind their own last
+           * attempt. Withdrawing is what the bot's own reminder tells you to
+           * type, and it is the difference between the next attempt going out
+           * now and going out after the timeout.
+           *
+           * Only once the failure is final: the fallback attempt above still
+           * needs the slot the bot is holding.
+           */
+          // The row as it was before the line above marked it failed: what the
+          // bot is holding is decided by the state the transfer was in, and a
+          // row already reading `failed` is one the withdrawal would skip.
+          if (row !== undefined) {
+            releaseTransferSlot.current(row);
+          }
+
           // Keyed to the row, not the wording: a serving bot re-offers a pack
           // every few seconds and each re-offer is another attempt, so one file
           // that will not come is one notice that keeps count, not a tower of
@@ -1586,6 +1718,11 @@ export function Marmotter({
   // is visibly in progress rather than an unresponsive button. Shared by the
   // Download button on a direct offer and by the XDCC path, which lands here
   // once the bot answers a request with a real DCC SEND.
+  /** Set immediately below; see the note where it is assigned. */
+  const fetchIntoFolderRef = useRef<
+    (offerId: string, source: Parameters<typeof fetchIntoFolder>[1]) => void
+  >(() => {});
+
   const fetchIntoFolder = useCallback(
     (
       offerId: string,
@@ -1597,6 +1734,17 @@ export function Marmotter({
         secure?: boolean;
         turbo?: boolean;
         resumeFrom?: number;
+        /** Where the sender is reached on IRC, for the private-address fallback. */
+        senderHost?: string;
+        /**
+         * Whether this is the fallback attempt at the sender's own address.
+         *
+         * Stated rather than inferred from the row, so that pressing Retry on a
+         * failed row is a fresh pair of attempts rather than one: the row
+         * remembers that its fallback was spent, and only a call that *is* the
+         * fallback should set that.
+         */
+        fallbackAttempt?: boolean;
       },
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
@@ -1618,7 +1766,22 @@ export function Marmotter({
         filename: source.filename,
         host: source.host,
         port: source.port,
+        ...(source.senderHost === undefined ? {} : { senderHost: source.senderHost }),
+        // A first attempt clears the mark and records what was advertised, so
+        // Retry on a failed row tries the advertised address and then the
+        // sender's again rather than giving up after one.
+        triedSenderHost: source.fallbackAttempt === true,
+        ...(source.fallbackAttempt === true ? {} : { offeredHost: source.host }),
       });
+
+      // Worked out before the transfer starts, because it depends on the
+      // address being dialled now rather than on whatever the row says by the
+      // time it fails. Undefined for any address that is publicly routable:
+      // there is nothing wrong with those that a different address would fix.
+      const senderHost =
+        source.senderHost ??
+        useView.getState().dccOffers.find((entry) => entry.id === offerId)?.senderHost;
+      const reachable = publicAddressFor(source.host, senderHost);
       const transfer = dcc.download(
         {
           host: source.host,
@@ -1632,10 +1795,33 @@ export function Marmotter({
         },
         (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
       );
-      trackTransfer(offerId, source.filename, transfer);
+      trackTransfer(
+        offerId,
+        source.filename,
+        transfer,
+        reachable === undefined
+          ? undefined
+          : {
+              host: reachable,
+              // The same transfer in every respect but where it is dialled —
+              // the port, the name, the size and the resume position all still
+              // belong to the offer that was made.
+              retry: () =>
+                fetchIntoFolderRef.current(offerId, {
+                  ...source,
+                  host: reachable,
+                  ...(senderHost === undefined ? {} : { senderHost }),
+                  fallbackAttempt: true,
+                }),
+            },
+      );
     },
     [dcc, toast, trackTransfer],
   );
+
+  // Self-reference, so the fallback above can start the same transfer again at
+  // a different address without this callback depending on itself.
+  fetchIntoFolderRef.current = fetchIntoFolder;
 
   /**
    * Receiving a passive (reverse) transfer, where we open the socket.
@@ -1736,6 +1922,48 @@ export function Marmotter({
     [dcc, registry, trackTransfer],
   );
 
+  /** Rows waiting on a bot that has not spoken yet, by row. */
+  const requestWatchdogs = useRef(new Map<string, number>());
+
+  /**
+   * Gives up on a request no bot ever answered.
+   *
+   * A row asked for and never spoken to sat at "Requested" with a spinner for
+   * the rest of the session: the one control on it was the bin, and nothing
+   * ever said that waiting was pointless. Both of the HexChat add-ons this was
+   * compared against have the same hole — one of them also leaks its concurrency
+   * slot doing it — so the row simply spins.
+   *
+   * The clock is reset by anything the bot says, because a bot narrating a queue
+   * position is a bot that has heard us; only total silence counts. And nothing
+   * is withdrawn when it fires: a bot that never spoke probably never queued us,
+   * and if it does answer later the offer is matched back to this row and
+   * fetched exactly as it would have been. Giving up here is about what the row
+   * claims, not about closing a door.
+   */
+  const watchRequest = useCallback((offerId: string): void => {
+    window.clearTimeout(requestWatchdogs.current.get(offerId));
+    requestWatchdogs.current.set(
+      offerId,
+      window.setTimeout(() => {
+        requestWatchdogs.current.delete(offerId);
+        const row = useView.getState().dccOffers.find((entry) => entry.id === offerId);
+        if (row?.status !== 'requested') {
+          return;
+        }
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: `${row.from} never answered. It may be offline or not serving this pack — asking again is the way to find out.`,
+        });
+      }, REQUEST_SILENCE_MS),
+    );
+  }, []);
+
+  const forgetRequestWatchdog = useCallback((offerId: string): void => {
+    window.clearTimeout(requestWatchdogs.current.get(offerId));
+    requestWatchdogs.current.delete(offerId);
+  }, []);
+
   /**
    * Transfers waiting on a sender's agreement to continue a file, by bot and
    * name, each with the timer that gives up on the answer.
@@ -1770,6 +1998,17 @@ export function Marmotter({
   /** How long a sender is given to answer a resume before the file starts over. */
   const RESUME_ANSWER_MS = 8_000;
 
+  /**
+   * How long the shell is given to say whether there is anything to continue.
+   *
+   * Every dial waits on this answer, so a shell that never gives one is a
+   * transfer that never starts — and on the other end of that is a bot holding
+   * a listening socket open for three minutes and then giving up. Two seconds
+   * is far longer than reading one file's length takes; past that, starting the
+   * file from the beginning is enormously better than not starting it.
+   */
+  const RESUMABLE_ANSWER_MS = 2_000;
+
   const resumeKey = useCallback(
     (networkId: string, from: string, filename: string): string =>
       `${pendingKey(networkId, from)} ${filename.toLowerCase()}`,
@@ -1802,6 +2041,14 @@ export function Marmotter({
             readonly size?: number;
             readonly secure?: boolean;
             readonly turbo?: boolean;
+            /**
+             * Where the sender is reached on IRC, for the fallback below.
+             *
+             * Carried on the plan rather than read off the row because a pack
+             * row was built from a catalogue line in a channel and has no
+             * sender address until this answering offer brings one.
+             */
+            readonly senderHost?: string;
           }
         | {
             readonly kind: 'passive';
@@ -1814,6 +2061,8 @@ export function Marmotter({
             readonly turbo?: boolean;
           },
     ): void => {
+      forgetRequestWatchdog(offerId);
+
       const start = (resumeFrom?: number): void => {
         if (plan.kind === 'active') {
           fetchIntoFolder(offerId, {
@@ -1823,6 +2072,7 @@ export function Marmotter({
             ...(plan.size === undefined ? {} : { size: plan.size }),
             ...(plan.secure === undefined ? {} : { secure: plan.secure }),
             ...(plan.turbo === undefined ? {} : { turbo: plan.turbo }),
+            ...(plan.senderHost === undefined ? {} : { senderHost: plan.senderHost }),
             ...(resumeFrom === undefined ? {} : { resumeFrom }),
           });
           return;
@@ -1847,9 +2097,33 @@ export function Marmotter({
         return;
       }
 
-      void ask
-        .call(dcc, folder, plan.filename)
-        .then((already) => {
+      /**
+       * A negotiation already running for this very row.
+       *
+       * A serving bot re-offers a pack every few seconds until somebody
+       * connects, and each of those used to arrive here and begin the
+       * negotiation again — asking the shell afresh, sending another
+       * `DCC RESUME`, and, fatally, replacing the timer that gives up waiting
+       * for the answer. A bot re-offering every five seconds against an
+       * eight-second deadline meant the deadline could never be reached: the
+       * client sat asking to resume, the bot sat holding a socket nobody
+       * dialled, and three minutes later the bot closed it. That is a livelock,
+       * and it is the one thing the transfer cannot recover from on its own.
+       *
+       * So a re-offer joins the attempt in flight rather than restarting it.
+       * The address is taken from the newer offer — a bot is free to re-offer
+       * on a different port, and that is the one it is now listening on — while
+       * the deadline stays where the first offer put it.
+       */
+      const key = resumeKey(plan.networkId, plan.from, plan.filename);
+      const negotiating = pendingResumes.current.get(key);
+      if (negotiating?.offerId === offerId) {
+        pendingResumes.current.set(key, { ...negotiating, start });
+        return;
+      }
+
+      void withDeadline(ask.call(dcc, folder, plan.filename), RESUMABLE_ANSWER_MS).then(
+        (already) => {
           // Nothing to continue, or a part-file already as long as the whole
           // thing — which is not a resume, it is a file to start again and let
           // the size check catch.
@@ -1867,11 +2141,30 @@ export function Marmotter({
             note: 'Asking to continue where it left off.',
           });
 
-          const key = resumeKey(plan.networkId, plan.from, plan.filename);
-          window.clearTimeout(pendingResumes.current.get(key)?.timer);
-          const timer = window.setTimeout(() => {
-            pendingResumes.current.delete(key);
+          const held = pendingResumes.current.get(key);
+          if (held?.offerId === offerId) {
+            // This row's own negotiation, reached again because the shell's
+            // answer raced a re-offer. Its deadline is the one that counts, so
+            // the timer is left where it is and only the address is refreshed.
+            pendingResumes.current.set(key, { ...held, start });
+            return;
+          }
+          if (held !== undefined) {
+            // Another row negotiating the same filename with the same bot — two
+            // packs listing one file, or a direct offer beside a pack. The key
+            // cannot tell them apart and neither could the `DCC ACCEPT` that
+            // answers, so this one takes the file from the beginning rather
+            // than joining a handshake that is not its own. Slower than a
+            // resume; the alternative was one row stuck asking for ever while
+            // its timer started the other row's transfer.
             start();
+            return;
+          }
+          const timer = window.setTimeout(() => {
+            const current = pendingResumes.current.get(key);
+            pendingResumes.current.delete(key);
+            // The newest offer's address, which a re-offer may have replaced.
+            (current?.start ?? start)();
           }, RESUME_ANSWER_MS);
           pendingResumes.current.set(key, { offerId, start, timer });
 
@@ -1886,12 +2179,10 @@ export function Marmotter({
               }),
             )}`,
           );
-        })
-        .catch(() => {
-          start();
-        });
+        },
+      );
     },
-    [dcc, fetchIntoFolder, fetchPassively, registry, resumeKey],
+    [dcc, fetchIntoFolder, fetchPassively, forgetRequestWatchdog, registry, resumeKey],
   );
 
   /**
@@ -1957,19 +2248,23 @@ export function Marmotter({
    * it. Forgotten, a late answer is simply an unsolicited offer, which is what
    * it now is.
    */
-  const forgetPendingRequest = useCallback((offerId: string): void => {
-    for (const [key, queue] of pendingXdcc.current) {
-      const rest = queue.filter((id) => id !== offerId);
-      if (rest.length === queue.length) {
-        continue;
+  const forgetPendingRequest = useCallback(
+    (offerId: string): void => {
+      forgetRequestWatchdog(offerId);
+      for (const [key, queue] of pendingXdcc.current) {
+        const rest = queue.filter((id) => id !== offerId);
+        if (rest.length === queue.length) {
+          continue;
+        }
+        if (rest.length === 0) {
+          pendingXdcc.current.delete(key);
+        } else {
+          pendingXdcc.current.set(key, rest);
+        }
       }
-      if (rest.length === 0) {
-        pendingXdcc.current.delete(key);
-      } else {
-        pendingXdcc.current.set(key, rest);
-      }
-    }
-  }, []);
+    },
+    [forgetRequestWatchdog],
+  );
 
   /**
    * Telling a bot to drop a pack we are no longer waiting for.
@@ -2008,6 +2303,10 @@ export function Marmotter({
     },
     [registry],
   );
+
+  // A failed transfer releases the bot's slot through the same withdrawal the
+  // dismiss button uses; the bot is holding the same thing either way.
+  releaseTransferSlot.current = cancelPackRequest;
 
   /**
    * Taking a row off the list, whatever state it is in.
@@ -2241,15 +2540,25 @@ export function Marmotter({
     });
     if (outcome.settled) {
       forgetPendingRequest(targetId);
+      return;
     }
+    // The bot has heard us, whatever it said. Only silence counts against it.
+    watchRequest(targetId);
   };
 
   // A direct DCC SEND arriving. If it answers an XDCC request we made, it fills
   // that row and downloads; otherwise it is an unsolicited offer of its own.
   const handleDccOffer = useRef<
-    (networkId: string, networkName: string, from: string, target: string, send: DccSend) => void
+    (
+      networkId: string,
+      networkName: string,
+      from: string,
+      target: string,
+      send: DccSend,
+      senderHost: string | undefined,
+    ) => void
   >(() => {});
-  handleDccOffer.current = (networkId, networkName, from, target, send) => {
+  handleDccOffer.current = (networkId, networkName, from, target, send, senderHost) => {
     const key = pendingKey(networkId, from);
     const queue = pendingXdcc.current.get(key) ?? [];
     // Every row this same bot advertised, which is what an answer is matched
@@ -2296,6 +2605,7 @@ export function Marmotter({
         ...(send.size === undefined ? {} : { size: send.size }),
         secure: send.secure,
         turbo: send.turbo,
+        ...(senderHost === undefined ? {} : { senderHost }),
       });
     };
 
@@ -2355,9 +2665,15 @@ export function Marmotter({
       case 'ignore':
         return;
       case 'record':
-        useView
-          .getState()
-          .recordDccOffer({ networkId, networkName, from, target, send, at: Date.now() });
+        useView.getState().recordDccOffer({
+          networkId,
+          networkName,
+          from,
+          target,
+          send,
+          ...(senderHost === undefined ? {} : { senderHost }),
+          at: Date.now(),
+        });
         return;
     }
   };
@@ -2389,6 +2705,7 @@ export function Marmotter({
         ]);
         session.send(`PRIVMSG ${offer.from} :XDCC SEND #${offer.pack}`);
         useView.getState().setDccOfferStatus(offer.id, { status: 'requested' });
+        watchRequest(offer.id);
         announceDownload({
           key: 'dcc-requested',
           text: (requested) =>
@@ -2427,7 +2744,10 @@ export function Marmotter({
         kind: 'active',
         networkId: offer.networkId,
         from: offer.from,
-        host: offer.host,
+        // What was advertised, where the row still remembers it: `host` is
+        // wherever the last attempt was dialled, which after a fallback is the
+        // sender's own address. Asking again asks for the whole sequence.
+        host: offer.offeredHost ?? offer.host,
         port: offer.port,
         filename: offer.filename,
         ...(offer.size === undefined ? {} : { size: offer.size }),
@@ -2435,7 +2755,7 @@ export function Marmotter({
         ...(offer.turbo === undefined ? {} : { turbo: offer.turbo }),
       });
     },
-    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey],
+    [announceDownload, beginTransfer, dcc, registry, toast, pendingKey, watchRequest],
   );
 
   /**
@@ -2471,8 +2791,9 @@ export function Marmotter({
       const key = pendingKey(networkId, nick);
       pendingXdcc.current.set(key, [...(pendingXdcc.current.get(key) ?? []), id]);
       useView.getState().setDccOfferStatus(id, { status: 'requested' });
+      watchRequest(id);
     },
-    [pendingKey, registry],
+    [pendingKey, registry, watchRequest],
   );
 
   /**
@@ -2919,6 +3240,15 @@ export function Marmotter({
         session.send(parsed.line);
         return;
       case 'handled':
+        // A pack request pasted whole — a link, a `/msg bot xdcc send #42`, or
+        // both — which is how the indexes hand them out and so how most people
+        // arrive at one. It lives here rather than in the file monitor because
+        // a box asking for text of an unstated shape is a box nobody can fill
+        // in; the command bar documents what it takes as it is typed.
+        if (parsed.command.name === 'xdcc') {
+          requestPastedPack(parsed.args);
+          return;
+        }
         // Only /me reaches here with a target, and only when there is none.
         toast(`${parsed.command.name} needs a conversation to act on.`, 'error');
         return;
@@ -3184,6 +3514,7 @@ export function Marmotter({
           onAddNetwork={() => setAdding(true)}
           onExportConfig={() => setExportingConfig(true)}
           onImportConfig={() => setImportingConfig(true)}
+          onOpenLink={(href) => setLinkToOpen(href)}
           onResetSettings={() => {
             view.resetSettings();
             toast('Settings are back to their defaults. Your networks are untouched.');
@@ -3191,7 +3522,10 @@ export function Marmotter({
         />
       ) : view.pane === 'dcc' ? (
         <DccBrowserPane
-          className="flex-1 overflow-y-auto"
+          // Not a scroll container: the pane lays itself out as a frame with
+          // one scrolling list inside it, so the height has to reach it rather
+          // than be spent here.
+          className="min-h-0 flex-1"
           downloadFolder={view.userOptions.downloadFolder}
           onDownload={downloadOffer}
           onCancel={cancelOffer}
@@ -3199,7 +3533,6 @@ export function Marmotter({
           {...(dcc?.revealFile === undefined ? {} : { onReveal: revealOffer })}
           onClear={clearOffers}
           onDismiss={dismissOffer}
-          onRequestPack={requestPastedPack}
           canFetchPassive={dcc?.receivePassive !== undefined}
         />
       ) : view.pane === 'log-search' && logs !== undefined ? (

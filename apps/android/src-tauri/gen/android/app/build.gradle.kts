@@ -16,8 +16,8 @@ android {
         // behaviour the app relies on is what that release introduced.
         minSdk = 33
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.3.5"
     }
 
     buildTypes {

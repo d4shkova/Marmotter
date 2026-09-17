@@ -13,12 +13,19 @@
 
 import {
   DEFAULT_CTCP_POLICY,
+  isPrivateAddress,
   type CtcpPolicy,
   type DccSend,
   type XdccPack,
   type XdccResponse,
 } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import {
+  DEFAULT_INTERFACE_FONT,
+  DEFAULT_MESSAGE_FONT,
+  type InterfaceFontId,
+  type MessageFontId,
+} from '../fonts.js';
 import { DEFAULT_THEME, type ThemeId } from '../themes.js';
 import { create } from 'zustand';
 
@@ -101,6 +108,47 @@ export function sameFilename(a: string, b: string): boolean {
   const reduce = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]/g, '');
   const left = reduce(a);
   return left !== '' && left === reduce(b);
+}
+
+/**
+ * How a sender is named across rows: the network it is on and its nick.
+ *
+ * Not case-folded, because the rows being compared all came from the same
+ * source spelling it the same way, and the store has no ISUPPORT to fold with.
+ */
+export function senderKey(offer: Pick<DccOfferRecord, 'networkId' | 'from'>): string {
+  return `${offer.networkId} ${offer.from}`;
+}
+
+/**
+ * The senders already known to advertise an address nothing outside their own
+ * network can reach.
+ *
+ * A bot behind a router that has not been told its public address hands out
+ * something like `192.168.0.200` to everyone, so it is not one bad transfer —
+ * it is every file that bot offers, to every person asking. Somebody working
+ * through a packlist finds that out three minutes at a time, once per file,
+ * and nothing on the list distinguishes the bot that cannot work from the one
+ * that can.
+ *
+ * Derived from the rows rather than recorded separately, because the rows
+ * already hold it: a failed transfer keeps the address that was advertised.
+ * That also means it clears itself when the list is cleared, which is right —
+ * this is an observation about what happened in this session, not a verdict on
+ * the bot for ever.
+ */
+export function unreachableSenders(offers: readonly DccOfferRecord[]): ReadonlySet<string> {
+  const found = new Set<string>();
+  for (const offer of offers) {
+    if (
+      offer.status === 'failed' &&
+      offer.offeredHost !== undefined &&
+      isPrivateAddress(offer.offeredHost)
+    ) {
+      found.add(senderKey(offer));
+    }
+  }
+  return found;
 }
 
 /**
@@ -411,6 +459,33 @@ export interface DccOfferRecord {
   readonly turbo?: boolean;
   /** The address to connect to, for a direct DCC offer. */
   readonly host?: string;
+  /**
+   * Where the sender is reached on IRC, from their hostmask.
+   *
+   * Kept against the row so a transfer that failed on a private address has
+   * something to fall back to: the address the offer itself carried is the
+   * sender's idea of where they are, and this is where we already know they
+   * actually are. Absent for a sender the network gave no host for.
+   */
+  readonly senderHost?: string;
+  /**
+   * The address the offer itself advertised.
+   *
+   * Separate from {@link host}, which is wherever the transfer is being dialled
+   * right now and is what the row shows while it connects. Once a fallback
+   * attempt has moved `host` to the sender's own address, this is the only
+   * remaining record of what was offered — and Retry needs it, or asking again
+   * would quietly start from the fallback and try one address where the first
+   * attempt tried two.
+   */
+  readonly offeredHost?: string;
+  /**
+   * Whether this row has already been retried at {@link senderHost}.
+   *
+   * One retry, not a loop: the second failure is the answer, and a row that
+   * kept swapping addresses would spend a bot's connection limit finding it out.
+   */
+  readonly triedSenderHost?: boolean;
   /** The port to connect to, for a direct DCC offer. */
   readonly port?: number;
   /** The pack number, for an XDCC offer. */
@@ -502,6 +577,22 @@ export interface Appearance {
    * and no second palette to keep in step.
    */
   readonly theme: ThemeId;
+  /**
+   * The face every label, button and settings row is set in.
+   *
+   * One custom property on the root element, the same shape as the theme: the
+   * stylesheet resolves all of its interface type through `--font-ui-stack`,
+   * so nothing below has to know a choice was made.
+   */
+  readonly interfaceFont: InterfaceFontId;
+  /**
+   * The face the nick column, the message body and the raw log are set in.
+   *
+   * Monospaced, and the list it is chosen from holds nothing else: the nick
+   * column is measured in characters and the raw log is read by lining fields
+   * up, both of which a proportional face silently breaks.
+   */
+  readonly messageFont: MessageFontId;
   /** Fixed nick column width, in characters. */
   readonly nickColumnWidth: number;
   /** Right-aligns nicks against the message text, as HexChat does. */
@@ -541,6 +632,8 @@ export interface Appearance {
 
 export const DEFAULT_APPEARANCE: Appearance = {
   theme: DEFAULT_THEME,
+  interfaceFont: DEFAULT_INTERFACE_FONT,
+  messageFont: DEFAULT_MESSAGE_FONT,
   nickColumnWidth: 12,
   alignNicksRight: true,
   foldEvents: true,
@@ -646,6 +739,8 @@ export interface ViewState {
     readonly from: string;
     readonly target: string;
     readonly send: DccSend;
+    /** Where the sender is reached on IRC, for the private-address fallback. */
+    readonly senderHost?: string;
     readonly at: number;
   }): void;
   /**
@@ -712,6 +807,18 @@ export interface ViewState {
       /** The address the transfer is being made to, once one is known. */
       host?: string;
       port?: number;
+      /**
+       * Where the sender is reached on IRC.
+       *
+       * Set when a bot answers a pack request: the row was made from a
+       * catalogue line in a channel and had no sender address until the
+       * answering `DCC SEND` arrived with one.
+       */
+      senderHost?: string;
+      /** What the offer advertised, as opposed to where it is being dialled. */
+      offeredHost?: string;
+      /** Marks the row as having spent its one retry at the sender's address. */
+      triedSenderHost?: boolean;
     },
   ): void;
   /**
@@ -900,6 +1007,7 @@ export const useView = create<ViewState>((set, get) => ({
         filename: offer.send.filename,
         host: offer.send.host,
         port: offer.send.port,
+        ...(offer.senderHost === undefined ? {} : { senderHost: offer.senderHost }),
         ...(offer.send.size === undefined ? {} : { size: offer.send.size }),
         passive: offer.send.passive,
         ...(offer.send.token === undefined ? {} : { token: offer.send.token }),
@@ -1041,6 +1149,11 @@ export const useView = create<ViewState>((set, get) => ({
           // thing on the row when a transfer does not start.
           ...(patch.host === undefined ? {} : { host: patch.host }),
           ...(patch.port === undefined ? {} : { port: patch.port }),
+          ...(patch.senderHost === undefined ? {} : { senderHost: patch.senderHost }),
+          ...(patch.offeredHost === undefined ? {} : { offeredHost: patch.offeredHost }),
+          ...(patch.triedSenderHost === undefined
+            ? {}
+            : { triedSenderHost: patch.triedSenderHost }),
         };
       }),
     }));

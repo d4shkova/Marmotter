@@ -465,32 +465,11 @@ describe('a file list on a platform that chooses the folder for you', () => {
 });
 
 describe('asking for a pack by hand', () => {
-  it('hands the pasted line over whole, and clears the field', () => {
-    const onRequestPack = vi.fn();
-    render(
-      <DccBrowser
-        offers={[]}
-        downloadFolder="/tmp/dl"
-        onDownload={noop}
-        onCancel={noop}
-        onClear={noop}
-        onDismiss={noop}
-        onRequestPack={onRequestPack}
-        now={2_000}
-      />,
-    );
-
-    const field = screen.getByLabelText('Paste a pack request') as HTMLInputElement;
-    fireEvent.change(field, {
-      target: { value: "irc://irc.abc.xyz/files '/msg bot xdcc send #7'" },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Request' }));
-
-    expect(onRequestPack).toHaveBeenCalledWith("irc://irc.abc.xyz/files '/msg bot xdcc send #7'");
-    expect(field.value).toBe('');
-  });
-
-  it('has no field at all where the platform cannot request anything', () => {
+  // The field that used to sit here asked for a line of unstated shape, which
+  // is a box nobody can fill in without already knowing the answer. Pasting a
+  // request still works; it moved to `/xdcc` in the command bar, where the
+  // autocomplete documents what it takes as it is being typed.
+  it('has no field for it, in any state', () => {
     render(
       <DccBrowser
         offers={[]}
@@ -503,8 +482,84 @@ describe('asking for a pack by hand', () => {
       />,
     );
     expect(screen.queryByLabelText('Paste a pack request')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Request' })).toBeNull();
+  });
+});
+
+/**
+ * The frame, and the one thing inside it that moves.
+ *
+ * A file window is read by looking down a column, which stops working the
+ * moment the headings above it have scrolled off — and the search box and the
+ * download folder are controls rather than data, so neither belongs in a list.
+ */
+describe('the shape of the file window', () => {
+  // Resizing the window is what separated a sticky header from a fixed one: a
+  // sticky header belongs to a scroll position, so a window made shorter keeps
+  // its offset and the frame ends up somewhere in the middle of the list. The
+  // frame is a row of the flex column now, which cannot be scrolled away from
+  // at any size — so nothing in this pane is inside a scroll container except
+  // the table.
+  it('keeps the search and the folder out of the scrolling area', () => {
+    const { container } = render(
+      <DccBrowser
+        offers={[
+          offer({ status: 'available' }),
+          offer({ id: 'b', filename: 'b.bin', status: 'available' }),
+        ]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    const search = screen.getByLabelText('Search files');
+    const folder = screen.getByText(/Saving to/);
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+
+    const scroller = (from: Element | null): Element | null => {
+      for (let node = from; node !== null; node = node.parentElement) {
+        if (/overflow-(?:auto|y-auto)/.test(node.className.toString())) {
+          return node;
+        }
+      }
+      return null;
+    };
+
+    expect(scroller(search)).toBeNull();
+    expect(scroller(folder)).toBeNull();
+    // The rows, by contrast, are inside one — that is the part meant to move.
+    expect(scroller(table)).not.toBeNull();
   });
 
+  it('pins the column headers so only the files scroll', () => {
+    const { container } = render(
+      <DccBrowser
+        offers={[offer({ status: 'available' })]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    const headers = [...container.querySelectorAll('thead th')];
+    expect(headers.length).toBeGreaterThan(0);
+    for (const header of headers) {
+      expect(header.className).toContain('sticky');
+      // Rows slide underneath these, so they cannot be see-through.
+      expect(header.className).toContain('bg-[var(--bg-base)]');
+    }
+  });
+});
+
+describe('a request the bot has answered', () => {
   it('shows where a waiting request stands, when the bot said', () => {
     render(
       <DccBrowser
@@ -619,5 +674,93 @@ describe('a transfer that has not started yet', () => {
       />,
     );
     expect(screen.queryByText(/Connecting to/)).toBeNull();
+  });
+});
+
+/**
+ * A bot that cannot work, seen once and remembered.
+ *
+ * The address a NAT'd bot hands out is the same one every time, so one failed
+ * transfer condemns everything else it is offering. On a packlist of thousands
+ * that was three wasted minutes per file, discovered one file at a time, with
+ * nothing on the list to tell the dead bot from the working one.
+ */
+describe('a catalogue containing a bot that has already failed', () => {
+  const failed = (from: string) =>
+    offer({
+      id: `failed-${from}`,
+      from,
+      filename: 'first.attempt.mkv',
+      status: 'failed',
+      offeredHost: '192.168.0.200',
+      error: 'only works on its own network',
+    });
+
+  const available = (from: string, id: string) =>
+    offer({ id, from, filename: `${id}.mkv`, status: 'available' });
+
+  it("marks the rest of that bot's files", () => {
+    render(
+      <DccBrowser
+        offers={[failed('[EWG]-[ik0n]-'), available('[EWG]-[ik0n]-', 'second')]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    expect(screen.getByText(/gave an address only its own network can reach/)).toBeTruthy();
+    // Still offered, because the reader may be on that network, or the owner
+    // may have fixed it since.
+    expect(screen.getAllByRole('button', { name: 'Download' }).length).toBeGreaterThan(0);
+  });
+
+  it('says nothing about a bot that has not failed', () => {
+    render(
+      <DccBrowser
+        offers={[failed('[EWG]-[ik0n]-'), available('SomeOtherBot', 'other')]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    // The warning belongs to rows still offering a choice, and only for the bot
+    // that earned it: the failed row is up in the tray saying why on itself,
+    // and the other bot's file is untouched.
+    expect(screen.queryByText(/gave an address only its own network can reach/)).toBeNull();
+  });
+
+  // A transfer that failed for some other reason says nothing about the bot's
+  // address, so it must not condemn the rest of its catalogue.
+  it('does not condemn a bot whose transfer failed for another reason', () => {
+    render(
+      <DccBrowser
+        offers={[
+          offer({
+            id: 'refused',
+            from: 'GoodBot',
+            status: 'failed',
+            offeredHost: '203.0.113.9',
+            error: 'connection refused',
+          }),
+          available('GoodBot', 'another'),
+        ]}
+        downloadFolder="/tmp/dl"
+        onDownload={noop}
+        onCancel={noop}
+        onClear={noop}
+        onDismiss={noop}
+        now={2_000}
+      />,
+    );
+
+    expect(screen.queryByText(/gave an address only its own network can reach/)).toBeNull();
   });
 });

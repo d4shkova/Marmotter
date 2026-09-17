@@ -21,6 +21,7 @@
 
 import { DEFAULT_CTCP_POLICY, type CtcpPolicy } from '@marmotter/protocol';
 import { defaultLoggingPolicy, type LoggingPolicy } from '@marmotter/shared';
+import { readInterfaceFontId, readMessageFontId } from '../fonts.js';
 import { readThemeId } from '../themes.js';
 import {
   DEFAULT_APPEARANCE,
@@ -73,6 +74,12 @@ function readAppearance(value: unknown): Appearance {
     // Anything the file does not recognise as a theme is the default one,
     // rather than a window with no colours defined in it at all.
     theme: readThemeId(fields['theme']),
+    // Same reasoning as the theme, and it matters more coming from another
+    // device: a settings document written by a newer release can name a face
+    // this build has never heard of, and the answer is the default rather than
+    // an interface with no font-family resolved at all.
+    interfaceFont: readInterfaceFontId(fields['interfaceFont']),
+    messageFont: readMessageFontId(fields['messageFont']),
     // Bounded the same way the settings control bounds it. A width of 400 from
     // a hand-edited file would push the message text off the screen with no
     // obvious way back.
@@ -178,6 +185,8 @@ export function writeStoredSettings(settings: StoredSettings): Record<string, un
   return {
     appearance: {
       theme: settings.appearance.theme,
+      interfaceFont: settings.appearance.interfaceFont,
+      messageFont: settings.appearance.messageFont,
       nickColumnWidth: settings.appearance.nickColumnWidth,
       alignNicksRight: settings.appearance.alignNicksRight,
       foldEvents: settings.appearance.foldEvents,

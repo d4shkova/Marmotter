@@ -34,6 +34,21 @@ export interface TableProps<Row> {
    * ban and exception lists, where the whole point is to see the lot.
    */
   readonly pageSize?: number;
+  /**
+   * Keeps the column headers in place while the rows scroll under them.
+   *
+   * The wrapper becomes the scroll container when this is set, which is the
+   * whole of it: a `sticky` header sticks to the nearest scrolling ancestor, so
+   * without that the headers pin themselves to a box that never scrolls and
+   * nothing happens. It follows that a sticky table must be given its height by
+   * its parent — a flex child with `min-h-0`, in practice — rather than growing
+   * to fit its rows.
+   *
+   * For the tables long enough that the headers leave the screen: a bot's
+   * catalogue is thousands of files, and five columns of bare values with no
+   * headings above them is a table nobody can read the middle of.
+   */
+  readonly stickyHeader?: boolean;
   readonly className?: string;
 }
 
@@ -54,6 +69,7 @@ export function Table<Row>({
   onSortChange,
   empty,
   pageSize,
+  stickyHeader = false,
   className,
 }: TableProps<Row>): ReactNode {
   const sorted = useMemo(() => sortRows(rows, columns, sort), [rows, columns, sort]);
@@ -70,7 +86,7 @@ export function Table<Row>({
   }
 
   return (
-    <div className={cn('overflow-x-auto', className)}>
+    <div className={cn(stickyHeader ? 'overflow-auto' : 'overflow-x-auto', className)}>
       <table className="w-full border-collapse text-left">
         <caption className="sr-only">{caption}</caption>
         <thead>
@@ -93,7 +109,21 @@ export function Table<Row>({
                           : 'descending'
                         : 'none'
                   }
-                  className="border-b border-[var(--separator)] px-3 py-2 text-footnote font-medium text-[var(--label-tertiary)]"
+                  className={cn(
+                    'px-3 py-2 text-footnote font-medium text-[var(--label-tertiary)]',
+                    // The rule under the headings. Drawn as a border normally,
+                    // but as an inset shadow once the header is sticky: a
+                    // collapsed border belongs to the table's grid rather than
+                    // to the cell, so it stays behind at the top of the table
+                    // while the heading it underlines scrolls away with the
+                    // rest of the sticky row. Opaque rather than
+                    // translucent there too: rows slide
+                    // underneath these, and a header you can read the data
+                    // through is worse than no header at all.
+                    stickyHeader
+                      ? 'sticky top-0 z-10 bg-[var(--bg-base)] shadow-[inset_0_-1px_0_var(--separator)]'
+                      : 'border-b border-[var(--separator)]',
+                  )}
                 >
                   {sortable ? (
                     <button

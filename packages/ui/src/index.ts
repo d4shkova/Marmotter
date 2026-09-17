@@ -14,6 +14,7 @@
  */
 
 export * from './themes.js';
+export * from './fonts.js';
 export * from './lib/cn.js';
 export * from './lib/focus.js';
 export * from './lib/keyboard.js';
