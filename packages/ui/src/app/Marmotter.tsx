@@ -2927,11 +2927,22 @@ export function Marmotter({
   // minute and a half comes back as "unknown command", which is what the server
   // said and not what it meant, and passing that on teaches somebody that the
   // feature is broken rather than that it is early.
-  const askForList = (networkId: string, pattern?: string): void => {
+  //
+  // The gate is a guess about somebody else's server, though, and some networks
+  // answer far sooner. So the notice offers "Try anyway", which sends the same
+  // request past the wait — only once signed in, since before that there is
+  // nobody to ask.
+  const askForList = (networkId: string, pattern?: string, force = false): void => {
     const state = registry.networks.get(networkId);
     const readiness = listReadiness(state ?? { registeredAt: undefined });
-    if (!readiness.ready) {
-      toast(describeWait(state?.name ?? 'This network', readiness.waitSeconds), 'error');
+    if (!readiness.ready && !force) {
+      toast(
+        describeWait(state?.name ?? 'This network', readiness.waitSeconds),
+        'error',
+        state?.registeredAt === undefined
+          ? undefined
+          : { label: 'Try anyway', onSelect: () => askForList(networkId, pattern, true) },
+      );
       return;
     }
     if (pattern !== undefined && pattern !== '') {
