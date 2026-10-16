@@ -88,6 +88,12 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the long-retired `tools`
+          # package, which the SDK repository no longer serves, and asking for
+          # it fails the whole step. Everything the build needs is installed
+          # by name in the next step.
+          packages: platform-tools
 
       - name: Install the NDK
         # Named explicitly rather than taken as "latest": the Rust plugin in
