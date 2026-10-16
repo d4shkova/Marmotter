@@ -69,7 +69,7 @@ import { connectionStatus, connectionStatusText } from './network-status.js';
 import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
 import { describeWait, listReadiness } from './list-guard.js';
-import { readSecret } from './secrets.js';
+import { forgetSecret, readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
 import { MemberList } from './MemberList.js';
 import { MessageList } from './MessageList.js';
@@ -116,6 +116,7 @@ import {
 } from './member-actions.js';
 import {
   type Notifier,
+  arrivedSince,
   buildNotification,
   createWebNotifier,
   shouldNotify,
@@ -908,7 +909,11 @@ export function Marmotter({
   // no reason.
   const logFormat = view.logging.format;
   const logPath = view.logging.path;
-  const profileNames = registry.profiles;
+  // A ref, not the map itself: the registry hands back a new map whenever a
+  // profile changes, and the store outlives many of them. Closing over this
+  // render's map would leave every network added afterwards unresolvable.
+  const profileNames = useRef(registry.profiles);
+  profileNames.current = registry.profiles;
 
   useEffect(() => {
     if (createLogStore === undefined) {
@@ -926,7 +931,7 @@ export function Marmotter({
       // back to the network it belongs to; a folder whose network has since
       // been removed resolves to nothing rather than to a guess.
       networkIdFor: (name) => {
-        for (const [id, profile] of profileNames) {
+        for (const [id, profile] of profileNames.current) {
           if (profile.name === name) {
             return id;
           }
@@ -949,10 +954,6 @@ export function Marmotter({
     return () => {
       live = false;
     };
-    // `profileNames` is read inside the resolver, which is called later rather
-    // than now; rebuilding the store whenever a profile changes would discard
-    // pending writes for a name lookup that is already current by then.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createLogStore, logFormat, logPath, toast]);
 
   // The policy a network follows: its own where it carries one, the global one
@@ -1091,6 +1092,10 @@ export function Marmotter({
   // Unread, highlight, and notification tracking. Watching the tail of each
   // buffer rather than every message keeps this out of the reducer, where a
   // "have I read this" question does not belong.
+  //
+  // The tail, not just the last line: lines that arrive in one read off the
+  // socket land in one render, and looking at the newest alone let a mention
+  // with anything said after it go by unhighlighted and unannounced.
   useEffect(() => {
     for (const state of networks) {
       for (const [key, channel] of [...state.channels, ...state.queries]) {
@@ -1110,27 +1115,43 @@ export function Marmotter({
         const mentions = (text: string): boolean =>
           isHighlight(text, state.nick, view.appearance.highlightWords);
 
-        if (newest.kind === 'privmsg' && !watching) {
-          view.noteActivity(ref, mentions(newest.text));
+        // First sight of a conversation is not news, whatever is in it: only its
+        // newest line counts towards unread, and nothing is announced.
+        const arrived =
+          previous === undefined ? [newest] : arrivedSince(channel.messages, previous);
+        for (const message of arrived) {
+          if (message.kind === 'privmsg' && !watching) {
+            view.noteActivity(ref, mentions(message.text));
+          }
         }
-
-        // First sight of a conversation is not news, whatever is in it.
         if (previous === undefined) {
           continue;
         }
 
-        const reason = shouldNotify({
-          message: newest,
-          network: state,
-          ref,
-          watching: watching && windowIsFocused(),
-          enabled: view.appearance.notificationsEnabled,
-          isHighlight: mentions,
-        });
-        if (reason !== undefined) {
-          const request = buildNotification(reason, newest, state, ref);
+        // One notification per conversation per batch, for the latest line that
+        // warrants one: a burst should not become a stack of them.
+        let request: ReturnType<typeof buildNotification> | undefined;
+        for (let index = arrived.length - 1; index >= 0 && request === undefined; index -= 1) {
+          const message = arrived[index];
+          if (message === undefined) {
+            continue;
+          }
+          const reason = shouldNotify({
+            message,
+            network: state,
+            ref,
+            watching: watching && windowIsFocused(),
+            enabled: view.appearance.notificationsEnabled,
+            isHighlight: mentions,
+          });
+          if (reason !== undefined) {
+            request = buildNotification(reason, message, state, ref);
+          }
+        }
+        if (request !== undefined) {
+          const pending = request;
           if (permission.current === true) {
-            platformNotifier.show(request);
+            platformNotifier.show(pending);
           } else if (permission.current === undefined && !asking.current) {
             // Asked once, lazily. A burst of messages must not turn into a
             // stack of permission prompts.
@@ -1139,7 +1160,7 @@ export function Marmotter({
               permission.current = granted;
               asking.current = false;
               if (granted) {
-                platformNotifier.show(request);
+                platformNotifier.show(pending);
               }
             });
           }
@@ -1366,10 +1387,13 @@ export function Marmotter({
     });
     // A password for a network nobody has any more is left in the keychain
     // otherwise, which is somebody's credential outliving their decision to
-    // delete it.
-    if (profile !== undefined && secrets !== undefined) {
+    // delete it. The same goes for the copy held in memory for this session.
+    if (profile !== undefined) {
       for (const ref of secretRefsOf(profile)) {
-        void secrets.forget(ref).catch(() => {});
+        forgetSecret(ref);
+        if (secrets !== undefined) {
+          void secrets.forget(ref).catch(() => {});
+        }
       }
     }
   };

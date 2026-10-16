@@ -136,3 +136,27 @@ export function windowIsFocused(): boolean {
 
 const truncate = (text: string, limit: number): string =>
   text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+
+/** How far back a single batch is looked through, so a huge burst stays cheap. */
+export const ARRIVED_LIMIT = 200;
+
+/**
+ * The messages that came in after the one last seen, oldest first.
+ *
+ * When the last-seen one is no longer in the buffer — trimmed away, or the
+ * buffer replaced — the newest few stand in for it rather than the whole
+ * buffer, since everything older was there before and is not news.
+ */
+export function arrivedSince(
+  messages: readonly Message[],
+  previousId: string,
+  limit: number = ARRIVED_LIMIT,
+): readonly Message[] {
+  const floor = Math.max(0, messages.length - limit);
+  for (let index = messages.length - 1; index >= floor; index -= 1) {
+    if (messages[index]?.id === previousId) {
+      return messages.slice(index + 1);
+    }
+  }
+  return messages.slice(-1);
+}

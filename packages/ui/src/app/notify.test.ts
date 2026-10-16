@@ -1,7 +1,7 @@
 import { type Message, type NetworkState, initialNetworkState } from '@marmotter/client';
 import { DEFAULT_ISUPPORT, applyISupport, makeSource } from '@marmotter/protocol';
 import { describe, expect, it } from 'vitest';
-import { buildNotification, shouldNotify } from './notify.js';
+import { arrivedSince, buildNotification, shouldNotify } from './notify.js';
 
 const support = applyISupport(DEFAULT_ISUPPORT, ['CHANTYPES=#', 'CASEMAPPING=rfc1459']);
 
@@ -94,5 +94,25 @@ describe('what is worth interrupting for', () => {
     expect(built.title).toBe('tamsin messaged you');
     expect(built.body).toHaveLength(160);
     expect(built.body.endsWith('…')).toBe(true);
+  });
+});
+
+describe('arrivedSince', () => {
+  const lines = ['a', 'b', 'c', 'd'].map((text) => message('tamsin', text));
+
+  it('returns everything after the one last seen, oldest first', () => {
+    expect(arrivedSince(lines, 'tamsin-b').map((entry) => entry.text)).toEqual(['c', 'd']);
+  });
+
+  it('returns nothing when the last one seen is still the newest', () => {
+    expect(arrivedSince(lines, 'tamsin-d')).toEqual([]);
+  });
+
+  it('falls back to the newest alone when the last one seen is gone', () => {
+    expect(arrivedSince(lines, 'gone').map((entry) => entry.text)).toEqual(['d']);
+  });
+
+  it('does not look further back than its limit', () => {
+    expect(arrivedSince(lines, 'tamsin-a', 2).map((entry) => entry.text)).toEqual(['d']);
   });
 });
