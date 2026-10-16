@@ -208,6 +208,8 @@ export function ToastRegion({
       )}
     >
       {toasts.map((toast) => (
+        // A toast may carry its own `key` (what folds repeats together), which
+        // must not reach JSX through the spread below as a React key.
         // Sized to its content up to a wider ceiling, so a short status is
         // compact and a message naming a file or a pack — "Requested pack #7
         // from mybot", "Saved marmot-photos.zip" — gets the room to sit on one
@@ -217,7 +219,7 @@ export function ToastRegion({
           className="pointer-events-auto w-fit max-w-[min(92vw,34rem)] min-w-[16rem]"
         >
           <Toast
-            {...toast}
+            {...withoutKey(toast)}
             onDismiss={onDismiss}
             {...(dismissMs === undefined ? {} : { dismissMs })}
           />
@@ -225,4 +227,12 @@ export function ToastRegion({
       ))}
     </div>
   );
+}
+
+function withoutKey<T extends object>(toast: T): Omit<T, 'key'> {
+  if (!('key' in toast)) {
+    return toast;
+  }
+  const { key: _key, ...rest } = toast as T & { key: unknown };
+  return rest;
 }
