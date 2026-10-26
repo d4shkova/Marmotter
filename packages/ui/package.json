@@ -1,6 +1,6 @@
 {
   "name": "@marmotter/ui",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "private": true,
   "type": "module",
   "description": "React components and the Marmotter design system.",

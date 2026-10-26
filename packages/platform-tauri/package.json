@@ -1,6 +1,6 @@
 {
   "name": "@marmotter/platform-tauri",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "private": true,
   "type": "module",
   "description": "Platform capabilities shared by the Tauri shells: desktop and Android.",
