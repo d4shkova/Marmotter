@@ -10,7 +10,7 @@
  * other, and asserts the one thing all of it exists to do.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { CloseReason, NetworkProfile, Transport } from '@marmotter/shared';
 import { useNetworks } from '@marmotter/client';
 import { act } from 'react';
@@ -1131,5 +1131,81 @@ describe('a request a bot never answers', () => {
 
     // Still downloading: the watchdog was about the request, not the transfer.
     expect(useView.getState().dccOffers[0]?.status).toBe('downloading');
+  });
+});
+
+describe('a sender whose file could not be fetched', () => {
+  const BOT = 'BadBot';
+  const OTHER = 'GoodBot';
+  const advert = (from: string, pack: number): string =>
+    `:${from}!~bot@bots.example.net PRIVMSG #packs :#${pack}  1x [31M] file-${from}-${pack}.mkv`;
+  const REFUSED = `:${BOT}!~bot@bots.example.net NOTICE marmot :** Closing Connection: You must be on a known channel to request a pack`;
+
+  async function failedOnce() {
+    const shell = fakeShell();
+    const transport = await connected(shell);
+    await act(async () => {
+      transport.deliver(advert(BOT, 1));
+      transport.deliver(advert(BOT, 2));
+      transport.deliver(advert(OTHER, 1));
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(3));
+    // The row's own button: the table sorts, so the first button on screen is
+    // not necessarily the first row in the store.
+    const row = screen.getByText(`file-${BOT}-1.mkv`).closest('tr');
+    await act(async () => {
+      if (row !== null) {
+        within(row).getByRole('button', { name: 'Download' }).click();
+      }
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('requested'));
+    await act(async () => {
+      transport.deliver(REFUSED);
+    });
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    return transport;
+  }
+
+  const senders = (): string[] => useView.getState().dccOffers.map((entry) => entry.from);
+
+  it('asks, and removes only that sender’s files when told to', async () => {
+    await failedOnce();
+
+    const remove = await screen.findByRole('button', { name: `Remove ${BOT}’s files` });
+    await act(async () => {
+      remove.click();
+    });
+
+    expect(senders()).toEqual([OTHER]);
+    expect(useView.getState().userOptions.blockedSenders).toEqual([]);
+  });
+
+  it('keeps everything when told to', async () => {
+    await failedOnce();
+
+    const keep = await screen.findByRole('button', { name: 'Keep them' });
+    await act(async () => {
+      keep.click();
+    });
+
+    expect(senders()).toEqual([BOT, BOT, OTHER]);
+  });
+
+  it('blocks the sender, so what it offers next is not listed', async () => {
+    const transport = await failedOnce();
+
+    const block = await screen.findByRole('button', { name: 'Remove and block' });
+    await act(async () => {
+      block.click();
+    });
+
+    expect(senders()).toEqual([OTHER]);
+    expect(useView.getState().userOptions.blockedSenders.map((entry) => entry.nick)).toEqual([BOT]);
+
+    await act(async () => {
+      transport.deliver(advert(BOT, 3));
+      transport.deliver(advert(OTHER, 2));
+    });
+    await waitFor(() => expect(senders()).toEqual([OTHER, OTHER]));
   });
 });

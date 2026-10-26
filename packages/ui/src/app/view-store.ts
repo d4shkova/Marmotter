@@ -121,6 +121,63 @@ export function senderKey(offer: Pick<DccOfferRecord, 'networkId' | 'from'>): st
 }
 
 /**
+ * Rows that have just failed, comparing one version of the list with the next.
+ *
+ * Only a change of state counts: a row that arrives already failed — an offer
+ * that could not be read — was never a download that went wrong. Nor does a
+ * failure that was this device's doing, which says nothing about the sender.
+ */
+export function newlyFailedOffers(
+  previous: readonly DccOfferRecord[],
+  next: readonly DccOfferRecord[],
+): readonly DccOfferRecord[] {
+  if (previous === next) {
+    return [];
+  }
+  const before = new Map(previous.map((entry) => [entry.id, entry.status]));
+  return next.filter((entry) => {
+    const was = before.get(entry.id);
+    return (
+      entry.status === 'failed' &&
+      entry.localFault !== true &&
+      was !== undefined &&
+      was !== 'failed'
+    );
+  });
+}
+
+/**
+ * A sender whose offers the file monitor no longer lists.
+ *
+ * Kept by network and nick, the same pair a row is grouped by, with the
+ * network's name alongside so Settings can say which network it was without
+ * the network having to still exist.
+ */
+export interface BlockedSender {
+  readonly networkId: string;
+  readonly networkName: string;
+  readonly nick: string;
+}
+
+/**
+ * Whether a sender is on the blocked list.
+ *
+ * Case-insensitive, unlike {@link senderKey}: the list outlives the session, and
+ * a bot that comes back spelled `XDCC-Bot` rather than `xdcc-bot` is the same
+ * bot somebody asked never to hear from again.
+ */
+export function isBlockedSender(
+  blocked: readonly BlockedSender[],
+  networkId: string,
+  nick: string,
+): boolean {
+  const folded = nick.toLowerCase();
+  return blocked.some(
+    (entry) => entry.networkId === networkId && entry.nick.toLowerCase() === folded,
+  );
+}
+
+/**
  * The senders already known to advertise an address nothing outside their own
  * network can reach.
  *
@@ -486,6 +543,14 @@ export interface DccOfferRecord {
    * kept swapping addresses would spend a bot's connection limit finding it out.
    */
   readonly triedSenderHost?: boolean;
+  /**
+   * Whether a failure was this device's doing rather than the sender's — no
+   * download folder, no way to accept a reverse transfer, no connection.
+   *
+   * Such a failure says nothing about the sender, so it is not a reason to
+   * offer to clear or block them.
+   */
+  readonly localFault?: boolean;
   /** The port to connect to, for a direct DCC offer. */
   readonly port?: number;
   /** The pack number, for an XDCC offer. */
@@ -527,6 +592,15 @@ export interface UserOptions {
    * from storage.
    */
   readonly toastSeconds: number;
+  /**
+   * Senders whose offers the file monitor ignores.
+   *
+   * An announcement from one of these never becomes a row. A pack somebody
+   * asks one of them for by hand is still fetched — typing the request is a
+   * more specific instruction than the block, and refusing it would look like
+   * the request was lost.
+   */
+  readonly blockedSenders: readonly BlockedSender[];
 }
 
 /** The bounds on the notice timeout: long enough to read, short enough to end. */
@@ -545,6 +619,7 @@ export const DEFAULT_USER_OPTIONS: UserOptions = {
   downloadFolder: undefined,
   dccAddress: undefined,
   toastSeconds: TOAST_SECONDS_RANGE.default,
+  blockedSenders: [],
 };
 
 /**
@@ -802,6 +877,8 @@ export interface ViewState {
       error?: string;
       savedPath?: string;
       note?: string;
+      /** The failure is this device's, not the sender's. Cleared by the next status. */
+      localFault?: boolean;
       filename?: string;
       awaitingTransfer?: boolean;
       /** The address the transfer is being made to, once one is known. */
@@ -844,6 +921,18 @@ export interface ViewState {
    * only knows about the row.
    */
   removeDccOffer(id: string): void;
+  /**
+   * Removes every row from one sender, leaving transfers still running.
+   *
+   * The same exception `clearDccOffers` makes, for the same reason: a file
+   * still arriving would otherwise keep downloading with nothing to show it.
+   * Every other sender's rows are left exactly as they were.
+   */
+  removeDccOffersFrom(networkId: string, from: string): void;
+  /** Blocks a sender and removes its rows, as {@link removeDccOffersFrom} does. */
+  blockDccSender(sender: BlockedSender): void;
+  /** Takes a sender off the blocked list. Its old rows do not come back. */
+  unblockDccSender(networkId: string, nick: string): void;
   /** Drops everything for a network that has been removed. */
   forgetNetwork(networkId: string): void;
 }
@@ -987,7 +1076,11 @@ export const useView = create<ViewState>((set, get) => ({
 
   recordDccOffer(offer) {
     const { userOptions, dccActive } = get();
-    if (!userOptions.dccMonitorEnabled || !dccActive) {
+    if (
+      !userOptions.dccMonitorEnabled ||
+      !dccActive ||
+      isBlockedSender(userOptions.blockedSenders, offer.networkId, offer.from)
+    ) {
       return;
     }
     const id = dccOfferId(offer);
@@ -1022,7 +1115,11 @@ export const useView = create<ViewState>((set, get) => ({
 
   recordXdccOffer(offer) {
     const { userOptions, dccActive } = get();
-    if (!userOptions.dccMonitorEnabled || !dccActive) {
+    if (
+      !userOptions.dccMonitorEnabled ||
+      !dccActive ||
+      isBlockedSender(userOptions.blockedSenders, offer.networkId, offer.from)
+    ) {
       return;
     }
     const id = xdccOfferId({ networkId: offer.networkId, from: offer.from, pack: offer.pack.pack });
@@ -1094,7 +1191,11 @@ export const useView = create<ViewState>((set, get) => ({
 
   recordUnreadableOffer(offer) {
     const { userOptions, dccActive } = get();
-    if (!userOptions.dccMonitorEnabled || !dccActive) {
+    if (
+      !userOptions.dccMonitorEnabled ||
+      !dccActive ||
+      isBlockedSender(userOptions.blockedSenders, offer.networkId, offer.from)
+    ) {
       return;
     }
     const id = `${offer.networkId} unreadable ${offer.from} ${offer.params}`;
@@ -1131,13 +1232,14 @@ export const useView = create<ViewState>((set, get) => ({
         // The old note is dropped rather than merged: it described the state
         // this call is replacing, and a stale "position 4" under a failed row
         // would contradict the reason beside it.
-        const { note: _previous, awaitingTransfer: _held, ...rest } = entry;
+        const { note: _previous, awaitingTransfer: _held, localFault: _local, ...rest } = entry;
         return {
           ...rest,
           status: patch.status,
           ...(patch.error === undefined ? {} : { error: patch.error }),
           ...(patch.savedPath === undefined ? {} : { savedPath: patch.savedPath }),
           ...(patch.note === undefined ? {} : { note: patch.note }),
+          ...(patch.localFault === true ? { localFault: true } : {}),
           // A bot does not always send back the name it advertised, and a row
           // asked for by pack number has no name at all until it does.
           ...(patch.filename === undefined ? {} : { filename: patch.filename }),
@@ -1183,6 +1285,37 @@ export const useView = create<ViewState>((set, get) => ({
 
   removeDccOffer: (id) =>
     set((current) => ({ dccOffers: current.dccOffers.filter((entry) => entry.id !== id) })),
+
+  removeDccOffersFrom: (networkId, from) =>
+    set((current) => ({
+      dccOffers: current.dccOffers.filter(
+        (entry) =>
+          entry.networkId !== networkId || entry.from !== from || isTransferInFlight(entry.status),
+      ),
+    })),
+
+  blockDccSender(sender) {
+    const { userOptions } = get();
+    if (!isBlockedSender(userOptions.blockedSenders, sender.networkId, sender.nick)) {
+      set({
+        userOptions: { ...userOptions, blockedSenders: [...userOptions.blockedSenders, sender] },
+      });
+    }
+    get().removeDccOffersFrom(sender.networkId, sender.nick);
+  },
+
+  unblockDccSender(networkId, nick) {
+    const { userOptions } = get();
+    const folded = nick.toLowerCase();
+    set({
+      userOptions: {
+        ...userOptions,
+        blockedSenders: userOptions.blockedSenders.filter(
+          (entry) => entry.networkId !== networkId || entry.nick.toLowerCase() !== folded,
+        ),
+      },
+    });
+  },
 
   forgetNetwork(networkId) {
     set((current) => {

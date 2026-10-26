@@ -5,8 +5,10 @@ import {
   DEFAULT_USER_OPTIONS,
   applyXdccResponse,
   classifyDccReoffer,
+  isBlockedSender,
   matchPendingRequest,
   networkForHost,
+  newlyFailedOffers,
   sameFilename,
   selectViewWithoutOffers,
   useView,
@@ -582,5 +584,146 @@ describe('what a bot is holding for a row', () => {
     expect(applyXdccResponse({ kind: 'queued', position: 2, text: '' }).awaitingTransfer).toBe(
       undefined,
     );
+  });
+});
+
+describe('clearing and blocking one sender', () => {
+  const pack = (number: number): XdccPack => ({
+    pack: number,
+    gets: 1,
+    sizeText: '1M',
+    sizeBytes: 1_048_576,
+    filename: `file-${number}.mkv`,
+  });
+
+  beforeEach(() => {
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: true,
+      dccOffers: [],
+    });
+    const record = useView.getState().recordXdccOffer;
+    for (const [from, number] of [
+      ['BadBot', 1],
+      ['BadBot', 2],
+      ['BadBot', 3],
+      ['GoodBot', 1],
+    ] as const) {
+      record({
+        networkId: 'libera',
+        networkName: 'Libera.Chat',
+        from,
+        target: '#packs',
+        pack: pack(number),
+        at: 1_000,
+      });
+    }
+    // The same nick on another network is somebody else.
+    record({
+      networkId: 'oftc',
+      networkName: 'OFTC',
+      from: 'BadBot',
+      target: '#packs',
+      pack: pack(9),
+      at: 1_000,
+    });
+  });
+
+  const senders = (): string[] =>
+    useView.getState().dccOffers.map((entry) => `${entry.networkId} ${entry.from}`);
+
+  it('removes only that sender on that network', () => {
+    useView.getState().removeDccOffersFrom('libera', 'BadBot');
+    expect(senders()).toEqual(['libera GoodBot', 'oftc BadBot']);
+  });
+
+  it('keeps a download from that sender that is still running', () => {
+    const running = useView.getState().dccOffers.find((entry) => entry.from === 'BadBot');
+    useView.getState().setDccOfferStatus(running?.id ?? '', { status: 'downloading' });
+    useView.getState().removeDccOffersFrom('libera', 'BadBot');
+    expect(senders()).toEqual(['libera BadBot', 'libera GoodBot', 'oftc BadBot']);
+  });
+
+  it('blocks a sender, clears its rows and ignores what it offers next', () => {
+    useView
+      .getState()
+      .blockDccSender({ networkId: 'libera', networkName: 'Libera.Chat', nick: 'BadBot' });
+    expect(senders()).toEqual(['libera GoodBot', 'oftc BadBot']);
+
+    useView.getState().recordXdccOffer({
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'badbot',
+      target: '#packs',
+      pack: pack(4),
+      at: 2_000,
+    });
+    useView.getState().recordDccOffer(offer({ from: 'BADBOT' }));
+    expect(senders()).toEqual(['libera GoodBot', 'oftc BadBot']);
+  });
+
+  it('lists a sender again once it is unblocked, and blocks it only once', () => {
+    const sender = { networkId: 'libera', networkName: 'Libera.Chat', nick: 'BadBot' };
+    useView.getState().blockDccSender(sender);
+    useView.getState().blockDccSender(sender);
+    expect(useView.getState().userOptions.blockedSenders).toHaveLength(1);
+
+    useView.getState().unblockDccSender('libera', 'badbot');
+    expect(useView.getState().userOptions.blockedSenders).toEqual([]);
+    useView.getState().recordDccOffer(offer({ from: 'BadBot' }));
+    expect(senders()).toContain('libera BadBot');
+  });
+
+  it('matches a blocked sender without regard to case', () => {
+    const blocked = [{ networkId: 'libera', networkName: 'Libera.Chat', nick: 'BadBot' }];
+    expect(isBlockedSender(blocked, 'libera', 'badbot')).toBe(true);
+    expect(isBlockedSender(blocked, 'oftc', 'BadBot')).toBe(false);
+  });
+});
+
+describe('newlyFailedOffers', () => {
+  beforeEach(() => {
+    useView.setState({
+      userOptions: { ...DEFAULT_USER_OPTIONS, dccMonitorEnabled: true, downloadFolder: '/tmp/dl' },
+      dccActive: true,
+      dccOffers: [],
+    });
+    useView.getState().recordDccOffer(offer());
+  });
+
+  it('finds a row that has just failed', () => {
+    const before = useView.getState().dccOffers;
+    const id = before[0]?.id ?? '';
+    useView.getState().setDccOfferStatus(id, { status: 'downloading' });
+    const during = useView.getState().dccOffers;
+    useView.getState().setDccOfferStatus(id, { status: 'failed', error: 'refused' });
+    expect(newlyFailedOffers(during, useView.getState().dccOffers).map((e) => e.id)).toEqual([id]);
+    // And only once: failed to failed is not news.
+    const after = useView.getState().dccOffers;
+    useView.getState().setDccOfferStatus(id, { status: 'failed', error: 'again' });
+    expect(newlyFailedOffers(after, useView.getState().dccOffers)).toEqual([]);
+  });
+
+  it("ignores a failure that was this device's doing", () => {
+    const before = useView.getState().dccOffers;
+    useView.getState().setDccOfferStatus(before[0]?.id ?? '', {
+      status: 'failed',
+      error: 'No download folder is set.',
+      localFault: true,
+    });
+    expect(newlyFailedOffers(before, useView.getState().dccOffers)).toEqual([]);
+  });
+
+  it('ignores a row that arrived already failed', () => {
+    const before = useView.getState().dccOffers;
+    useView.getState().recordUnreadableOffer({
+      networkId: 'libera',
+      networkName: 'Libera.Chat',
+      from: 'tamsin',
+      target: '#marmotter',
+      params: 'SEND ???',
+      at: 2_000,
+    });
+    expect(newlyFailedOffers(before, useView.getState().dccOffers)).toEqual([]);
   });
 });

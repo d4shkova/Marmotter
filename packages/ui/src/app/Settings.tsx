@@ -54,6 +54,8 @@ export interface SettingsProps {
   readonly onCtcpChange: (changes: Partial<CtcpPolicy>) => void;
   readonly userOptions: UserOptions;
   readonly onUserOptionsChange: (changes: Partial<UserOptions>) => void;
+  /** Takes a sender off the file monitor's blocked list. */
+  readonly onUnblockSender?: (networkId: string, nick: string) => void;
   /**
    * The logging controls, or absent where the platform keeps nothing.
    *
@@ -138,6 +140,7 @@ export function Settings({
   onCtcpChange,
   userOptions,
   onUserOptionsChange,
+  onUnblockSender,
   logging,
   identity,
   dccAvailable,
@@ -597,6 +600,38 @@ export function Settings({
                         />
                       </div>
                     )}
+                    {userOptions.blockedSenders.length === 0 ? null : (
+                      <div className="px-4 pt-3 pb-1">
+                        <h3 className="text-footnote font-semibold text-[var(--label-secondary)]">
+                          Blocked senders
+                        </h3>
+                        <p className="text-footnote text-[var(--label-tertiary)]">
+                          Files these senders offer are not listed in the file monitor.
+                        </p>
+                      </div>
+                    )}
+                    {userOptions.blockedSenders.map((sender) => (
+                      <ListRow
+                        key={`${sender.networkId} ${sender.nick}`}
+                        title={sender.nick}
+                        subtitle={
+                          sender.networkName === '' ? 'Unknown network' : sender.networkName
+                        }
+                        {...(onUnblockSender === undefined
+                          ? {}
+                          : {
+                              trailing: (
+                                <Button
+                                  size="small"
+                                  aria-label={`Unblock ${sender.nick}`}
+                                  onClick={() => onUnblockSender(sender.networkId, sender.nick)}
+                                >
+                                  Remove
+                                </Button>
+                              ),
+                            })}
+                      />
+                    ))}
                   </>
                 )}
               </ListGroup>

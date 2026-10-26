@@ -32,10 +32,11 @@ import { ChannelPanel } from './ChannelPanel.js';
 import { Composer } from './Composer.js';
 import { DccBrowser } from './DccBrowser.js';
 import { DccMonitorPanel } from './DccMonitorPanel.js';
-import type { DccOfferRecord } from './view-store.js';
+import type { DccOfferRecord, UserOptions } from './view-store.js';
 import { InviteBanner } from './Invites.js';
 import { CreateChannel } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
+import { SenderFailedPrompt } from './SenderFailedPrompt.js';
 import { ExportConfig, ImportConfig } from './ConfigTransfer.js';
 import { buildConfig, serializeConfig } from './config-transfer.js';
 import { DEFAULT_APPEARANCE, DEFAULT_USER_OPTIONS } from './view-store.js';
@@ -931,11 +932,12 @@ export const SettingsScreen: StoryObj = {
       sidePanelsAtEdges: false,
     });
     const [ctcp, setCtcp] = useState(DEFAULT_CTCP_POLICY);
-    const [userOptions, setUserOptions] = useState({
+    const [userOptions, setUserOptions] = useState<UserOptions>({
       dccMonitorEnabled: false,
-      downloadFolder: undefined as string | undefined,
-      dccAddress: undefined as string | undefined,
+      downloadFolder: undefined,
+      dccAddress: undefined,
       toastSeconds: 10,
+      blockedSenders: [],
     });
 
     return (
@@ -1071,6 +1073,24 @@ export const LoggingScreen: StoryObj = {
       </div>
     );
   },
+};
+
+/** The question after a file could not be fetched from a sender. */
+export const SenderFailed: StoryObj = {
+  render: () => (
+    <SenderFailedPrompt
+      sender={{
+        networkId: 'n1',
+        networkName: 'Rizon',
+        nick: '[EWG]-B-XTREM',
+        filename: 'Cake.2014.BDRip.x264.tar',
+        error: '[EWG]-B-XTREM gave 192.168.1.20, an address that only works on its own network.',
+      }}
+      onKeep={() => {}}
+      onRemove={() => {}}
+      onBlock={() => {}}
+    />
+  ),
 };
 
 /** Searching what has been written to disk, across every network. */

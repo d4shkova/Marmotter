@@ -28,6 +28,7 @@ import {
   DEFAULT_USER_OPTIONS,
   clampToastSeconds,
   type Appearance,
+  type BlockedSender,
   type UserOptions,
 } from './view-store.js';
 
@@ -135,7 +136,25 @@ function readUserOptions(value: unknown): UserOptions {
         ? fields['toastSeconds']
         : DEFAULT_USER_OPTIONS.toastSeconds,
     ),
+    blockedSenders: readBlockedSenders(fields['blockedSenders']),
   };
+}
+
+/** The blocked list, keeping each entry that has what it needs and no more. */
+function readBlockedSenders(value: unknown): readonly BlockedSender[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item: unknown): BlockedSender[] => {
+    const entry = record(item);
+    const networkId = entry['networkId'];
+    const nick = entry['nick'];
+    if (typeof networkId !== 'string' || typeof nick !== 'string' || nick === '') {
+      return [];
+    }
+    const networkName = entry['networkName'];
+    return [{ networkId, nick, networkName: typeof networkName === 'string' ? networkName : '' }];
+  });
 }
 
 function readLogging(value: unknown): LoggingPolicy {
@@ -215,6 +234,11 @@ export function writeStoredSettings(settings: StoredSettings): Record<string, un
         ? {}
         : { dccAddress: settings.userOptions.dccAddress }),
       toastSeconds: settings.userOptions.toastSeconds,
+      blockedSenders: settings.userOptions.blockedSenders.map((entry) => ({
+        networkId: entry.networkId,
+        networkName: entry.networkName,
+        nick: entry.nick,
+      })),
     },
     logging: {
       enabled: settings.logging.enabled,

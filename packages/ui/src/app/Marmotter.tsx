@@ -68,6 +68,7 @@ import { Launch } from './Launch.js';
 import { connectionStatus, connectionStatusText } from './network-status.js';
 import { CreateChannel, createChannelLines } from './CreateChannel.js';
 import { ListPrompt } from './ListPrompt.js';
+import { type FailedSender, SenderFailedPrompt } from './SenderFailedPrompt.js';
 import { describeWait, listReadiness } from './list-guard.js';
 import { forgetSecret, readSecret } from './secrets.js';
 import { BanDialog, KickDialog } from './MemberDialogs.js';
@@ -131,6 +132,9 @@ import {
   classifyDccReoffer,
   matchPendingRequest,
   networkForHost,
+  isBlockedSender,
+  newlyFailedOffers,
+  senderKey,
   sameFilename,
   draftFor,
   isTransferInFlight,
@@ -1565,6 +1569,80 @@ export function Marmotter({
   }, [dcc, defaultFolder, picker]);
 
   /**
+   * The question after a download fails: clear that sender's files, block it,
+   * or leave the list alone.
+   *
+   * Watched from the list rather than raised at each place a transfer can fail,
+   * because there are a dozen of those and the rule is the same for all of
+   * them: a row that was on its way and is now failed, through no fault of this
+   * device. One sender is asked about at a time, each at most once a session —
+   * a bot that fails ten packs is one question, and "keep them" is an answer
+   * that should stick rather than come back with the next failure.
+   */
+  const [failedSender, setFailedSender] = useState<FailedSender | undefined>(undefined);
+  const failedQueue = useRef<FailedSender[]>([]);
+  const askedSenders = useRef(new Set<string>());
+  // Mirrors the state, so the store listener can tell whether a question is
+  // already up without a state updater that has side effects.
+  const showingFailed = useRef(false);
+  const showNextFailed = useCallback((): void => {
+    const next = failedQueue.current.shift();
+    showingFailed.current = next !== undefined;
+    setFailedSender(next);
+  }, []);
+
+  useEffect(
+    () =>
+      useView.subscribe((state, previous) => {
+        const failed = newlyFailedOffers(previous.dccOffers, state.dccOffers);
+        if (failed.length === 0) {
+          return;
+        }
+        for (const row of failed) {
+          const key = senderKey(row);
+          if (askedSenders.current.has(key)) {
+            continue;
+          }
+          askedSenders.current.add(key);
+          failedQueue.current.push({
+            networkId: row.networkId,
+            networkName: row.networkName,
+            nick: row.from,
+            filename: row.filename,
+            error: row.error,
+          });
+        }
+        if (!showingFailed.current) {
+          showNextFailed();
+        }
+      }),
+    [showNextFailed],
+  );
+
+  const answerFailedSender = (answer: 'keep' | 'remove' | 'block'): void => {
+    const sender = failedSender;
+    if (sender !== undefined && answer === 'remove') {
+      useView.getState().removeDccOffersFrom(sender.networkId, sender.nick);
+    } else if (sender !== undefined && answer === 'block') {
+      useView.getState().blockDccSender({
+        networkId: sender.networkId,
+        networkName: sender.networkName,
+        nick: sender.nick,
+      });
+      toast(
+        `Blocked ${sender.nick}. Its offers won't be listed. Unblock it in Settings, under Advanced.`,
+      );
+    }
+    // Whatever was waiting behind this one, less any sender now blocked: its
+    // rows are gone, so there is nothing left to ask about.
+    const { blockedSenders } = useView.getState().userOptions;
+    failedQueue.current = failedQueue.current.filter(
+      (entry) => !isBlockedSender(blockedSenders, entry.networkId, entry.nick),
+    );
+    showNextFailed();
+  };
+
+  /**
    * Says how a download got on, unless the file list is already saying it.
    *
    * Requesting a pack, a file arriving, a transfer stopped: the row in the file
@@ -1773,9 +1851,11 @@ export function Marmotter({
     ): void => {
       const folder = useView.getState().userOptions.downloadFolder;
       if (dcc === undefined || folder === undefined) {
-        useView
-          .getState()
-          .setDccOfferStatus(offerId, { status: 'failed', error: 'No download folder is set.' });
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'failed',
+          error: 'No download folder is set.',
+          localFault: true,
+        });
         toast('Choose a download folder first.', 'error');
         return;
       }
@@ -1884,6 +1964,7 @@ export function Marmotter({
             folder === undefined
               ? 'No download folder is set.'
               : "Marmotter can't accept a reverse transfer on this device.",
+          localFault: true,
         });
         return;
       }
@@ -1892,6 +1973,7 @@ export function Marmotter({
         useView.getState().setDccOfferStatus(offerId, {
           status: 'failed',
           error: `Marmotter is no longer connected to ${source.from}'s network.`,
+          localFault: true,
         });
         return;
       }
@@ -1922,6 +2004,7 @@ export function Marmotter({
               status: 'failed',
               error:
                 "Marmotter couldn't work out an address to give the sender. Set one under Settings.",
+              localFault: true,
             });
             return;
           }
@@ -2616,6 +2699,9 @@ export function Marmotter({
           send.token === undefined
             ? 'The bot sent a reverse transfer with nothing to identify it by.'
             : "The bot sent a reverse transfer, which Marmotter can't accept on this device.",
+        // Only the second is this device's doing; an offer with no token is the
+        // bot's.
+        ...(send.token === undefined ? {} : { localFault: true }),
       });
     };
     const fetchInto = (offerId: string): void => {
@@ -3515,6 +3601,7 @@ export function Marmotter({
           onCtcpChange={view.updateCtcp}
           userOptions={view.userOptions}
           onUserOptionsChange={view.updateUserOptions}
+          onUnblockSender={view.unblockDccSender}
           {...(identity === undefined
             ? {}
             : { identity: { nick: identity.nick, onEdit: () => setSettingUp(true) } })}
@@ -3897,6 +3984,13 @@ export function Marmotter({
           }}
         />
       )}
+
+      <SenderFailedPrompt
+        sender={failedSender}
+        onKeep={() => answerFailedSender('keep')}
+        onRemove={() => answerFailedSender('remove')}
+        onBlock={() => answerFailedSender('block')}
+      />
 
       {creatingNetwork === undefined ? null : (
         <CreateChannel

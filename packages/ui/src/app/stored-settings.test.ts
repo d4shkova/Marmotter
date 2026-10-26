@@ -45,6 +45,7 @@ describe('settings through the file and back', () => {
         downloadFolder: '/home/tamsin/Downloads',
         dccAddress: undefined,
         toastSeconds: 25,
+        blockedSenders: [{ networkId: 'libera', networkName: 'Libera.Chat', nick: 'BadBot' }],
       },
       logging: {
         enabled: true,
@@ -222,6 +223,7 @@ describe('resetting to the defaults', () => {
         downloadFolder: '/downloads',
         dccAddress: undefined,
         toastSeconds: 45,
+        blockedSenders: [],
       },
       logging: { ...defaultLoggingPolicy, enabled: true, retentionDays: 7 },
       ctcp: { ...DEFAULT_CTCP_POLICY, version: false },
