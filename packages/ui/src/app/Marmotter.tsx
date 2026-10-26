@@ -20,6 +20,8 @@ import {
   type XdccResponse,
   type DccAccept,
   isPrivateAddress,
+  isDialableHost,
+  chooseAdvertisedAddress,
   publicAddressFor,
   parsePackRequest,
   buildDccResume,
@@ -1978,53 +1980,86 @@ export function Marmotter({
         return;
       }
 
-      cancelledOffers.current.delete(offerId);
-      useView.getState().setDccOfferStatus(offerId, {
-        status: 'downloading',
-        filename: source.filename,
-        host: source.host,
-      });
-
-      const transfer: DccTransfer = receive.call(
-        dcc,
-        {
-          host: source.host,
+      const start = (serverSeen: string | undefined): void => {
+        cancelledOffers.current.delete(offerId);
+        useView.getState().setDccOfferStatus(offerId, {
+          status: 'downloading',
           filename: source.filename,
-          folder,
-          ...(source.size === undefined ? {} : { size: source.size }),
-          ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
-          ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
-        },
-        (address, port) => {
-          const advertised = useView.getState().userOptions.dccAddress ?? address;
-          if (advertised === undefined || advertised === '') {
-            cancelledOffers.current.add(offerId);
-            transfer.cancel();
-            useView.getState().setDccOfferStatus(offerId, {
-              status: 'failed',
-              error:
-                "Marmotter couldn't work out an address to give the sender. Set one under Settings.",
-              localFault: true,
-            });
-            return;
-          }
-          session.send(
-            `PRIVMSG ${source.from} :${encodeCtcp(
-              'DCC',
-              buildPassiveAccept({
-                filename: source.filename,
-                host: advertised,
-                port,
-                token: source.token,
-                ...(source.size === undefined ? {} : { size: source.size }),
-              }),
-            )}`,
-          );
-        },
-        (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
-      );
+          host: source.host,
+        });
 
-      trackTransfer(offerId, source.filename, transfer);
+        const transfer: DccTransfer = receive.call(
+          dcc,
+          {
+            host: source.host,
+            filename: source.filename,
+            folder,
+            ...(source.size === undefined ? {} : { size: source.size }),
+            ...(source.turbo === undefined ? {} : { turbo: source.turbo }),
+            ...(source.resumeFrom === undefined ? {} : { resumeFrom: source.resumeFrom }),
+          },
+          (address, port) => {
+            const choice = chooseAdvertisedAddress({
+              configured: useView.getState().userOptions.dccAddress,
+              serverSeen,
+              local: address,
+              peer: source.host,
+            });
+            if ('refused' in choice) {
+              // Never a private address to a sender outside our network: that is
+              // the misreport that has a bot dial 192.168.x.x and time out.
+              cancelledOffers.current.add(offerId);
+              transfer.cancel();
+              useView.getState().setDccOfferStatus(offerId, {
+                status: 'failed',
+                error:
+                  choice.local === undefined
+                    ? "Marmotter couldn't work out an address to give the sender. Put your public address in Settings, under Advanced."
+                    : `This device's address is ${choice.local}, which only works on your own network, and the server didn't say your public one. Put your public address in Settings, under Advanced, and forward the port on your router.`,
+                localFault: true,
+              });
+              return;
+            }
+            const advertised = choice.address;
+            session.send(
+              `PRIVMSG ${source.from} :${encodeCtcp(
+                'DCC',
+                buildPassiveAccept({
+                  filename: source.filename,
+                  host: advertised,
+                  port,
+                  token: source.token,
+                  ...(source.size === undefined ? {} : { size: source.size }),
+                }),
+              )}`,
+            );
+          },
+          (received, total) => useView.getState().setDccOfferProgress(offerId, received, total),
+        );
+
+        trackTransfer(offerId, source.filename, transfer);
+      };
+
+      // Where the server sees us, which behind a router is the public address
+      // the sender needs. Usually a hostname rather than an address, so it is
+      // looked up first; a cloak cannot be, and is left for
+      // `chooseAdvertisedAddress` to pass over.
+      const ownHost = registry.networks.get(source.networkId)?.ownHost;
+      const needsLookup =
+        useView.getState().userOptions.dccAddress === undefined &&
+        ownHost !== undefined &&
+        isDialableHost(ownHost) &&
+        !/^[\d.]+$/.test(ownHost) &&
+        !ownHost.includes(':') &&
+        dcc.resolveAddress !== undefined;
+      if (needsLookup) {
+        void dcc
+          .resolveAddress?.(ownHost)
+          .catch(() => undefined)
+          .then((resolved) => start(resolved));
+      } else {
+        start(ownHost);
+      }
     },
     [dcc, registry, trackTransfer],
   );

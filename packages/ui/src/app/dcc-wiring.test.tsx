@@ -16,7 +16,7 @@ import { useNetworks } from '@marmotter/client';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Marmotter } from './Marmotter.js';
-import type { DccDownloadRequest, DccPassiveRequest, DccTransfer } from './dcc.js';
+import type { DccCapability, DccDownloadRequest, DccPassiveRequest, DccTransfer } from './dcc.js';
 import { DEFAULT_USER_OPTIONS, useView } from './view-store.js';
 
 const DELIM = '\x01';
@@ -94,19 +94,20 @@ function fakeShell() {
     done: new Promise<string>(() => {}),
     cancel: () => {},
   }));
+  const capability: DccCapability = {
+    download: (request: DccDownloadRequest) => download(request),
+    receivePassive: (request: DccPassiveRequest) => receivePassive(request),
+    async resumableBytes(): Promise<number> {
+      return resumable.bytes;
+    },
+    defaultDownloadFolder: async (): Promise<string> => '/tmp/dl',
+  };
   return {
     download,
     receivePassive,
     /** How much an earlier attempt left behind; set per test. */
     resumable,
-    capability: {
-      download: (request: DccDownloadRequest) => download(request),
-      receivePassive: (request: DccPassiveRequest) => receivePassive(request),
-      async resumableBytes(): Promise<number> {
-        return resumable.bytes;
-      },
-      defaultDownloadFolder: async (): Promise<string> => '/tmp/dl',
-    },
+    capability,
   };
 }
 
@@ -1207,5 +1208,91 @@ describe('a sender whose file could not be fetched', () => {
       transport.deliver(advert(OTHER, 2));
     });
     await waitFor(() => expect(senders()).toEqual([OTHER, OTHER]));
+  });
+});
+
+describe('the address given out for a reverse transfer', () => {
+  // 203.0.113.7, a public address: the bot is not on our network.
+  const PUBLIC_BOT = 3405803783;
+  const OFFER = `:Bot!bot@bots.example.net PRIVMSG marmot :${DELIM}DCC SEND test.tar ${PUBLIC_BOT} 0 1932735283 998877${DELIM}`;
+
+  /** A shell that binds on a private address, as any machine behind a router does. */
+  function routedShell(resolve?: (host: string) => string | undefined) {
+    const shell = fakeShell();
+    const resolveAddress = vi.fn(async (host: string) => resolve?.(host));
+    shell.capability = {
+      ...shell.capability,
+      receivePassive: (request, onListening) => {
+        // Later, as the real shell's event is: the socket is bound after the
+        // command starts, never before it returns.
+        queueMicrotask(() => onListening('192.168.1.5', 40123));
+        return shell.receivePassive(request);
+      },
+      ...(resolve === undefined ? {} : { resolveAddress }),
+    };
+    return { shell, resolveAddress };
+  }
+
+  async function offered(shell: ReturnType<typeof fakeShell>, before: string[] = []) {
+    const transport = await connected(shell);
+    await act(async () => {
+      for (const line of before) {
+        transport.deliver(line);
+      }
+      transport.deliver(':Bot!bot@bots.example.net PRIVMSG #packs :#26 0x [1.8G] test.tar');
+    });
+    await waitFor(() => expect(useView.getState().dccOffers).toHaveLength(1));
+    await act(async () => {
+      screen.getAllByRole('button', { name: 'Download' })[0]?.click();
+    });
+    await act(async () => {
+      transport.deliver(OFFER);
+    });
+    return transport;
+  }
+
+  const accepts = (transport: FakeTransport): string[] =>
+    transport.sent.filter((line) => line.includes('DCC SEND test.tar') && line.includes('998877'));
+
+  it('asks the server where it sees us, once signed in', async () => {
+    const transport = await connected(fakeShell());
+    // Sign-in is complete at the end of the welcome, not at its first line.
+    await act(async () => {
+      transport.deliver(':irc.example.net 376 marmot :End of /MOTD command.');
+    });
+    await waitFor(() => expect(transport.sent).toContain('USERHOST marmot'));
+  });
+
+  it('never gives a private address to a sender outside our network', async () => {
+    const { shell } = routedShell();
+    const transport = await offered(shell);
+
+    await waitFor(() => expect(useView.getState().dccOffers[0]?.status).toBe('failed'));
+    expect(useView.getState().dccOffers[0]?.error).toContain('192.168.1.5');
+    expect(accepts(transport)).toEqual([]);
+  });
+
+  it('gives the address the server sees instead', async () => {
+    const { shell } = routedShell();
+    const transport = await offered(shell, [
+      ':irc.example.net 302 marmot :marmot=+marmot@198.51.100.20',
+    ]);
+
+    // 198.51.100.20 as DCC writes it.
+    await waitFor(() => expect(accepts(transport)).toHaveLength(1));
+    expect(accepts(transport)[0]).toContain(' 3325256724 40123 ');
+  });
+
+  it('looks up a hostname the server reports before giving it out', async () => {
+    const { shell, resolveAddress } = routedShell((host) =>
+      host === 'cpc1-home.isp.example.net' ? '198.51.100.20' : undefined,
+    );
+    const transport = await offered(shell, [
+      ':irc.example.net 302 marmot :marmot=+marmot@cpc1-home.isp.example.net',
+    ]);
+
+    await waitFor(() => expect(accepts(transport)).toHaveLength(1));
+    expect(resolveAddress).toHaveBeenCalledWith('cpc1-home.isp.example.net');
+    expect(accepts(transport)[0]).toContain(' 3325256724 40123 ');
   });
 });

@@ -426,6 +426,23 @@ async fn accept_from(
     }
 }
 
+/// The IPv4 address a hostname resolves to, for advertising in a DCC reply.
+///
+/// A reverse transfer has to name an address the sender can dial, and the one
+/// the IRC server reports for us is often a hostname — the reverse lookup of
+/// our public address. DCC carries IPv4 as a number, so an IPv4 answer is
+/// preferred and the first IPv6 one is the fallback. A literal comes back as it
+/// went in; a name that resolves to nothing is `None`.
+pub async fn resolve_address(name: &str) -> Option<String> {
+    let addresses: Vec<std::net::SocketAddr> =
+        tokio::net::lookup_host((name, 0)).await.ok()?.collect();
+    addresses
+        .iter()
+        .find(|address| address.is_ipv4())
+        .or_else(|| addresses.first())
+        .map(|address| address.ip().to_string())
+}
+
 /// The address to advertise to a peer, as seen from the route towards it.
 ///
 /// Found by asking the operating system which interface it would use to reach
@@ -1143,6 +1160,15 @@ mod tests {
             .await
             .is_err());
         assert!(!folder.path().join("reverse.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn a_literal_resolves_to_itself_and_nonsense_to_nothing() {
+        assert_eq!(
+            resolve_address("127.0.0.1").await.as_deref(),
+            Some("127.0.0.1")
+        );
+        assert!(resolve_address("no such host.invalid").await.is_none());
     }
 
     #[test]

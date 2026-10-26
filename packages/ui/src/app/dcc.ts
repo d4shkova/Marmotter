@@ -126,6 +126,14 @@ export interface DccCapability {
     onProgress?: DccProgress,
   ): DccTransfer;
   /**
+   * The address a hostname stands for, or undefined when it resolves to nothing.
+   *
+   * Used for the host the IRC server reports for us, which a reverse transfer
+   * has to give the sender as an address. Optional: without it, only a server
+   * that reports a bare address can supply one.
+   */
+  resolveAddress?(host: string): Promise<string | undefined>;
+  /**
    * How much of this file an earlier attempt already wrote, in bytes.
    *
    * Asked before a transfer starts, because continuing one has to be agreed

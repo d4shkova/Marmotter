@@ -457,7 +457,9 @@ export function createSession(options: SessionOptions): Session {
   };
 
   const onRegistered = (): void => {
-    const lines: string[] = [];
+    // Where the server sees us from, which behind a router is the address a
+    // reverse transfer has to give out. The reply is consumed into state.
+    const lines: string[] = [`USERHOST ${state.nick}`];
 
     // Before the autojoins, so a channel that only lets in signed-in people has
     // the best chance of the sign-in having landed first.
@@ -725,6 +727,7 @@ export function createSession(options: SessionOptions): Session {
       // How long we have been signed in is a fact about a connection, not about
       // a network. The next one starts the clock again.
       registeredAt: undefined,
+      ownHost: undefined,
       batches: new Map(),
       channels: new Map(
         [...state.channels].map(([key, channel]) => [
@@ -833,7 +836,7 @@ export function createSession(options: SessionOptions): Session {
           // already sets this in `connect`, and republishing would discard the
           // `lastClose` it deliberately cleared.
           if (state.phase === 'registered' || state.phase === 'registering') {
-            publish({ ...state, phase: 'connecting', registeredAt: undefined });
+            publish({ ...state, phase: 'connecting', registeredAt: undefined, ownHost: undefined });
           }
           return;
         }

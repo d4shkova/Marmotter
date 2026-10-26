@@ -16,6 +16,7 @@ import {
   describeError,
   interpretNumeric,
   numericName,
+  parseUserhostReply,
 } from './numerics.js';
 
 const support = applyISupport(DEFAULT_ISUPPORT, ['PREFIX=(qaohv)~&@%+', 'CHANTYPES=#']);
@@ -690,6 +691,32 @@ describe('unrecognised numerics', () => {
       kind: 'unhandled',
       numeric: '999',
       params: ['me', 'some', 'param', 'text'],
+    });
+  });
+});
+
+describe('the USERHOST reply', () => {
+  it('reads each entry, with its away flag, past the operator mark', () => {
+    expect(parseUserhostReply('marmot*=+marmot@198.51.100.20 tamsin=-t@host.example')).toEqual([
+      { nick: 'marmot', user: 'marmot', host: '198.51.100.20', away: false },
+      { nick: 'tamsin', user: 't', host: 'host.example', away: true },
+    ]);
+  });
+
+  it('skips what does not have the shape, rather than guessing', () => {
+    expect(parseUserhostReply('garbage  marmot=+m@h')).toEqual([
+      { nick: 'marmot', user: 'm', host: 'h', away: false },
+    ]);
+  });
+
+  it('is consumed into state, as is a cloak being applied', () => {
+    expect(event(':irc 302 me :me=+me@1.2.3.4')).toEqual({
+      kind: 'userhost',
+      entries: [{ nick: 'me', user: 'me', host: '1.2.3.4', away: false }],
+    });
+    expect(event(':irc 396 me user/me :is now your displayed host')).toEqual({
+      kind: 'host-hidden',
+      host: 'user/me',
     });
   });
 });

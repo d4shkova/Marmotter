@@ -587,7 +587,7 @@ export function Settings({
                         <TextField
                           label="Your address for incoming transfers"
                           placeholder="Worked out automatically"
-                          hint="Some senders cannot be connected to and ask Marmotter to listen instead. Leave this empty unless those transfers time out — then put in the address other people reach you on, and forward the port on your router."
+                          hint="Some senders cannot be connected to and ask Marmotter to listen instead. Marmotter gives them the address your IRC server sees you at, and never this device's private one. Fill this in if your network hides your address, or if those transfers time out — put in the address other people reach you on, and forward the port on your router."
                           value={userOptions.dccAddress ?? ''}
                           onChange={(event) =>
                             onUserOptionsChange({

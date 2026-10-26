@@ -3,6 +3,7 @@ import { decodeCtcp } from './ctcp.js';
 import {
   buildDccResume,
   buildPassiveAccept,
+  chooseAdvertisedAddress,
   isDialableHost,
   isPrivateAddress,
   parseDccAccept,
@@ -377,5 +378,63 @@ describe('a hostmask that is a cloak rather than a host', () => {
     expect(isDialableHost('203.0.113.9')).toBe(true);
     expect(isDialableHost('bot.example.net')).toBe(true);
     expect(isDialableHost('files.example.co.uk')).toBe(true);
+  });
+});
+
+describe('chooseAdvertisedAddress', () => {
+  const base = {
+    configured: undefined,
+    serverSeen: undefined,
+    local: '192.168.1.5',
+    peer: '203.0.113.7',
+  };
+
+  it('takes the address somebody set, above everything else', () => {
+    expect(
+      chooseAdvertisedAddress({
+        ...base,
+        configured: ' 198.51.100.1 ',
+        serverSeen: '198.51.100.20',
+      }),
+    ).toEqual({
+      address: '198.51.100.1',
+    });
+  });
+
+  it('takes the public address the server sees over the private one this machine has', () => {
+    expect(chooseAdvertisedAddress({ ...base, serverSeen: '198.51.100.20' })).toEqual({
+      address: '198.51.100.20',
+    });
+  });
+
+  it('never gives a private address to a sender outside our network', () => {
+    expect(chooseAdvertisedAddress(base)).toEqual({
+      refused: 'private-only',
+      local: '192.168.1.5',
+    });
+    // A cloak, a hostname nobody looked up, and a private address from the
+    // server are all no better.
+    for (const serverSeen of ['user/marmot', 'cpc1.isp.example.net', '10.0.0.4']) {
+      expect('refused' in chooseAdvertisedAddress({ ...base, serverSeen })).toBe(true);
+    }
+  });
+
+  it('gives a private address to a sender on the same network', () => {
+    expect(chooseAdvertisedAddress({ ...base, peer: '192.168.1.20' })).toEqual({
+      address: '192.168.1.5',
+    });
+  });
+
+  it('gives a public address of this machine as it is', () => {
+    expect(chooseAdvertisedAddress({ ...base, local: '198.51.100.30' })).toEqual({
+      address: '198.51.100.30',
+    });
+  });
+
+  it('says there is nothing when nothing is known', () => {
+    expect(chooseAdvertisedAddress({ ...base, local: undefined })).toEqual({
+      refused: 'private-only',
+      local: undefined,
+    });
   });
 });

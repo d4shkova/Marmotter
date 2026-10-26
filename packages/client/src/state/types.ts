@@ -252,6 +252,16 @@ export interface NetworkState {
    */
   readonly registeredAt: Date | undefined;
   /**
+   * The host the server sees us connecting from, once it has said.
+   *
+   * Asked for with `USERHOST` on sign-in and corrected from anything the server
+   * reflects back with our own prefix on it, and from a cloak being applied.
+   * Behind a router this is the public address, which is what a sender has to
+   * be given for a reverse transfer; the machine's own is the private one.
+   * Undefined until the server says, and a cloak when the network hides it.
+   */
+  readonly ownHost: string | undefined;
+  /**
    * How many channels the network says it has, from its sign-in summary.
    *
    * Undefined on a server that does not say. Kept because it is the one figure

@@ -25,6 +25,9 @@ export const RPL_LOCALUSERS = '265';
 export const RPL_GLOBALUSERS = '266';
 
 export const RPL_AWAY = '301';
+export const RPL_USERHOST = '302';
+/** Not in the RFCs, but sent by most ircds when a cloak is applied. */
+export const RPL_HOSTHIDDEN = '396';
 export const RPL_UNAWAY = '305';
 export const RPL_NOWAWAY = '306';
 
@@ -198,6 +201,8 @@ export const NUMERICS: ReadonlyMap<string, NumericInfo> = new Map([
   [RPL_GLOBALUSERS, info('RPL_GLOBALUSERS', 'server-info', 'state')],
 
   [RPL_AWAY, info('RPL_AWAY', 'away', 'notice')],
+  [RPL_USERHOST, info('RPL_USERHOST', 'other', 'state')],
+  [RPL_HOSTHIDDEN, info('RPL_HOSTHIDDEN', 'other', 'state')],
   [RPL_UNAWAY, info('RPL_UNAWAY', 'away', 'state')],
   [RPL_NOWAWAY, info('RPL_NOWAWAY', 'away', 'state')],
 
@@ -604,7 +609,37 @@ export type NumericEvent =
       readonly report: ErrorReport;
       readonly params: readonly string[];
     }
+  | { readonly kind: 'userhost'; readonly entries: readonly UserhostEntry[] }
+  | { readonly kind: 'host-hidden'; readonly host: string }
   | { readonly kind: 'unhandled'; readonly numeric: string; readonly params: readonly string[] };
+
+/** One answer in a `USERHOST` reply. */
+export interface UserhostEntry {
+  readonly nick: string;
+  readonly user: string;
+  readonly host: string;
+  readonly away: boolean;
+}
+
+/**
+ * Reads the `302` reply's list: `nick[*]=(+|-)user@host`, space-separated.
+ *
+ * The `*` marks an operator and the sign says whether they are away. An entry
+ * that does not have that shape is skipped rather than guessed at.
+ */
+export function parseUserhostReply(text: string): readonly UserhostEntry[] {
+  return text
+    .split(' ')
+    .filter((part) => part !== '')
+    .flatMap((part): UserhostEntry[] => {
+      const match = /^([^=*]+)\*?=([+-])([^@]*)@(.+)$/.exec(part);
+      if (match === null) {
+        return [];
+      }
+      const [, nick = '', sign, user = '', host = ''] = match;
+      return [{ nick, user, host, away: sign === '-' }];
+    });
+}
 
 const toDate = (seconds: string | undefined): Date | undefined => {
   if (seconds === undefined || !/^\d+$/.test(seconds)) {
@@ -841,6 +876,12 @@ export function interpretNumeric(msg: IrcMessage, support: ISupport): NumericEve
       return { kind: 'monitor-list-end' };
     case RPL_WATCHOFF:
       return { kind: 'monitor-removed', targets: p[1] === undefined ? [] : [p[1]] };
+    case RPL_USERHOST:
+      return { kind: 'userhost', entries: parseUserhostReply(last) };
+    case RPL_HOSTHIDDEN:
+      // `396 <nick> <host> :is now your displayed host`.
+      return { kind: 'host-hidden', host: p[1] ?? '' };
+
     case RPL_WATCHSTAT:
       // "You have N and are on M WATCH entries" — a count, not a membership
       // change, so it belongs in the server tab rather than the Friends panel.

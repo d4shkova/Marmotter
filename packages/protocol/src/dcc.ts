@@ -560,3 +560,50 @@ export function publicAddressFor(
   }
   return senderHost;
 }
+
+/** The address to give a sender for a reverse transfer, or why there is none. */
+export type AdvertisedAddress =
+  | { readonly address: string }
+  | { readonly refused: 'private-only'; readonly local: string | undefined };
+
+/**
+ * Which of our addresses to put in the reply to a passive offer.
+ *
+ * In order: the one the person typed into Settings, because only they know what
+ * their router forwards; the one the IRC server sees us at, which behind a
+ * router is the public one and is what other clients call "get my address from
+ * the server"; and the one this machine has on the route to the sender.
+ *
+ * The last is the machine's own, so behind a router it is private. Giving a
+ * private address to a sender outside our network is the very misreport that
+ * makes a bot dial `192.168.1.5` and time out, so it is given only to a sender
+ * that is itself private — on the same network, where it is right — and
+ * otherwise the answer is that there is nothing to give.
+ *
+ * The server's view counts only as an address literal: a hostname has to be
+ * looked up first, and a cloak cannot be.
+ */
+export function chooseAdvertisedAddress(input: {
+  readonly configured: string | undefined;
+  readonly serverSeen: string | undefined;
+  readonly local: string | undefined;
+  readonly peer: string;
+}): AdvertisedAddress {
+  const configured = input.configured?.trim();
+  if (configured !== undefined && configured !== '') {
+    return { address: configured };
+  }
+  const seen = input.serverSeen;
+  if (
+    seen !== undefined &&
+    (DOTTED_QUAD.test(seen) || seen.includes(':')) &&
+    !isPrivateAddress(seen)
+  ) {
+    return { address: seen };
+  }
+  const { local, peer } = input;
+  if (local !== undefined && local !== '' && (!isPrivateAddress(local) || isPrivateAddress(peer))) {
+    return { address: local };
+  }
+  return { refused: 'private-only', local: local === '' ? undefined : local };
+}

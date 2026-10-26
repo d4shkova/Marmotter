@@ -201,6 +201,7 @@ export function initialNetworkState(id: string, name: string, nick: string): Net
     caps: INITIAL_CAP_STATE,
     serverName: '',
     registeredAt: undefined,
+    ownHost: undefined,
     channelCount: undefined,
     motd: [],
     serverNotices: [],
@@ -595,7 +596,7 @@ const IGNORE_CHANNEL_FOR: ReadonlyMap<string, IgnoreChannel> = new Map<string, I
  */
 export function reduce(state: NetworkState, msg: IrcMessage, context: ReduceContext): ReduceResult {
   const now = context.now ?? (() => new Date());
-  const counted = recordBatched(state, msg, now);
+  const counted = recordBatched(noteOwnHost(state, msg), msg, now);
 
   if (msg.command === 'BATCH') {
     return handleBatch(counted, msg);
@@ -615,6 +616,25 @@ export function reduce(state: NetworkState, msg: IrcMessage, context: ReduceCont
   }
 
   return result(counted);
+}
+
+/**
+ * Keeps {@link NetworkState.ownHost} current from what the server reflects.
+ *
+ * Anything carrying our own prefix — the echo of a join, or of a message with
+ * `echo-message` — says where the server sees us, and so does a `CHGHOST` about
+ * us. Cheap enough to run on every line: one comparison when the source is
+ * somebody else.
+ */
+function noteOwnHost(state: NetworkState, msg: IrcMessage): NetworkState {
+  const source = msg.source;
+  if (source === undefined || state.nick === '' || !isSelf(state, source.nick)) {
+    return state;
+  }
+  const host = msg.command === 'CHGHOST' ? msg.params[1] : source.host;
+  return host === undefined || host === '' || host === state.ownHost
+    ? state
+    : { ...state, ownHost: host };
 }
 
 /**
@@ -1266,6 +1286,14 @@ function reduceNumeric(
 
     case 'isupport':
       return result({ ...state, support: applyISupport(state.support, event.tokens) });
+
+    case 'userhost': {
+      const self = event.entries.find((entry) => isSelf(state, entry.nick));
+      return result(self === undefined ? state : { ...state, ownHost: self.host });
+    }
+
+    case 'host-hidden':
+      return result(event.host === '' ? state : { ...state, ownHost: event.host });
 
     case 'my-info':
       return result({ ...state, serverName: event.server });

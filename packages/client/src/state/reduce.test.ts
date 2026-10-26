@@ -56,6 +56,31 @@ describe('registration', () => {
   });
 });
 
+describe('where the server sees us', () => {
+  it('is unknown until the server says', () => {
+    expect(registeredSession().state.ownHost).toBeUndefined();
+  });
+
+  it('is read from the USERHOST reply about us, and not about somebody else', () => {
+    const other = feed(registeredSession(), [':irc.test 302 marmot :tamsin=+tamsin@203.0.113.9']);
+    expect(other.state.ownHost).toBeUndefined();
+
+    const self = feed(registeredSession(), [':irc.test 302 marmot :Marmot*=-marmot@198.51.100.20']);
+    expect(self.state.ownHost).toBe('198.51.100.20');
+  });
+
+  it('follows our own prefix, a cloak and a host change', () => {
+    let session = feed(registeredSession(), [':marmot!marmot@198.51.100.20 JOIN #marmotter']);
+    expect(session.state.ownHost).toBe('198.51.100.20');
+
+    session = feed(session, [':irc.test 396 marmot user/marmot :is now your displayed host']);
+    expect(session.state.ownHost).toBe('user/marmot');
+
+    session = feed(session, [':marmot!marmot@user/marmot CHGHOST marmot cpc1.isp.example.net']);
+    expect(session.state.ownHost).toBe('cpc1.isp.example.net');
+  });
+});
+
 describe('nick collision', () => {
   it('works through the alternatives, then appends underscores', () => {
     const context = { altNicks: ['marmot_', 'marmotte'], wantsSasl: false };

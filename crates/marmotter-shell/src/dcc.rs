@@ -31,8 +31,8 @@ use std::process::Command;
 
 use marmotter_transport::{
     dcc_cancel_channel, dcc_download, dcc_local_address_towards, dcc_plan_target,
-    dcc_receive_passive as receive_passive_transfer, DccCancelHandle, DccDownloadOptions,
-    DccPassiveOptions, DEFAULT_DCC_TIMEOUT,
+    dcc_receive_passive as receive_passive_transfer, dcc_resolve_address as resolve_address_of,
+    DccCancelHandle, DccDownloadOptions, DccPassiveOptions, DEFAULT_DCC_TIMEOUT,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -255,6 +255,16 @@ pub async fn dcc_receive_passive(
 #[tauri::command]
 pub fn dcc_resumable_bytes(folder: String, filename: String) -> u64 {
     dcc_plan_target(&PathBuf::from(folder), &filename).resumable
+}
+
+/// Looks up the address a hostname stands for, for a reverse transfer's reply.
+///
+/// The name is the one the IRC server reports for us, so the lookup reveals
+/// nothing a stranger does not already have: it goes to our own resolver for
+/// our own address.
+#[tauri::command]
+pub async fn dcc_resolve_address(host: String) -> Option<String> {
+    resolve_address_of(&host).await
 }
 
 /// Removes a transfer's cancel channel from the registry when its download ends,

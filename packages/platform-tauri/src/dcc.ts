@@ -73,6 +73,13 @@ export function createDcc(options: DccOptions = {}): DccCapability {
       return await invoke<string>('dcc_default_dir');
     },
 
+    async resolveAddress(host: string): Promise<string | undefined> {
+      const address = await invoke<string | null>('dcc_resolve_address', { host }).catch(
+        () => null,
+      );
+      return address ?? undefined;
+    },
+
     async resumableBytes(folder: string, filename: string): Promise<number> {
       return await invoke<number>('dcc_resumable_bytes', { folder, filename });
     },
